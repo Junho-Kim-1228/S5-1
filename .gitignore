@@ -1,0 +1,21 @@
+# Visual Studio
+.vs/
+bin/
+obj/
+*.suo
+*.exe
+*.pdb
+
+# Python / AI
+__pycache__/
+*.pt
+*.onnx
+coil-ai/runs/
+*.cache
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
