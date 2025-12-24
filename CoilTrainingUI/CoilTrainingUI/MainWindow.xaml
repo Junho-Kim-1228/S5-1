@@ -3,7 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Coil Training UI"
         Width="1200" Height="800"
-        MinWidth="1000" MinHeight="700">
+        MinWidth="1000" MinHeight="700"
+        KeyDown="Window_KeyDown"
+        Focusable="True">
 
     <DockPanel>
 
