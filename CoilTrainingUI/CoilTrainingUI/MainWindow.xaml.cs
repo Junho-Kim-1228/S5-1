@@ -137,19 +137,27 @@ namespace CoilTrainingUI
 
         private void Rect_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            e.Handled = true; // Canvas로 이벤트 전파 막기
+            e.Handled = true;
 
             if (_selectedRect != null)
                 _selectedRect.Stroke = Brushes.Red;
 
             _selectedRect = sender as Rectangle;
-            _selectedRect.Stroke = Brushes.LimeGreen; // 선택 표시
+            _selectedRect.Stroke = Brushes.LimeGreen;
 
             _isDraggingRect = true;
             _dragStartPoint = e.GetPosition(ImageCanvas);
-
             _selectedRect.CaptureMouse();
+
+            // 클래스 UI 반영
+            var bbox = _bboxMap[_selectedRect];
+
+            ClassComboBox.IsEnabled = true;
+            ClassComboBox.SelectedItem = ClassComboBox.Items
+                .Cast<ComboBoxItem>()
+                .First(item => item.Content.ToString() == bbox.ClassName);
         }
+
 
         private void Rect_MouseMove(object sender, MouseEventArgs e)
         {
@@ -210,6 +218,26 @@ namespace CoilTrainingUI
             bbox.Width = width / imgW;
             bbox.Height = height / imgH;
         }
+
+        private void ClassComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_selectedRect == null)
+                return;
+
+            if (!(ClassComboBox.SelectedItem is ComboBoxItem item))
+                return;
+
+            string className = item.Content.ToString();
+
+            var bbox = _bboxMap[_selectedRect];
+            bbox.ClassName = className;
+
+            // 색상 변경 (가시성 중요)
+            _selectedRect.Stroke = className == "dent"
+                ? Brushes.Red
+                : Brushes.Blue;
+        }
+
 
 
 
