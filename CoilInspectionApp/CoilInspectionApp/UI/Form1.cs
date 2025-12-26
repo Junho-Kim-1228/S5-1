@@ -18,7 +18,7 @@ namespace CoilInspectionApp
 {
     public partial class Form1 : Form
     {
-        // 변수 선언
+        // 변수 선언1234
         private CoilInspectionApp.Watcher.DirectoryWatcher _dw;
         private CsvLogger _logger = new CsvLogger();
 
