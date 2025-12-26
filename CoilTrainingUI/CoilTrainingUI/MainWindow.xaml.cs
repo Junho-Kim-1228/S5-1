@@ -11,7 +11,11 @@ using System.Windows.Shapes;
 using System.Windows.Shapes;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.IO;
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Models;
+using System.Collections.ObjectModel;
+using IOPath = System.IO.Path;
 
 
 namespace CoilTrainingUI
@@ -26,8 +30,20 @@ namespace CoilTrainingUI
         private bool _isDraggingRect = false;
         private Point _dragStartPoint;
 
+        private string _currentImagePath;
+
         private Dictionary<Rectangle, BoundingBox> _bboxMap
             = new Dictionary<Rectangle, BoundingBox>();
+
+        private readonly Dictionary<string, int> _classToId = new()
+        {
+            { "dent", 0 },
+            { "loose", 1 }
+        };
+
+        private ObservableCollection<ImageItem> _images
+            = new ObservableCollection<ImageItem>();
+
 
         private void OnMouseWheelZoom(object sender, MouseWheelEventArgs e)
         {
@@ -238,23 +254,154 @@ namespace CoilTrainingUI
                 : Brushes.Blue;
         }
 
+        private void SaveYoloLabel(string imagePath)
+        {
+            if (_bboxMap.Count == 0)
+                return;
 
+            string labelPath = System.IO.Path.ChangeExtension(imagePath, ".txt");
 
+            using var writer = new System.IO.StreamWriter(labelPath);
+
+            foreach (var pair in _bboxMap)
+            {
+                BoundingBox bbox = pair.Value;
+
+                int classId = _classToId[bbox.ClassName];
+
+                writer.WriteLine(
+                    $"{classId} " +
+                    $"{bbox.X:F6} {bbox.Y:F6} " +
+                    $"{bbox.Width:F6} {bbox.Height:F6}"
+                );
+            }
+        }
+        private void SaveLabel_Click(object sender, RoutedEventArgs e)
+        {
+            // 임시: 현재 이미지 경로
+            string imagePath = @"C:\\Users\\wnsgh\\Desktop\\input\\img2.jpg";
+
+            SaveYoloLabel(imagePath);
+
+            MessageBox.Show("YOLO label saved");
+        }
+
+        private void LoadYoloLabel(string imagePath)
+        {
+            string labelPath = System.IO.Path.ChangeExtension(imagePath, ".txt");
+
+            if (!File.Exists(labelPath))
+                return;
+
+            foreach (var line in File.ReadAllLines(labelPath))
+            {
+                var parts = line.Split(' ');
+                if (parts.Length != 5)
+                    continue;
+
+                int classId = int.Parse(parts[0]);
+                double xCenter = double.Parse(parts[1]);
+                double yCenter = double.Parse(parts[2]);
+                double w = double.Parse(parts[3]);
+                double h = double.Parse(parts[4]);
+
+                string className = _classToId.First(kv => kv.Value == classId).Key;
+
+                double x = (xCenter - w / 2) * ImageCanvas.Width;
+                double y = (yCenter - h / 2) * ImageCanvas.Height;
+                double width = w * ImageCanvas.Width;
+                double height = h * ImageCanvas.Height;
+
+                // Rectangle 생성
+                var rect = new Rectangle
+                {
+                    Width = width,
+                    Height = height,
+                    StrokeThickness = 2,
+                    Stroke = className == "dent" ? Brushes.Red : Brushes.Blue
+                };
+
+                Canvas.SetLeft(rect, x);
+                Canvas.SetTop(rect, y);
+
+                rect.MouseLeftButtonDown += Rect_MouseLeftButtonDown;
+
+                ImageCanvas.Children.Add(rect);
+
+                // BoundingBox 모델 생성
+                var bbox = new BoundingBox
+                {
+                    X = xCenter,
+                    Y = yCenter,
+                    Width = w,
+                    Height = h,
+                    ClassName = className
+                };
+
+                _bboxMap[rect] = bbox;
+            }
+        }
+
+        private void LoadImage(string imagePath)
+        {
+            _currentImagePath = imagePath;
+
+            var bitmap = new BitmapImage(new Uri(imagePath));
+            MainImage.Source = bitmap;
+
+            ImageCanvas.Width = bitmap.PixelWidth;
+            ImageCanvas.Height = bitmap.PixelHeight;
+
+            // 🔥 박스만 제거 (이미지는 유지)
+            var rectsToRemove = ImageCanvas.Children
+                .OfType<Rectangle>()
+                .ToList();
+
+            foreach (var rect in rectsToRemove)
+                ImageCanvas.Children.Remove(rect);
+
+            _bboxMap.Clear();
+
+            LoadYoloLabel(imagePath);
+        }
+
+        private void LoadImageFolder(string folderPath)
+        {
+            _images.Clear();
+
+            var imageFiles = Directory.GetFiles(folderPath, "*.jpg");
+
+            foreach (var img in imageFiles)
+            {
+                string labelPath = IOPath.ChangeExtension(img, ".txt");
+
+                _images.Add(new ImageItem
+                {
+                    FileName = IOPath.GetFileName(img),
+                    FullPath = img,
+                    HasLabel = File.Exists(labelPath)
+                });
+            }
+
+            ImageListBox.ItemsSource = _images;
+        }
+
+        private void ImageListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ImageListBox.SelectedItem is ImageItem item)
+            {
+                LoadImage(item.FullPath);
+                FitImageToView();
+            }
+        }
 
         public MainWindow()
         {
             InitializeComponent();
 
-            // 테스트용 이미지 로드 (본인 PC 경로로 수정)
-            var bitmap = new BitmapImage(new Uri(@"C:\\Users\\wnsgh\\Desktop\\input\\img2.jpg"));
+            string folderPath = @"C:\Users\wnsgh\Desktop\input";
+            LoadImageFolder(folderPath);
 
-            MainImage.Source = bitmap;
-
-            // Canvas 크기를 이미지 실제 픽셀 크기로 설정
-            ImageCanvas.Width = bitmap.PixelWidth;
-            ImageCanvas.Height = bitmap.PixelHeight;
-
-            // Window가 완전히 로드된 이후에 Fit 적용
             Loaded += (s, e) =>
             {
                 FitImageToView();

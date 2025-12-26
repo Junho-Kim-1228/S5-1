@@ -38,8 +38,19 @@
             </Grid.ColumnDefinitions>
 
             <!-- 좌측: 데이터 탐색 -->
-            <Border Grid.Column="0" Background="#EEE" Padding="5">
-                <TextBlock Text="Dataset Explorer"/>
+            <Border Grid.Column="0" Background="#333" Padding="5">
+                <StackPanel>
+
+                    <TextBlock Text="Dataset"
+                   Foreground="White"
+                   FontWeight="Bold"
+                   Margin="0,0,0,10"/>
+
+                    <ListBox x:Name="ImageListBox"
+                 DisplayMemberPath="FileName"
+                 SelectionChanged="ImageListBox_SelectionChanged"/>
+
+                </StackPanel>
             </Border>
 
             <!-- 중앙: 이미지 뷰어 -->
@@ -96,6 +107,11 @@
                         <Button Content="＋" Width="40" Click="ZoomIn_Click"/>
                         <Button Content="－" Width="40" Margin="5,0,0,0" Click="ZoomOut_Click"/>
                     </StackPanel>
+
+                    <Button Content="Save Label"
+                        Margin="0,20,0,0"
+                        Click="SaveLabel_Click"/>
+
 
                 </StackPanel>
             </Border>
