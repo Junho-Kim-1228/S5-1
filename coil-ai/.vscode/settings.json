@@ -1,7 +1,0 @@
-{
-  "python.defaultInterpreterPath": "C:/Users/wnsgh/anaconda3/envs/coil_ai/python.exe",
-  "python.terminal.activateEnvironment": true,
-  "python.analysis.diagnosticMode": "workspace",
-  "python.analysis.typeCheckingMode": "basic",
-  "python.analysis.autoSearchPaths": true
-}
