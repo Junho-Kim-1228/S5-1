@@ -1,9 +1,0 @@
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\bin\x64\Debug\CoilInspectionApp.exe.config
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\bin\x64\Debug\CoilInspectionApp.exe
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\bin\x64\Debug\CoilInspectionApp.pdb
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\obj\x64\Debug\CoilInspectionApp.csproj.AssemblyReference.cache
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\obj\x64\Debug\CoilInspectionApp.Properties.Resources.resources
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\obj\x64\Debug\CoilInspectionApp.csproj.GenerateResource.cache
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\obj\x64\Debug\CoilInspectionApp.csproj.CoreCompileInputs.cache
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\obj\x64\Debug\CoilInspectionApp.exe
-C:\Users\wnsgh\kjhdev\CoilInspectionApp\CoilInspectionApp\obj\x64\Debug\CoilInspectionApp.pdb
