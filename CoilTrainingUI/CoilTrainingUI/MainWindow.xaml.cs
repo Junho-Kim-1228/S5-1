@@ -367,7 +367,7 @@ namespace CoilTrainingUI
             ImageCanvas.Width = bitmap.PixelWidth;
             ImageCanvas.Height = bitmap.PixelHeight;
 
-            // 3. 기존 UI 요소(Rectangle) 삭제
+            // 3. 기존 UI 요소(Rectangle) 삭제.
             foreach (var rect in ImageCanvas.Children.OfType<Rectangle>().ToList())
                 ImageCanvas.Children.Remove(rect);
 
