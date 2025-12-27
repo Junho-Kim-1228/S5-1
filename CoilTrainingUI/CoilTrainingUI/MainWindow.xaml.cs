@@ -22,6 +22,7 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
+        // 드래그 시작점
         private Point _startPoint;
         private Rectangle _currentRect;
         private bool _isDrawing = false;
@@ -34,6 +35,11 @@ namespace CoilTrainingUI
 
         private Dictionary<Rectangle, BoundingBox> _bboxMap
             = new Dictionary<Rectangle, BoundingBox>();
+
+        // 🔥 이미지별 라벨 저장소
+        private readonly Dictionary<string, List<BoundingBox>> _imageLabels
+            = new Dictionary<string, List<BoundingBox>>();
+
 
         private readonly Dictionary<string, int> _classToId = new()
         {
@@ -96,19 +102,21 @@ namespace CoilTrainingUI
             _currentRect.MouseMove += Rect_MouseMove;
             _currentRect.MouseLeftButtonUp += Rect_MouseLeftButtonUp;
 
-
             Canvas.SetLeft(_currentRect, _startPoint.X);
             Canvas.SetTop(_currentRect, _startPoint.Y);
-
             ImageCanvas.Children.Add(_currentRect);
 
-            var bbox = new BoundingBox
-            {
-                ClassName = "dent" // 기본값
-            };
+            var bbox = new BoundingBox { ClassName = "dent" };
 
             _bboxMap[_currentRect] = bbox;
+
+            // 🔥 핵심 추가
+            if (!_imageLabels.ContainsKey(_currentImagePath))
+                _imageLabels[_currentImagePath] = new List<BoundingBox>();
+
+            _imageLabels[_currentImagePath].Add(bbox);
         }
+
         private void Canvas_MouseMove(object sender, MouseEventArgs e)
         {
             if (!_isDrawing || _currentRect == null)
@@ -129,6 +137,21 @@ namespace CoilTrainingUI
         private void Canvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             _isDrawing = false;
+
+            if (_currentRect != null)
+            {
+                UpdateBoundingBoxModel(_currentRect);
+
+                // 🔥 0 크기 박스 제거
+                var bbox = _bboxMap[_currentRect];
+                if (bbox.Width <= 0 || bbox.Height <= 0)
+                {
+                    _imageLabels[_currentImagePath].Remove(bbox);
+                    _bboxMap.Remove(_currentRect);
+                    ImageCanvas.Children.Remove(_currentRect);
+                }
+            }
+
             _currentRect = null;
         }
         private void FitImageToView()
@@ -208,11 +231,18 @@ namespace CoilTrainingUI
         {
             if (e.Key == Key.Delete && _selectedRect != null)
             {
+                var bbox = _bboxMap[_selectedRect];
+
+                _imageLabels[_currentImagePath].Remove(bbox);
                 _bboxMap.Remove(_selectedRect);
                 ImageCanvas.Children.Remove(_selectedRect);
+
                 _selectedRect = null;
+                ClassComboBox.IsEnabled = false;
             }
         }
+
+
 
         private void UpdateBoundingBoxModel(Rectangle rect)
         {
@@ -256,114 +286,129 @@ namespace CoilTrainingUI
 
         private void SaveYoloLabel(string imagePath)
         {
-            if (_bboxMap.Count == 0)
+            if (!_imageLabels.ContainsKey(imagePath))
                 return;
 
-            string labelPath = System.IO.Path.ChangeExtension(imagePath, ".txt");
+            var list = _imageLabels[imagePath]
+                .Where(b => b.Width > 0 && b.Height > 0)
+                .ToList();
 
-            using var writer = new System.IO.StreamWriter(labelPath);
+            if (list.Count == 0)
+                return;
+            
+            string labelPath = IOPath.ChangeExtension(imagePath, ".txt");
 
-            foreach (var pair in _bboxMap)
+            using var writer = new StreamWriter(labelPath);
+            foreach (var bbox in list)
             {
-                BoundingBox bbox = pair.Value;
-
                 int classId = _classToId[bbox.ClassName];
-
                 writer.WriteLine(
-                    $"{classId} " +
-                    $"{bbox.X:F6} {bbox.Y:F6} " +
-                    $"{bbox.Width:F6} {bbox.Height:F6}"
+                    $"{classId} {bbox.X:F6} {bbox.Y:F6} {bbox.Width:F6} {bbox.Height:F6}"
                 );
             }
         }
+
+
         private void SaveLabel_Click(object sender, RoutedEventArgs e)
         {
-            // 임시: 현재 이미지 경로
-            string imagePath = @"C:\\Users\\wnsgh\\Desktop\\input\\img2.jpg";
+            if (string.IsNullOrEmpty(_currentImagePath))
+            {
+                MessageBox.Show("No image loaded");
+                return;
+            }
 
-            SaveYoloLabel(imagePath);
+            SaveYoloLabel(_currentImagePath);
 
             MessageBox.Show("YOLO label saved");
         }
 
+
         private void LoadYoloLabel(string imagePath)
         {
-            string labelPath = System.IO.Path.ChangeExtension(imagePath, ".txt");
-
+            string labelPath = IOPath.ChangeExtension(imagePath, ".txt");
             if (!File.Exists(labelPath))
                 return;
 
+            _imageLabels[imagePath].Clear();
+
             foreach (var line in File.ReadAllLines(labelPath))
             {
-                var parts = line.Split(' ');
-                if (parts.Length != 5)
-                    continue;
+                var p = line.Split(' ');
+                if (p.Length != 5) continue;
 
-                int classId = int.Parse(parts[0]);
-                double xCenter = double.Parse(parts[1]);
-                double yCenter = double.Parse(parts[2]);
-                double w = double.Parse(parts[3]);
-                double h = double.Parse(parts[4]);
-
-                string className = _classToId.First(kv => kv.Value == classId).Key;
-
-                double x = (xCenter - w / 2) * ImageCanvas.Width;
-                double y = (yCenter - h / 2) * ImageCanvas.Height;
-                double width = w * ImageCanvas.Width;
-                double height = h * ImageCanvas.Height;
-
-                // Rectangle 생성
-                var rect = new Rectangle
-                {
-                    Width = width,
-                    Height = height,
-                    StrokeThickness = 2,
-                    Stroke = className == "dent" ? Brushes.Red : Brushes.Blue
-                };
-
-                Canvas.SetLeft(rect, x);
-                Canvas.SetTop(rect, y);
-
-                rect.MouseLeftButtonDown += Rect_MouseLeftButtonDown;
-
-                ImageCanvas.Children.Add(rect);
-
-                // BoundingBox 모델 생성
                 var bbox = new BoundingBox
                 {
-                    X = xCenter,
-                    Y = yCenter,
-                    Width = w,
-                    Height = h,
-                    ClassName = className
+                    ClassName = _classToId.First(kv => kv.Value == int.Parse(p[0])).Key,
+                    X = double.Parse(p[1]),
+                    Y = double.Parse(p[2]),
+                    Width = double.Parse(p[3]),
+                    Height = double.Parse(p[4])
                 };
 
-                _bboxMap[rect] = bbox;
+                _imageLabels[imagePath].Add(bbox);
             }
         }
+
 
         private void LoadImage(string imagePath)
         {
             _currentImagePath = imagePath;
 
+            _selectedRect = null;
+            ClassComboBox.IsEnabled = false;
+
+            // 1. 초기화: 해당 경로에 대한 리스트가 없으면 생성
+            if (!_imageLabels.ContainsKey(imagePath))
+                _imageLabels[imagePath] = new List<BoundingBox>();
+
+            // 2. 비트맵 로드 및 캔버스 크기 설정
             var bitmap = new BitmapImage(new Uri(imagePath));
             MainImage.Source = bitmap;
-
             ImageCanvas.Width = bitmap.PixelWidth;
             ImageCanvas.Height = bitmap.PixelHeight;
 
-            // 🔥 박스만 제거 (이미지는 유지)
-            var rectsToRemove = ImageCanvas.Children
-                .OfType<Rectangle>()
-                .ToList();
-
-            foreach (var rect in rectsToRemove)
+            // 3. 기존 UI 요소(Rectangle) 삭제
+            foreach (var rect in ImageCanvas.Children.OfType<Rectangle>().ToList())
                 ImageCanvas.Children.Remove(rect);
 
             _bboxMap.Clear();
 
+            // 🔥 [핵심 수정] 4. 파일(.txt)에서 데이터를 먼저 읽어 메모리(_imageLabels)에 저장
             LoadYoloLabel(imagePath);
+
+            // 5. 메모리에 저장된 라벨 데이터를 바탕으로 UI(Rectangle) 복원
+            foreach (var bbox in _imageLabels[imagePath])
+            {
+                AddBoundingBoxToCanvas(bbox);
+            }
         }
+
+        private void AddBoundingBoxToCanvas(BoundingBox bbox)
+        {
+            double x = (bbox.X - bbox.Width / 2) * ImageCanvas.Width;
+            double y = (bbox.Y - bbox.Height / 2) * ImageCanvas.Height;
+
+            var rect = new Rectangle
+            {
+                Width = bbox.Width * ImageCanvas.Width,
+                Height = bbox.Height * ImageCanvas.Height,
+                StrokeThickness = 2,
+                Stroke = bbox.ClassName == "dent" ? Brushes.Red : Brushes.Blue,
+                Fill = Brushes.Transparent
+            };
+
+            Canvas.SetLeft(rect, x);
+            Canvas.SetTop(rect, y);
+
+            rect.MouseLeftButtonDown += Rect_MouseLeftButtonDown;
+            rect.MouseMove += Rect_MouseMove;
+            rect.MouseLeftButtonUp += Rect_MouseLeftButtonUp;
+
+            ImageCanvas.Children.Add(rect);
+            _bboxMap[rect] = bbox;
+        }
+
+
 
         private void LoadImageFolder(string folderPath)
         {
@@ -373,18 +418,17 @@ namespace CoilTrainingUI
 
             foreach (var img in imageFiles)
             {
-                string labelPath = IOPath.ChangeExtension(img, ".txt");
-
                 _images.Add(new ImageItem
                 {
                     FileName = IOPath.GetFileName(img),
                     FullPath = img,
-                    HasLabel = File.Exists(labelPath)
+                    HasLabel = File.Exists(IOPath.ChangeExtension(img, ".txt"))
                 });
             }
 
             ImageListBox.ItemsSource = _images;
         }
+
 
         private void ImageListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -404,8 +448,14 @@ namespace CoilTrainingUI
 
             Loaded += (s, e) =>
             {
+                if (_images.Count > 0)
+                {
+                    ImageListBox.SelectedIndex = 0;
+                }
+
                 FitImageToView();
             };
         }
+
     }
 }
