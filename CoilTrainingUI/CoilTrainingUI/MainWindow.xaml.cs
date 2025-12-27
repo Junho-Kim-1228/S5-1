@@ -22,6 +22,7 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
+        // 드래그 시작점
         private Point _startPoint;
         private Rectangle _currentRect;
         private bool _isDrawing = false;
