@@ -1,20 +1,21 @@
-﻿using System.Text;
+﻿using CoilTrainingUI.Models;
+using CoilTrainingUI.Models;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Windows.Shapes;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.IO;
-using CoilTrainingUI.Models;
-using CoilTrainingUI.Models;
-using System.Collections.ObjectModel;
 using IOPath = System.IO.Path;
 
 
@@ -115,6 +116,9 @@ namespace CoilTrainingUI
                 _imageLabels[_currentImagePath] = new List<BoundingBox>();
 
             _imageLabels[_currentImagePath].Add(bbox);
+
+            _imageLabels[_currentImagePath].Add(bbox);
+            UpdateYoloStatus(_currentImagePath);
         }
 
         private void Canvas_MouseMove(object sender, MouseEventArgs e)
@@ -179,7 +183,14 @@ namespace CoilTrainingUI
             e.Handled = true;
 
             if (_selectedRect != null)
-                _selectedRect.Stroke = Brushes.Red;
+            {
+                var prevBBox = _bboxMap[_selectedRect];
+
+                _selectedRect.Stroke = prevBBox.ClassName == "dent"
+                    ? Brushes.Red
+                    : Brushes.Blue;
+            }
+
 
             _selectedRect = sender as Rectangle;
             _selectedRect.Stroke = Brushes.LimeGreen;
@@ -234,11 +245,14 @@ namespace CoilTrainingUI
                 var bbox = _bboxMap[_selectedRect];
 
                 _imageLabels[_currentImagePath].Remove(bbox);
+
                 _bboxMap.Remove(_selectedRect);
                 ImageCanvas.Children.Remove(_selectedRect);
-
                 _selectedRect = null;
-                ClassComboBox.IsEnabled = false;
+               
+                SaveYoloLabel(_currentImagePath);
+
+                UpdateYoloStatus(_currentImagePath);
             }
         }
 
@@ -293,10 +307,15 @@ namespace CoilTrainingUI
                 .Where(b => b.Width > 0 && b.Height > 0)
                 .ToList();
 
-            if (list.Count == 0)
-                return;
-            
             string labelPath = IOPath.ChangeExtension(imagePath, ".txt");
+
+            // 🔥 박스가 하나도 없으면 파일 삭제
+            if (list.Count == 0)
+            {
+                if (File.Exists(labelPath))
+                    File.Delete(labelPath);
+                return;
+            }
 
             using var writer = new StreamWriter(labelPath);
             foreach (var bbox in list)
@@ -306,7 +325,10 @@ namespace CoilTrainingUI
                     $"{classId} {bbox.X:F6} {bbox.Y:F6} {bbox.Width:F6} {bbox.Height:F6}"
                 );
             }
+
+            UpdateYoloStatus(imagePath);
         }
+
 
 
         private void SaveLabel_Click(object sender, RoutedEventArgs e)
@@ -325,11 +347,14 @@ namespace CoilTrainingUI
 
         private void LoadYoloLabel(string imagePath)
         {
+            if (!_imageLabels.ContainsKey(imagePath))
+                _imageLabels[imagePath] = new List<BoundingBox>();
+            else
+                _imageLabels[imagePath].Clear();
+
             string labelPath = IOPath.ChangeExtension(imagePath, ".txt");
             if (!File.Exists(labelPath))
                 return;
-
-            _imageLabels[imagePath].Clear();
 
             foreach (var line in File.ReadAllLines(labelPath))
             {
@@ -350,6 +375,7 @@ namespace CoilTrainingUI
         }
 
 
+
         private void LoadImage(string imagePath)
         {
             _currentImagePath = imagePath;
@@ -357,31 +383,42 @@ namespace CoilTrainingUI
             _selectedRect = null;
             ClassComboBox.IsEnabled = false;
 
-            // 1. 초기화: 해당 경로에 대한 리스트가 없으면 생성
-            if (!_imageLabels.ContainsKey(imagePath))
-                _imageLabels[imagePath] = new List<BoundingBox>();
-
-            // 2. 비트맵 로드 및 캔버스 크기 설정
+            // 1️⃣ 이미지 로드
             var bitmap = new BitmapImage(new Uri(imagePath));
             MainImage.Source = bitmap;
             ImageCanvas.Width = bitmap.PixelWidth;
             ImageCanvas.Height = bitmap.PixelHeight;
 
-            // 3. 기존 UI 요소(Rectangle) 삭제
+            // 2️⃣ UI 초기화
             foreach (var rect in ImageCanvas.Children.OfType<Rectangle>().ToList())
                 ImageCanvas.Children.Remove(rect);
 
             _bboxMap.Clear();
 
-            // 🔥 [핵심 수정] 4. 파일(.txt)에서 데이터를 먼저 읽어 메모리(_imageLabels)에 저장
+            // 3️⃣ YOLO 라벨 메모리 로드 (txt → _imageLabels)
             LoadYoloLabel(imagePath);
 
-            // 5. 메모리에 저장된 라벨 데이터를 바탕으로 UI(Rectangle) 복원
+            // 🔥 3.5️⃣ 메모리 → Canvas (이 줄이 핵심)
             foreach (var bbox in _imageLabels[imagePath])
             {
                 AddBoundingBoxToCanvas(bbox);
             }
+
+            // 4️⃣ Anomaly 상태 복원 (json → IsNormal)
+            LoadAnomalyState(imagePath);
+
+            // 5️⃣ Anomaly UI 반영
+            if (ImageListBox.SelectedItem is ImageItem item)
+            {
+                NormalRadio.IsChecked = item.IsNormal;
+                AbnormalRadio.IsChecked = !item.IsNormal;
+            }
+
+            // 6️⃣ YOLO 상태 갱신
+            UpdateYoloStatus(imagePath);
         }
+
+
 
         private void AddBoundingBoxToCanvas(BoundingBox bbox)
         {
@@ -435,7 +472,78 @@ namespace CoilTrainingUI
             if (ImageListBox.SelectedItem is ImageItem item)
             {
                 LoadImage(item.FullPath);
+
+                NormalRadio.IsChecked = item.IsNormal;
+                AbnormalRadio.IsChecked = !item.IsNormal;
+
                 FitImageToView();
+            }
+        }
+
+        private void NormalRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (ImageListBox.SelectedItem is ImageItem item)
+            {
+                item.IsNormal = true;
+                SaveAnomalyState(item.FullPath, true);
+                ImageListBox.Items.Refresh();
+            }
+        }
+
+        private void AbnormalRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (ImageListBox.SelectedItem is ImageItem item)
+            {
+                item.IsNormal = false;
+                SaveAnomalyState(item.FullPath, false);
+                ImageListBox.Items.Refresh();
+            }
+        }
+
+        private void UpdateYoloStatus(string imagePath)
+        {
+            var item = _images.FirstOrDefault(i => i.FullPath == imagePath);
+            if (item == null)
+                return;
+
+            item.HasLabel = _imageLabels.ContainsKey(imagePath)
+                            && _imageLabels[imagePath].Count > 0;
+
+            ImageListBox.Items.Refresh();
+        }
+
+        private void SaveAnomalyState(string imagePath, bool isNormal)
+        {
+            string path = System.IO.Path.ChangeExtension(imagePath, ".anomaly.json");
+
+            string json = $"{{ \"IsNormal\": {isNormal.ToString().ToLower()} }}";
+
+            File.WriteAllText(path, json);
+        }
+
+        private void LoadAnomalyState(string imagePath)
+        {
+            string path = System.IO.Path.ChangeExtension(imagePath, ".anomaly.json");
+
+            if (!File.Exists(path))
+                return;
+
+            try
+            {
+                string json = File.ReadAllText(path);
+
+                // 아주 단순 파싱 (지금 단계에서는 이게 제일 안전)
+                bool isNormal = json.Contains("\"IsNormal\": false") == false;
+
+                var item = _images.FirstOrDefault(i => i.FullPath == imagePath);
+                if (item != null)
+                {
+                    item.IsNormal = isNormal;
+                }
+            }
+            catch
+            {
+                // 파일 깨졌을 때 UI 죽지 않게
             }
         }
 
