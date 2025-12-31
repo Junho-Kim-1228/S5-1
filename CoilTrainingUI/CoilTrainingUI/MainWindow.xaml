@@ -38,17 +38,72 @@
             </Grid.ColumnDefinitions>
 
             <!-- 좌측: 데이터 탐색 -->
-            <Border Grid.Column="0" Background="#333" Padding="5">
+            <Border Grid.Column="0" Background="#333" Padding="3">
                 <StackPanel>
 
                     <TextBlock Text="Dataset"
-                   Foreground="White"
-                   FontWeight="Bold"
-                   Margin="0,0,0,10"/>
+                               Foreground="White"
+                               FontWeight="Bold"
+                               Margin="0,0,0,5"/>
 
                     <ListBox x:Name="ImageListBox"
-                 DisplayMemberPath="FileName"
-                 SelectionChanged="ImageListBox_SelectionChanged"/>
+                        SelectionChanged="ImageListBox_SelectionChanged">
+
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="6"
+                                        Margin="0,0,0,1"
+                                        CornerRadius="4"
+                                        Background="{Binding IsNormal,
+                                                            Converter={StaticResource NormalToColorConverter}}">
+
+                                    <StackPanel Orientation="Vertical">
+
+                                        <!-- 파일명 -->
+                                        <TextBlock Text="{Binding FileName}"
+                                                   Foreground="Black"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   Margin="0,0,0,2"/>
+
+                                        <!-- 상태 표시 -->
+                                        <StackPanel Orientation="Horizontal">
+
+                                            <!-- YOLO -->
+                                            <TextBlock Text="YOLO:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding YoloStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding HasLabel,
+                                                                    Converter={StaticResource YoloStatusColorConverter}}"
+                                                       Margin="4,0,12,0"/>
+
+                                            <!-- Anomaly -->
+                                            <TextBlock Text="Anomaly:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding AnomalyStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding IsNormal,
+                                                                    Converter={StaticResource AnomalyStatusColorConverter}}"
+                                                       Margin="4,0,0,0"/>
+                                        </StackPanel>
+
+                                    </StackPanel>
+                                </Border>
+
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+
+                    </ListBox>
+
 
                 </StackPanel>
             </Border>
@@ -94,7 +149,7 @@
                     <ComboBox x:Name="ClassComboBox"
                   SelectionChanged="ClassComboBox_SelectionChanged"
                   IsEnabled="False">
-                        <ComboBoxItem Content="dent"/>
+                        <ComboBoxItem Content="dent"/> 
                         <ComboBoxItem Content="loose"/>
                     </ComboBox>
 
@@ -111,6 +166,18 @@
                     <Button Content="Save Label"
                         Margin="0,20,0,0"
                         Click="SaveLabel_Click"/>
+
+                    <GroupBox Header="Anomaly Label">
+                        <StackPanel>
+                            <RadioButton x:Name="NormalRadio"
+                                           Content="Normal"
+                                           Checked="NormalRadio_Checked"/>
+                            <RadioButton x:Name="AbnormalRadio"
+                                           Content="Abnormal"
+                                           Checked="AbnormalRadio_Checked"/>
+                        </StackPanel>
+                    </GroupBox>
+
 
 
                 </StackPanel>

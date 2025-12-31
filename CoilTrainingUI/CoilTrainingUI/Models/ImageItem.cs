@@ -10,7 +10,11 @@ namespace CoilTrainingUI.Models
     {
         public string FileName { get; set; }
         public string FullPath { get; set; }
+        public bool HasLabel { get; set; }           // YOLO 박스 존재 여부
+        public bool IsNormal { get; set; } = true;  // Anomaly 기준 정상 여부
 
-        public bool HasLabel { get; set; }
+        // UI 표시용
+        public string YoloStatusText => HasLabel ? "불량" : "정상";
+        public string AnomalyStatusText => IsNormal ? "정상" : "불량";
     }
 }
