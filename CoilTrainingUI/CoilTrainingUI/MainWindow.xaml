@@ -51,7 +51,7 @@
 
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Border Padding="6"
+                                <Border Padding="0"
                                         Margin="0,0,0,1"
                                         CornerRadius="4"
                                         Background="{Binding IsNormal,
