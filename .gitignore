@@ -1,3 +1,7 @@
+#training data
+datasets/
+models/
+
 # NuGet
 packages/
 **/packages/
