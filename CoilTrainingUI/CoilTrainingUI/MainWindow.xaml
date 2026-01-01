@@ -10,12 +10,28 @@
     <DockPanel>
 
         <!-- 상단 메뉴 -->
+
         <Menu DockPanel.Dock="Top">
-            <MenuItem Header="Dataset"/>
-            <MenuItem Header="Labeling"/>
-            <MenuItem Header="Training"/>
-            <MenuItem Header="Model"/>
+
+            <MenuItem Header="Dataset">
+                <!-- 나중에 Open Folder 같은 거 들어갈 자리 -->
+            </MenuItem>
+
+            <MenuItem Header="Labeling">
+                <!-- YOLO 관련 메뉴 예정 -->
+            </MenuItem>
+
+            <MenuItem Header="Training">
+                <MenuItem Header="Export Anomaly Dataset"
+                  Click="ExportAnomalyDataset_Click"/>
+            </MenuItem>
+
+            <MenuItem Header="Model">
+                <!-- ONNX 관련 메뉴 예정 -->
+            </MenuItem>
+
         </Menu>
+
 
         <!-- 하단 로그 영역 -->
         <Border DockPanel.Dock="Bottom" Height="150" Background="#111">

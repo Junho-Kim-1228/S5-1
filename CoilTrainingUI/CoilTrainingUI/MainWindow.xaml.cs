@@ -547,6 +547,82 @@ namespace CoilTrainingUI
             }
         }
 
+        private void ExportAnomalyDataset_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. 현재 실행 경로에서 시작
+            DirectoryInfo? currentDir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+            string targetRootDir = "";
+
+            // 2. "capstone_design" 폴더를 찾을 때까지 계속 상위로 이동
+            while (currentDir != null)
+            {
+                if (currentDir.Name.Equals("capstone_design", StringComparison.OrdinalIgnoreCase))
+                {
+                    targetRootDir = currentDir.FullName;
+                    break;
+                }
+                currentDir = currentDir.Parent;
+            }
+
+            // 3. 못 찾았으면 오류 메시지
+            if (string.IsNullOrEmpty(targetRootDir))
+            {
+                MessageBox.Show(
+                    "'capstone_design' 폴더를 찾을 수 없습니다.\n" +
+                    "프로젝트 루트에서 실행하고 있는지 확인하세요.",
+                    "경로 오류",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error
+                );
+                return;
+            }
+
+
+            // 4. 최종 경로: capstone_design\datasets\anomaly
+            string baseDir = IOPath.Combine(targetRootDir, "datasets", "anomaly");
+
+            // --- 이하 폴더 생성 및 복사 로직 ---
+            string trainDir = IOPath.Combine(baseDir, "train");
+            string valDir = IOPath.Combine(baseDir, "val");
+            string testDir = IOPath.Combine(baseDir, "test");
+
+            try
+            {
+                Directory.CreateDirectory(trainDir);
+                Directory.CreateDirectory(valDir);
+                Directory.CreateDirectory(testDir);
+
+                int normalIndex = 0;
+                foreach (var item in _images)
+                {
+                    if (!File.Exists(item.FullPath)) continue;
+
+                    string fileName = IOPath.GetFileName(item.FullPath);
+                    string destPath;
+
+                    if (item.IsNormal)
+                    {
+                        destPath = (normalIndex++ % 5 == 0)
+                            ? IOPath.Combine(valDir, fileName)
+                            : IOPath.Combine(trainDir, fileName);
+                    }
+                    else
+                    {
+                        destPath = IOPath.Combine(testDir, fileName);
+                    }
+
+                    File.Copy(item.FullPath, destPath, overwrite: true);
+                }
+
+                MessageBox.Show($"데이터셋 내보내기 완료!\n저장위치: {baseDir}");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"오류 발생: {ex.Message}");
+            }
+        }
+
+
         public MainWindow()
         {
             InitializeComponent();
