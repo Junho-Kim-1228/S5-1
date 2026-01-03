@@ -70,8 +70,8 @@
                                 <Border Padding="0"
                                         Margin="0,0,0,1"
                                         CornerRadius="4"
-                                        Background="{Binding IsNormal,
-                                                            Converter={StaticResource NormalToColorConverter}}">
+                                        Background="{Binding ., 
+                                                     Converter={StaticResource ImageStatusToColorConverter}}">
 
                                     <StackPanel Orientation="Vertical">
 
@@ -127,26 +127,36 @@
             <!-- 중앙: 이미지 뷰어 -->
             <Border Grid.Column="1" Background="#222">
                 <ScrollViewer x:Name="ImageScrollViewer"
-                    HorizontalScrollBarVisibility="Auto"
-                    VerticalScrollBarVisibility="Auto"
-                    PreviewMouseWheel="OnMouseWheelZoom">
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto"
+                  PreviewMouseWheel="ImageCanvas_MouseWheel">
 
-                    <Canvas x:Name="ImageCanvas"
-                                Background="#222"
-                                RenderTransformOrigin="0,0"
-                                MouseLeftButtonDown="Canvas_MouseLeftButtonDown"
-                                MouseMove="Canvas_MouseMove"
-                                MouseLeftButtonUp="Canvas_MouseLeftButtonUp">
-                            <Canvas.RenderTransform>
-                                <ScaleTransform x:Name="ImageScale"
-                                    ScaleX="1.0"
-                                    ScaleY="1.0"/>
-                            </Canvas.RenderTransform>
+                    <Grid x:Name="DisplayGrid" RenderTransformOrigin="0,0">
+                        <Grid.RenderTransform>
+                            <ScaleTransform x:Name="ImageScale" ScaleX="1.0" ScaleY="1.0"/>
+                        </Grid.RenderTransform>
 
-                           <Image x:Name="MainImage"
-                                Stretch="None"/>
-                    </Canvas>
+                        <Image x:Name="MainImage"
+                                   Stretch="None"
+                                   IsHitTestVisible="False"
+                                   HorizontalAlignment="Left"
+                                   VerticalAlignment="Top"/>
 
+                        <Canvas x:Name="ImageCanvas"
+                                    Background="Transparent"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Top"
+                                    Width="{Binding ElementName=MainImage, Path=ActualWidth}"
+                                    Height="{Binding ElementName=MainImage, Path=ActualHeight}"
+                    
+                                    PreviewMouseLeftButtonDown="ImageCanvas_PreviewMouseLeftButtonDown"
+                                    PreviewMouseMove="ImageCanvas_PreviewMouseMove"
+                                    PreviewMouseLeftButtonUp="ImageCanvas_PreviewMouseLeftButtonUp"
+
+                                    MouseLeftButtonDown="ImageCanvas_MouseLeftButtonDown"
+                                    MouseMove="ImageCanvas_MouseMove"
+                                    MouseLeftButtonUp="ImageCanvas_MouseLeftButtonUp"/>
+                    </Grid>
                 </ScrollViewer>
             </Border>
 
@@ -165,7 +175,7 @@
                     <ComboBox x:Name="ClassComboBox"
                   SelectionChanged="ClassComboBox_SelectionChanged"
                   IsEnabled="False">
-                        <ComboBoxItem Content="dent"/> 
+                        <ComboBoxItem Content="dent"/>
                         <ComboBoxItem Content="loose"/>
                     </ComboBox>
 
