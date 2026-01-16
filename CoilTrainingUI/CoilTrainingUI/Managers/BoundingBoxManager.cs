@@ -24,7 +24,6 @@ namespace CoilTrainingUI.Managers
         private bool _isDragging;
         private bool _hasDragged;
 
-
         public BoundingBoxManager(Canvas canvas)
         {
             // 중요: 전달받은 canvas를 내부 변수 _canvas에 할당해야 합니다!
