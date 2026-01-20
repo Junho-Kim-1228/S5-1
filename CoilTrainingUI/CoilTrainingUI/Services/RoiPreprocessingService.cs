@@ -1,141 +1,130 @@
-﻿using System;
+﻿using CoilTrainingUI.Models;
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using CoilTrainingUI.Models;
 using IOPath = System.IO.Path;
-
-namespace CoilTrainingUI.Services
+public class RoiPreprocessService
 {
-    public class RoiPreprocessService
+    private readonly string _roiDir;
+
+    public RoiPreprocessService()
     {
-        private readonly string _roiDir;
+        _roiDir = IOPath.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            "Resources",
+            "ROI"
+        );
+    }
 
-        public RoiPreprocessService()
+    public string GetProcessedPath(string originalPath)
+    {
+        string dir = IOPath.Combine(
+            IOPath.GetDirectoryName(originalPath)!,
+            "_roi_processed"
+        );
+
+        string fileName = IOPath.GetFileName(originalPath); // 확장자 유지 (원본이 bmp면 bmp)
+        return IOPath.Combine(dir, fileName);              // ✅ 타입 무관 고정
+    }
+
+    public void DeleteProcessedImage(string originalPath)
+    {
+        var processedPath = GetProcessedPath(originalPath);
+        if (File.Exists(processedPath))
+            File.Delete(processedPath);
+    }
+
+    public BitmapSource GetOrCreateProcessedImage(string originalImagePath, RoiType roiType)
+    {
+        // None이면: 전처리 결과는 존재하면 삭제 + 원본 반환
+        if (roiType == RoiType.None)
         {
-            // 실행 폴더 기준 Resources/ROI
-            _roiDir = IOPath.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "Resources",
-                "ROI"
-            );
+            DeleteProcessedImage(originalImagePath);
+            return LoadBitmap(originalImagePath);
         }
 
-        /// <summary>
-        /// ROI 적용된 이미지를 생성하고 디스크에 저장한 뒤 BitmapSource 반환
-        /// </summary>
-        public BitmapSource GetOrCreateProcessedImage(
-            string originalImagePath,
-            RoiType roiType
-        )
+        string processedPath = GetProcessedPath(originalImagePath);
+
+        // ✅ 타입이 바뀌었어도 우리는 "항상 새로 생성"을 강제하는 편이 안전합니다.
+        // (가장 단순하고 버그가 안 남)
+        DeleteProcessedImage(originalImagePath);
+
+        var processed = ApplyRoi(originalImagePath, roiType);
+        SaveBitmapBmp(processed, processedPath);
+
+        return processed;
+    }
+
+    private BitmapSource ApplyRoi(string originalPath, RoiType roiType)
+    {
+        string roiPath = IOPath.Combine(_roiDir, $"roi_{roiType}.bmp");
+        if (!File.Exists(roiPath))
+            throw new FileNotFoundException($"ROI mask not found: {roiPath}");
+
+        var original = LoadBitmap(originalPath);
+        var mask = LoadBitmap(roiPath);
+
+        if (original.PixelWidth != mask.PixelWidth || original.PixelHeight != mask.PixelHeight)
+            throw new InvalidOperationException("ROI mask size mismatch");
+
+        int width = original.PixelWidth;
+        int height = original.PixelHeight;
+
+        var originalPixels = new byte[width * height * 4];
+        var maskPixels = new byte[width * height * 4];
+        var outPixels = new byte[width * height * 4];
+
+        original.CopyPixels(originalPixels, width * 4, 0);
+        mask.CopyPixels(maskPixels, width * 4, 0);
+
+        for (int i = 0; i < outPixels.Length; i += 4)
         {
-            // ROI 없음 → 원본 그대로 반환
-            if (roiType == RoiType.None)
-                return LoadBitmap(originalImagePath);
+            bool insideRoi = maskPixels[i] > 0;
 
-            string processedPath = GetProcessedPath(originalImagePath, roiType);
-
-            // 이미 만들어졌으면 재사용
-            if (File.Exists(processedPath))
-                return LoadBitmap(processedPath);
-
-            // 새로 생성
-            var processed = ApplyRoi(originalImagePath, roiType);
-
-            SaveBitmap(processed, processedPath);
-
-            return processed;
-        }
-
-        // ---------------- 내부 구현 ----------------
-
-        private BitmapSource ApplyRoi(string originalPath, RoiType roiType)
-        {
-            string roiPath = IOPath.Combine(_roiDir, $"roi_{roiType}.bmp");
-
-            if (!File.Exists(roiPath))
-                throw new FileNotFoundException($"ROI mask not found: {roiPath}");
-
-            var original = LoadBitmap(originalPath);
-            var mask = LoadBitmap(roiPath);
-
-            if (original.PixelWidth != mask.PixelWidth ||
-                original.PixelHeight != mask.PixelHeight)
-                throw new InvalidOperationException("ROI mask size mismatch");
-
-            int width = original.PixelWidth;
-            int height = original.PixelHeight;
-
-            var originalPixels = new byte[width * height * 4];
-            var maskPixels = new byte[width * height * 4];
-            var outPixels = new byte[width * height * 4];
-
-            original.CopyPixels(originalPixels, width * 4, 0);
-            mask.CopyPixels(maskPixels, width * 4, 0);
-
-            for (int i = 0; i < outPixels.Length; i += 4)
+            if (insideRoi)
             {
-                bool insideRoi = maskPixels[i] > 0; // 흰색이면 ROI
-
-                if (insideRoi)
-                {
-                    outPixels[i + 0] = originalPixels[i + 0]; // B
-                    outPixels[i + 1] = originalPixels[i + 1]; // G
-                    outPixels[i + 2] = originalPixels[i + 2]; // R
-                    outPixels[i + 3] = 255;
-                }
-                else
-                {
-                    outPixels[i + 0] = 0;
-                    outPixels[i + 1] = 0;
-                    outPixels[i + 2] = 0;
-                    outPixels[i + 3] = 255;
-                }
+                outPixels[i + 0] = originalPixels[i + 0];
+                outPixels[i + 1] = originalPixels[i + 1];
+                outPixels[i + 2] = originalPixels[i + 2];
+                outPixels[i + 3] = 255;
             }
-
-            return BitmapSource.Create(
-                width,
-                height,
-                original.DpiX,
-                original.DpiY,
-                PixelFormats.Bgra32,
-                null,
-                outPixels,
-                width * 4
-            );
+            else
+            {
+                outPixels[i + 0] = 0;
+                outPixels[i + 1] = 0;
+                outPixels[i + 2] = 0;
+                outPixels[i + 3] = 255;
+            }
         }
 
-        private static BitmapSource LoadBitmap(string path)
-        {
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.UriSource = new Uri(path, UriKind.Absolute);
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.EndInit();
-            bmp.Freeze();
-            return bmp;
-        }
+        return BitmapSource.Create(
+            width, height,
+            original.DpiX, original.DpiY,
+            PixelFormats.Bgra32,
+            null, outPixels, width * 4
+        );
+    }
 
-        private static void SaveBitmap(BitmapSource bitmap, string path)
-        {
-            Directory.CreateDirectory(IOPath.GetDirectoryName(path)!);
+    private static BitmapSource LoadBitmap(string path)
+    {
+        var bmp = new BitmapImage();
+        bmp.BeginInit();
+        bmp.UriSource = new Uri(path, UriKind.Absolute);
+        bmp.CacheOption = BitmapCacheOption.OnLoad;
+        bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache; // ✅ 캐시 방지
+        bmp.EndInit();
+        bmp.Freeze();
+        return bmp;
+    }
 
-            BitmapEncoder encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+    private static void SaveBitmapBmp(BitmapSource bitmap, string path)
+    {
+        Directory.CreateDirectory(IOPath.GetDirectoryName(path)!);
 
-            using var fs = new FileStream(path, FileMode.Create);
-            encoder.Save(fs);
-        }
+        BitmapEncoder encoder = new BmpBitmapEncoder(); // ✅ bmp로 저장
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
 
-        private static string GetProcessedPath(string originalPath, RoiType roiType)
-        {
-            string dir = IOPath.Combine(
-                IOPath.GetDirectoryName(originalPath)!,
-                "_roi_processed"
-            );
-
-            string name = IOPath.GetFileNameWithoutExtension(originalPath);
-            return IOPath.Combine(dir, $"{name}_{roiType}.png");
-        }
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+        encoder.Save(fs);
     }
 }

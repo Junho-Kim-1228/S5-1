@@ -23,6 +23,8 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
+        private bool _isLoadingImage;
+
         private YoloLabelService _yoloService;
         private BoundingBoxManager _bboxManager;
         private readonly DatasetExportService _exportService = new();
@@ -235,68 +237,76 @@ namespace CoilTrainingUI
 
         private void LoadImage(string imagePath)
         {
-            _currentImagePath = imagePath;
-            ClassComboBox.IsEnabled = false;
-
-            // 1️⃣ ImageStateManager 보장
-            _imageStateManager.EnsureImage(imagePath);
-
-            // 2️⃣ 이미지 로드
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.UriSource = new Uri(imagePath, UriKind.Absolute);
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.EndInit();
-
-            _rawBitmap = bitmap;              // 🔥 반드시 저장
-            MainImage.Source = bitmap;
-
-            ImageCanvas.Width = bitmap.PixelWidth;
-            ImageCanvas.Height = bitmap.PixelHeight;
-
-            // 3️⃣ Canvas 초기화
-            _bboxManager.ClearAll();
-
-            // 4️⃣ YOLO 라벨 로드
-            _imageStateManager.ClearLabels(imagePath);
-            _yoloService.Load(
-                imagePath,
-                _imageStateManager.GetMutableLabels(imagePath)
-            );
-
-            foreach (var bbox in _imageStateManager.GetLabels(imagePath))
+            _isLoadingImage = true;
+            try
             {
-                _bboxManager.AddFromModel(
-                    bbox,
-                    ImageCanvas.Width,
-                    ImageCanvas.Height
+                _currentImagePath = imagePath;
+                ClassComboBox.IsEnabled = false;
+
+                // 1️⃣ ImageStateManager 보장
+                _imageStateManager.EnsureImage(imagePath);
+
+                // 2️⃣ 이미지 로드
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.UriSource = new Uri(imagePath, UriKind.Absolute);
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.EndInit();
+
+                _rawBitmap = bitmap;              // 🔥 반드시 저장
+                MainImage.Source = bitmap;
+
+                ImageCanvas.Width = bitmap.PixelWidth;
+                ImageCanvas.Height = bitmap.PixelHeight;
+
+                // 3️⃣ Canvas 초기화
+                _bboxManager.ClearAll();
+
+                // 4️⃣ YOLO 라벨 로드
+                _imageStateManager.ClearLabels(imagePath);
+                _yoloService.Load(
+                    imagePath,
+                    _imageStateManager.GetMutableLabels(imagePath)
                 );
+
+                foreach (var bbox in _imageStateManager.GetLabels(imagePath))
+                {
+                    _bboxManager.AddFromModel(
+                        bbox,
+                        ImageCanvas.Width,
+                        ImageCanvas.Height
+                    );
+                }
+
+                // 5️⃣ Anomaly 상태
+                bool isNormal = _anomalyService.Load(imagePath);
+                _imageStateManager.SetNormal(imagePath, isNormal);
+
+                // 6️⃣ ROI 타입
+                var roiType = _roiService.Load(imagePath);
+                _imageStateManager.SetRoiType(imagePath, roiType);
+
+                // 7️⃣ UI 반영
+                if (ImageListBox.SelectedItem is ImageItem item)
+                {
+                    item.IsNormal = isNormal;
+                    item.HasLabel = _imageStateManager.HasLabel(imagePath);
+                    item.RoiType = roiType;
+
+                    NormalRadio.IsChecked = isNormal;
+                    AbnormalRadio.IsChecked = !isNormal;
+                }
+
+                RestoreRoiTypeUI(imagePath);
+                ImageListBox.Items.Refresh();
+
+                // 🔥 8️⃣ ROI 체크 상태에 따라 화면 갱신 (이게 핵심)
+                UpdateRoiDisplay();
             }
-
-            // 5️⃣ Anomaly 상태
-            bool isNormal = _anomalyService.Load(imagePath);
-            _imageStateManager.SetNormal(imagePath, isNormal);
-
-            // 6️⃣ ROI 타입
-            var roiType = _roiService.Load(imagePath);
-            _imageStateManager.SetRoiType(imagePath, roiType);
-
-            // 7️⃣ UI 반영
-            if (ImageListBox.SelectedItem is ImageItem item)
+            finally
             {
-                item.IsNormal = isNormal;
-                item.HasLabel = _imageStateManager.HasLabel(imagePath);
-                item.RoiType = roiType;
-
-                NormalRadio.IsChecked = isNormal;
-                AbnormalRadio.IsChecked = !isNormal;
+                _isLoadingImage = false;
             }
-
-            RestoreRoiTypeUI(imagePath);
-            ImageListBox.Items.Refresh();
-
-            // 🔥 8️⃣ ROI 체크 상태에 따라 화면 갱신 (이게 핵심)
-            UpdateRoiDisplay();
         }
 
         private void UpdateRoiDisplay()
@@ -428,23 +438,32 @@ namespace CoilTrainingUI
 
         private void RoiTypeRadio_Checked(object sender, RoutedEventArgs e)
         {
+            if (_isLoadingImage) return;
+
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
-
             if (sender is not RadioButton rb)
                 return;
-
             if (!Enum.TryParse<RoiType>(rb.Tag.ToString(), out var roiType))
                 return;
 
-            // 1️⃣ 메모리
+            // 1) 메모리(UI 모델 + StateManager 둘 다)
             item.RoiType = roiType;
+            _imageStateManager.SetRoiType(item.FullPath, roiType);
 
-            // 2️⃣ 파일 저장
+            // 2) 파일 저장
             _roiService.Save(item.FullPath, roiType);
+
+            // 3) 타입 바뀌면 결과는 “1개”만 남아야 하니 기존 결과 삭제
+            _roiPreprocessService.DeleteProcessedImage(item.FullPath);
+
+            // 4) 즉시 화면 갱신
+            UpdateRoiDisplay();
 
             ImageListBox.Items.Refresh();
         }
+
+
 
 
         private void RestoreRoiTypeUI(string imagePath)
