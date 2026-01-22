@@ -1,4 +1,5 @@
 ﻿using CoilTrainingUI.Models;
+using System.Collections.Generic;
 
 namespace CoilTrainingUI.Managers
 {
@@ -6,6 +7,8 @@ namespace CoilTrainingUI.Managers
     {
         private readonly Dictionary<string, List<BoundingBox>> _labels = new();
         private readonly Dictionary<string, bool> _anomalyStates = new();
+
+        private readonly Dictionary<string, RoiType> _roiTypes = new();
 
         public List<BoundingBox> GetMutableLabels(string imagePath)
         {
@@ -20,7 +23,11 @@ namespace CoilTrainingUI.Managers
 
             if (!_anomalyStates.ContainsKey(imagePath))
                 _anomalyStates[imagePath] = true; // 기본: 정상
+
+            if (!_roiTypes.ContainsKey(imagePath))
+                _roiTypes[imagePath] = RoiType.None; // 기본: ROI 없음
         }
+
 
         // ---------- YOLO ----------
         public IReadOnlyList<BoundingBox> GetLabels(string imagePath)
@@ -64,6 +71,19 @@ namespace CoilTrainingUI.Managers
         {
             EnsureImage(imagePath);
             _anomalyStates[imagePath] = isNormal;
+        }
+
+        // ---------- Roi ----------
+        public void SetRoiType(string imagePath, RoiType type)
+        {
+            EnsureImage(imagePath);
+            _roiTypes[imagePath] = type;
+        }
+
+        public RoiType GetRoiType(string imagePath)
+        {
+            EnsureImage(imagePath);
+            return _roiTypes.GetValueOrDefault(imagePath, RoiType.None);
         }
 
     }

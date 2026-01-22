@@ -204,7 +204,30 @@
                         </StackPanel>
                     </GroupBox>
 
+                    <GroupBox Header="ROI Type" Margin="0,15,0,0">
+                        <StackPanel>
+                            <RadioButton Content="None"
+                                         Tag="None"
+                                         Checked="RoiTypeRadio_Checked"/>
 
+                            <RadioButton Content="Type A"
+                                         Tag="A"
+                                         Checked="RoiTypeRadio_Checked"/>
+
+                            <RadioButton Content="Type B"
+                                         Tag="B"
+                                         Checked="RoiTypeRadio_Checked"/>
+
+                            <RadioButton Content="Type C"
+                                         Tag="C"
+                                         Checked="RoiTypeRadio_Checked"/>
+                        </StackPanel>
+                        
+                    </GroupBox>
+                    <CheckBox x:Name="ShowRoiCheckBox"
+                                Content="Show ROI Mask"
+                                Checked="ShowRoiCheckBox_Checked"
+                                Unchecked="ShowRoiCheckBox_Unchecked"/>
 
                 </StackPanel>
             </Border>

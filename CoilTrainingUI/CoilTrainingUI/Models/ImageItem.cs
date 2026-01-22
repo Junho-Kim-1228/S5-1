@@ -16,5 +16,7 @@ namespace CoilTrainingUI.Models
         // UI 표시용
         public string YoloStatusText => HasLabel ? "불량" : "정상";
         public string AnomalyStatusText => IsNormal ? "정상" : "불량";
+
+        public RoiType RoiType { get; set; } = RoiType.None;
     }
 }

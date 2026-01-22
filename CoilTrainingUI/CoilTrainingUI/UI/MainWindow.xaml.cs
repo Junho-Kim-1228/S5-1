@@ -13,6 +13,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using CoilTrainingUI.Models;
+
 
 using IOPath = System.IO.Path;
 
@@ -21,18 +23,27 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
+        private bool _isLoadingImage;
+
         private YoloLabelService _yoloService;
         private BoundingBoxManager _bboxManager;
         private readonly DatasetExportService _exportService = new();
         private CanvasInteractionManager _canvasInteractionManager;
         private ImageStateManager _imageStateManager;
         private AnomalyStateService _anomalyService;
+        private RoiStateService _roiService;
+        private BitmapSource _originalBitmap;
+        private RoiPreprocessService _roiPreprocessService;
 
 
+        // 항상 원본은 유지
+        private BitmapSource _rawBitmap;
 
+        // ROI 적용된 "실제 사용 이미지"
+        private BitmapSource _processedBitmap;
 
-        //----------------------------리팩토링--------------------------------
         private string _currentImagePath;
+
 
         private readonly Dictionary<string, int> _classToId = new()
         {
@@ -42,6 +53,23 @@ namespace CoilTrainingUI
 
         private ObservableCollection<ImageItem> _images
             = new ObservableCollection<ImageItem>();
+
+        private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj)
+    where T : DependencyObject
+        {
+            if (depObj == null) yield break;
+
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(depObj); i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(depObj, i);
+                if (child is T t)
+                    yield return t;
+
+                foreach (T childOfChild in FindVisualChildren<T>(child))
+                    yield return childOfChild;
+            }
+        }
+
 
         private void ImageCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -113,8 +141,6 @@ namespace CoilTrainingUI
             }
         }
 
-
-
         private void ImageCanvas_PreviewMouseMove(object sender, MouseEventArgs e)
         {
             _bboxManager.Drag(
@@ -129,7 +155,6 @@ namespace CoilTrainingUI
                 ImageCanvas.Height
             );
         }
-
 
         private void ImageCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
         {
@@ -212,74 +237,135 @@ namespace CoilTrainingUI
 
         private void LoadImage(string imagePath)
         {
-            _currentImagePath = imagePath;
-
-            ClassComboBox.IsEnabled = false;
-
-            // ✅ 1. ImageStateManager에 이미지 등록
-            _imageStateManager.EnsureImage(imagePath);
-
-            // ✅ 2. 이미지 로드
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.UriSource = new Uri(imagePath, UriKind.Absolute);
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.EndInit();
-
-            MainImage.Source = bitmap;
-            ImageCanvas.Width = bitmap.PixelWidth;
-            ImageCanvas.Height = bitmap.PixelHeight;
-
-            // ✅ 3. Canvas 초기화
-            _bboxManager.ClearAll();
-
-            // ✅ 4. YOLO 라벨 로드 → ImageStateManager
-            _imageStateManager.ClearLabels(imagePath);
-            _yoloService.Load(
-                imagePath,
-                _imageStateManager.GetMutableLabels(imagePath)
-            );
-
-
-            // ✅ 5. 메모리 상태 → Canvas 복원
-            foreach (var bbox in _imageStateManager.GetLabels(imagePath))
+            _isLoadingImage = true;
+            try
             {
-                _bboxManager.AddFromModel(
-                    bbox,
-                    ImageCanvas.Width,
-                    ImageCanvas.Height
+                _currentImagePath = imagePath;
+                ClassComboBox.IsEnabled = false;
+
+                // 1️⃣ ImageStateManager 보장
+                _imageStateManager.EnsureImage(imagePath);
+
+                // 2️⃣ 이미지 로드
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.UriSource = new Uri(imagePath, UriKind.Absolute);
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.EndInit();
+
+                _rawBitmap = bitmap;              // 🔥 반드시 저장
+                MainImage.Source = bitmap;
+
+                ImageCanvas.Width = bitmap.PixelWidth;
+                ImageCanvas.Height = bitmap.PixelHeight;
+
+                // 3️⃣ Canvas 초기화
+                _bboxManager.ClearAll();
+
+                // 4️⃣ YOLO 라벨 로드
+                _imageStateManager.ClearLabels(imagePath);
+                _yoloService.Load(
+                    imagePath,
+                    _imageStateManager.GetMutableLabels(imagePath)
                 );
+
+                foreach (var bbox in _imageStateManager.GetLabels(imagePath))
+                {
+                    _bboxManager.AddFromModel(
+                        bbox,
+                        ImageCanvas.Width,
+                        ImageCanvas.Height
+                    );
+                }
+
+                // 5️⃣ Anomaly 상태
+                bool isNormal = _anomalyService.Load(imagePath);
+                _imageStateManager.SetNormal(imagePath, isNormal);
+
+                // 6️⃣ ROI 타입
+                var roiType = _roiService.Load(imagePath);
+                _imageStateManager.SetRoiType(imagePath, roiType);
+
+                _roiPreprocessService.EnsureProcessed(imagePath, roiType);
+
+                // 7️⃣ UI 반영
+                if (ImageListBox.SelectedItem is ImageItem item)
+                {
+                    item.IsNormal = isNormal;
+                    item.HasLabel = _imageStateManager.HasLabel(imagePath);
+                    item.RoiType = roiType;
+
+                    NormalRadio.IsChecked = isNormal;
+                    AbnormalRadio.IsChecked = !isNormal;
+                }
+
+                RestoreRoiTypeUI(imagePath);
+                ImageListBox.Items.Refresh();
+
+                // 🔥 8️⃣ ROI 체크 상태에 따라 화면 갱신 (이게 핵심)
+                UpdateRoiDisplay();
             }
-
-            // ✅ 6. Anomaly 상태 로드
-            bool isNormal = _anomalyService.Load(imagePath);
-            _imageStateManager.SetNormal(imagePath, isNormal);
-
-            // ✅ 7. UI 반영
-            if (ImageListBox.SelectedItem is ImageItem item)
+            finally
             {
-                item.IsNormal = isNormal;
-                item.HasLabel = _imageStateManager.HasLabel(imagePath);
-
-                NormalRadio.IsChecked = isNormal;
-                AbnormalRadio.IsChecked = !isNormal;
+                _isLoadingImage = false;
             }
-
-            ImageListBox.Items.Refresh();
         }
+
+        private void UpdateRoiDisplay()
+        {
+            if (_rawBitmap == null || string.IsNullOrEmpty(_currentImagePath))
+                return;
+
+            if (ShowRoiCheckBox.IsChecked == true)
+            {
+                var roiType = _imageStateManager.GetRoiType(_currentImagePath);
+
+                // ✅ 서비스가 알아서 (생성/로드)해서 BitmapSource 반환
+                MainImage.Source = _roiPreprocessService.GetOrCreateProcessedImage(_currentImagePath, roiType);
+            }
+            else
+            {
+                MainImage.Source = _rawBitmap;
+            }
+        }
+
+
 
         private void LoadImageFolder(string folderPath)
         {
             _images.Clear();
 
-            var imageFiles = Directory.GetFiles(folderPath, "*.jpg");
+            var imageFiles = Directory.GetFiles(folderPath, "*.bmp");
 
             foreach (var img in imageFiles)
             {
+                _imageStateManager.EnsureImage(img);
+
+                // ✅ 1) 저장된 ROI 먼저 로드 (없으면 None으로 간주)
+                RoiType roiType = RoiType.None;
+
+                if (_roiService.HasState(img))
+                    roiType = _roiService.Load(img);
+
+                // ✅ 2) 저장값이 None일 때만 파일명 규칙으로 자동 지정
+                if (roiType == RoiType.None)
+                {
+                    var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(img));
+
+                    // inferred가 None이어도 저장해두면 "처리됨" 상태가 유지됨(원하면 조건 걸어도 됨)
+                    roiType = inferred;
+                    _roiService.Save(img, roiType);
+                }
+
+                // ✅ 3) 메모리 반영
+                _imageStateManager.SetRoiType(img, roiType);
+
+                // ✅ 4) 전처리 생성(Show 상관 없음)
+                _roiPreprocessService.EnsureProcessed(img, roiType);
+
                 // 1️⃣ YOLO 라벨 실제 로드
                 var labels = new List<BoundingBox>();
                 _yoloService.Load(img, labels);
-
                 bool hasLabel = labels.Count > 0;
 
                 // 2️⃣ Anomaly 상태 로드
@@ -290,12 +376,14 @@ namespace CoilTrainingUI
                     FileName = IOPath.GetFileName(img),
                     FullPath = img,
                     HasLabel = hasLabel,
-                    IsNormal = isNormal
+                    IsNormal = isNormal,
+                    RoiType = roiType
                 });
             }
 
             ImageListBox.ItemsSource = _images;
         }
+
 
 
 
@@ -372,6 +460,129 @@ namespace CoilTrainingUI
             return AppDomain.CurrentDomain.BaseDirectory;
         }
 
+        private void RoiTypeRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingImage) return;
+
+            if (ImageListBox.SelectedItem is not ImageItem item)
+                return;
+            if (sender is not RadioButton rb)
+                return;
+            if (!Enum.TryParse<RoiType>(rb.Tag.ToString(), out var roiType))
+                return;
+
+            // 1) 메모리(UI 모델 + StateManager 둘 다)
+            item.RoiType = roiType;
+            _imageStateManager.SetRoiType(item.FullPath, roiType);
+
+            // 2) 파일 저장
+            _roiService.Save(item.FullPath, roiType);
+
+            // ✅ Show 여부와 무관하게 "전처리 파일"을 생성/갱신
+            _roiPreprocessService.EnsureProcessed(item.FullPath, roiType);
+
+            // 4) 즉시 화면 갱신
+            UpdateRoiDisplay();
+
+            ImageListBox.Items.Refresh();
+        }
+
+
+        private void RestoreRoiTypeUI(string imagePath)
+        {
+            if (ImageListBox.SelectedItem is not ImageItem item)
+                return;
+
+            foreach (var child in LogicalTreeHelper.GetChildren(this))
+            {
+                // 아무것도 안 함 (placeholder)
+            }
+
+            // 간단하게 직접 찾는 방식
+            foreach (var rb in FindVisualChildren<RadioButton>(this))
+            {
+                if (rb.Tag?.ToString() == item.RoiType.ToString())
+                {
+                    rb.IsChecked = true;
+                    return;
+                }
+            }
+        }
+
+        private void ShowRoiCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            UpdateRoiDisplay();
+        }
+
+        private void ShowRoiCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            UpdateRoiDisplay();
+        }
+
+        private RoiType InferRoiTypeFromFileName(string fileName)
+        {
+            // fileName: "250825_151708_A35W_4-1 [1024].bmp" 처럼 들어온다고 가정
+            // 1) 확장자 제거
+            string name = IOPath.GetFileNameWithoutExtension(fileName);
+
+            // 2) 마지막 '-' 위치 찾기
+            int idx = name.LastIndexOf('-');
+            if (idx < 0 || idx == name.Length - 1)
+                return RoiType.None;
+
+            // 3) 마지막 '-' 뒤 숫자만 파싱 (뒤에 공백/대괄호가 있어도 안전하게)
+            // 예: "4-1 [1024]" -> idx 뒤 문자열은 "1 [1024]"
+            string tail = name.Substring(idx + 1).Trim();
+
+            // tail의 선두 숫자만 읽기
+            int n = 0;
+            int i = 0;
+            while (i < tail.Length && char.IsDigit(tail[i]))
+            {
+                n = n * 10 + (tail[i] - '0');
+                i++;
+            }
+
+            if (i == 0) return RoiType.None; // 숫자 없음
+
+            return n switch
+            {
+                1 => RoiType.A,
+                2 => RoiType.B,
+                3 => RoiType.C,
+                _ => RoiType.None
+            };
+        }
+
+        private RoiType ResolveRoiTypeOnlyWhenNone(string imagePath)
+        {
+            // 1) 저장된 값이 있으면 로드
+            // (HasState는 RoiStateService에 추가되어 있어야 합니다)
+            if (_roiService.HasState(imagePath))
+            {
+                var saved = _roiService.Load(imagePath);
+
+                // ✅ 이미 지정(A/B/C)되어 있으면 그대로 둠
+                if (saved != RoiType.None)
+                    return saved;
+
+                // ✅ 저장은 되어있는데 None이면 -> 자동 지정 시도
+                var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(imagePath));
+                if (inferred != RoiType.None)
+                {
+                    _roiService.Save(imagePath, inferred);
+                    return inferred;
+                }
+
+                return RoiType.None;
+            }
+
+            // 2) 저장 자체가 없으면 -> 자동 지정 시도 후 저장(원하면 None도 저장 가능)
+            var inferred2 = InferRoiTypeFromFileName(IOPath.GetFileName(imagePath));
+            _roiService.Save(imagePath, inferred2);  // None도 저장해두면 다음 실행 때 "처리됨" 상태가 됨
+            return inferred2;
+        }
+
 
 
         public MainWindow()
@@ -386,6 +597,8 @@ namespace CoilTrainingUI
             );
             _imageStateManager = new ImageStateManager();
             _anomalyService = new AnomalyStateService();
+            _roiService = new RoiStateService();
+            _roiPreprocessService = new RoiPreprocessService();
 
             string folderPath = @"C:\Users\wnsgh\Desktop\input";
             LoadImageFolder(folderPath);
