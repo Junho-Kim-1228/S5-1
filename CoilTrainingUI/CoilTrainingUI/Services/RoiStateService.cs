@@ -9,7 +9,7 @@ namespace CoilTrainingUI.Services
     {
         public void Save(string imagePath, RoiType roiType)
         {
-            string path = Path.ChangeExtension(imagePath, ".roi.json");
+            string path = GetJsonPath(imagePath);
 
             var data = new RoiStateDto
             {
@@ -26,7 +26,7 @@ namespace CoilTrainingUI.Services
 
         public RoiType Load(string imagePath)
         {
-            string path = Path.ChangeExtension(imagePath, ".roi.json");
+            string path = GetJsonPath(imagePath);
 
             if (!File.Exists(path))
                 return RoiType.None;
@@ -47,9 +47,19 @@ namespace CoilTrainingUI.Services
             return RoiType.None;
         }
 
+        public bool HasState(string imagePath)
+        {
+            return File.Exists(GetJsonPath(imagePath));
+        }
+
+        private static string GetJsonPath(string imagePath)
+        {
+            return Path.ChangeExtension(imagePath, ".roi.json");
+        }
+
         private class RoiStateDto
         {
-            public string RoiType { get; set; }
+            public string RoiType { get; set; } = "";
         }
     }
 }

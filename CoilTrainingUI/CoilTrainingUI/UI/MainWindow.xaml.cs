@@ -286,6 +286,8 @@ namespace CoilTrainingUI
                 var roiType = _roiService.Load(imagePath);
                 _imageStateManager.SetRoiType(imagePath, roiType);
 
+                _roiPreprocessService.EnsureProcessed(imagePath, roiType);
+
                 // 7️⃣ UI 반영
                 if (ImageListBox.SelectedItem is ImageItem item)
                 {
@@ -318,18 +320,15 @@ namespace CoilTrainingUI
             {
                 var roiType = _imageStateManager.GetRoiType(_currentImagePath);
 
-                var processed = _roiPreprocessService.GetOrCreateProcessedImage(
-                    _currentImagePath,
-                    roiType
-                );
-
-                MainImage.Source = processed;
+                // ✅ 서비스가 알아서 (생성/로드)해서 BitmapSource 반환
+                MainImage.Source = _roiPreprocessService.GetOrCreateProcessedImage(_currentImagePath, roiType);
             }
             else
             {
                 MainImage.Source = _rawBitmap;
             }
         }
+
 
 
         private void LoadImageFolder(string folderPath)
@@ -340,10 +339,33 @@ namespace CoilTrainingUI
 
             foreach (var img in imageFiles)
             {
+                _imageStateManager.EnsureImage(img);
+
+                // ✅ 1) 저장된 ROI 먼저 로드 (없으면 None으로 간주)
+                RoiType roiType = RoiType.None;
+
+                if (_roiService.HasState(img))
+                    roiType = _roiService.Load(img);
+
+                // ✅ 2) 저장값이 None일 때만 파일명 규칙으로 자동 지정
+                if (roiType == RoiType.None)
+                {
+                    var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(img));
+
+                    // inferred가 None이어도 저장해두면 "처리됨" 상태가 유지됨(원하면 조건 걸어도 됨)
+                    roiType = inferred;
+                    _roiService.Save(img, roiType);
+                }
+
+                // ✅ 3) 메모리 반영
+                _imageStateManager.SetRoiType(img, roiType);
+
+                // ✅ 4) 전처리 생성(Show 상관 없음)
+                _roiPreprocessService.EnsureProcessed(img, roiType);
+
                 // 1️⃣ YOLO 라벨 실제 로드
                 var labels = new List<BoundingBox>();
                 _yoloService.Load(img, labels);
-
                 bool hasLabel = labels.Count > 0;
 
                 // 2️⃣ Anomaly 상태 로드
@@ -354,12 +376,14 @@ namespace CoilTrainingUI
                     FileName = IOPath.GetFileName(img),
                     FullPath = img,
                     HasLabel = hasLabel,
-                    IsNormal = isNormal
+                    IsNormal = isNormal,
+                    RoiType = roiType
                 });
             }
 
             ImageListBox.ItemsSource = _images;
         }
+
 
 
 
@@ -454,16 +478,14 @@ namespace CoilTrainingUI
             // 2) 파일 저장
             _roiService.Save(item.FullPath, roiType);
 
-            // 3) 타입 바뀌면 결과는 “1개”만 남아야 하니 기존 결과 삭제
-            _roiPreprocessService.DeleteProcessedImage(item.FullPath);
+            // ✅ Show 여부와 무관하게 "전처리 파일"을 생성/갱신
+            _roiPreprocessService.EnsureProcessed(item.FullPath, roiType);
 
             // 4) 즉시 화면 갱신
             UpdateRoiDisplay();
 
             ImageListBox.Items.Refresh();
         }
-
-
 
 
         private void RestoreRoiTypeUI(string imagePath)
@@ -496,7 +518,72 @@ namespace CoilTrainingUI
         {
             UpdateRoiDisplay();
         }
-        
+
+        private RoiType InferRoiTypeFromFileName(string fileName)
+        {
+            // fileName: "250825_151708_A35W_4-1 [1024].bmp" 처럼 들어온다고 가정
+            // 1) 확장자 제거
+            string name = IOPath.GetFileNameWithoutExtension(fileName);
+
+            // 2) 마지막 '-' 위치 찾기
+            int idx = name.LastIndexOf('-');
+            if (idx < 0 || idx == name.Length - 1)
+                return RoiType.None;
+
+            // 3) 마지막 '-' 뒤 숫자만 파싱 (뒤에 공백/대괄호가 있어도 안전하게)
+            // 예: "4-1 [1024]" -> idx 뒤 문자열은 "1 [1024]"
+            string tail = name.Substring(idx + 1).Trim();
+
+            // tail의 선두 숫자만 읽기
+            int n = 0;
+            int i = 0;
+            while (i < tail.Length && char.IsDigit(tail[i]))
+            {
+                n = n * 10 + (tail[i] - '0');
+                i++;
+            }
+
+            if (i == 0) return RoiType.None; // 숫자 없음
+
+            return n switch
+            {
+                1 => RoiType.A,
+                2 => RoiType.B,
+                3 => RoiType.C,
+                _ => RoiType.None
+            };
+        }
+
+        private RoiType ResolveRoiTypeOnlyWhenNone(string imagePath)
+        {
+            // 1) 저장된 값이 있으면 로드
+            // (HasState는 RoiStateService에 추가되어 있어야 합니다)
+            if (_roiService.HasState(imagePath))
+            {
+                var saved = _roiService.Load(imagePath);
+
+                // ✅ 이미 지정(A/B/C)되어 있으면 그대로 둠
+                if (saved != RoiType.None)
+                    return saved;
+
+                // ✅ 저장은 되어있는데 None이면 -> 자동 지정 시도
+                var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(imagePath));
+                if (inferred != RoiType.None)
+                {
+                    _roiService.Save(imagePath, inferred);
+                    return inferred;
+                }
+
+                return RoiType.None;
+            }
+
+            // 2) 저장 자체가 없으면 -> 자동 지정 시도 후 저장(원하면 None도 저장 가능)
+            var inferred2 = InferRoiTypeFromFileName(IOPath.GetFileName(imagePath));
+            _roiService.Save(imagePath, inferred2);  // None도 저장해두면 다음 실행 때 "처리됨" 상태가 됨
+            return inferred2;
+        }
+
+
 
         public MainWindow()
         {

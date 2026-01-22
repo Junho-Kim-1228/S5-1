@@ -127,4 +127,19 @@ public class RoiPreprocessService
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
         encoder.Save(fs);
     }
+    public void EnsureProcessed(string originalImagePath, RoiType roiType)
+    {
+        if (roiType == RoiType.None)
+        {
+            DeleteProcessedImage(originalImagePath);
+            return;
+        }
+
+        // 1이미지=1파일 고정이면: 항상 삭제 후 생성이 가장 안전
+        DeleteProcessedImage(originalImagePath);
+
+        var processed = ApplyRoi(originalImagePath, roiType);
+        SaveBitmapBmp(processed, GetProcessedPath(originalImagePath));
+    }
+
 }
