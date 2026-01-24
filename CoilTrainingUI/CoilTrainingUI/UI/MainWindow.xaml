@@ -23,7 +23,8 @@
 
             <MenuItem Header="Training">
                 <MenuItem Header="Export Anomaly Dataset"
-                  Click="ExportAnomalyDataset_Click"/>
+                          Click="ExportAnomalyDataset_Click"/>
+
             </MenuItem>
 
             <MenuItem Header="Model">
@@ -188,10 +189,6 @@
                         <Button Content="＋" Width="40" Click="ZoomIn_Click"/>
                         <Button Content="－" Width="40" Margin="5,0,0,0" Click="ZoomOut_Click"/>
                     </StackPanel>
-
-                    <Button Content="Save Label"
-                        Margin="0,20,0,0"
-                        Click="SaveLabel_Click"/>
 
                     <GroupBox Header="Anomaly Label">
                         <StackPanel>

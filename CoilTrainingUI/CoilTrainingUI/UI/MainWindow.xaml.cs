@@ -17,6 +17,7 @@ using CoilTrainingUI.Models;
 
 
 using IOPath = System.IO.Path;
+using System.Windows.Threading;
 
 
 namespace CoilTrainingUI
@@ -34,7 +35,11 @@ namespace CoilTrainingUI
         private RoiStateService _roiService;
         private BitmapSource _originalBitmap;
         private RoiPreprocessService _roiPreprocessService;
+        private readonly ImageStateService _stateService = new();
 
+        private DispatcherTimer _labelSaveDebounceTimer;
+        private string? _pendingSaveImagePath;
+        private const int LabelSaveDebounceMs = 300;
 
         // 항상 원본은 유지
         private BitmapSource _rawBitmap;
@@ -114,6 +119,11 @@ namespace CoilTrainingUI
             ClassComboBox.SelectedItem = ClassComboBox.Items
                 .OfType<ComboBoxItem>()
                 .First(i => i.Content.ToString() == bbox.ClassName);
+            
+            RequestSaveLabelsDebounced(_currentImagePath);
+
+
+            SaveLabelsToStateJson(_currentImagePath);
         }
 
         private void ImageCanvas_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -154,6 +164,17 @@ namespace CoilTrainingUI
                 ImageCanvas.Width,
                 ImageCanvas.Height
             );
+
+            // ✅ 드래그가 끝난 좌표를 state.json에 저장
+            if (!string.IsNullOrEmpty(_currentImagePath))
+            {
+                _bboxManager.ForceUpdateAll(ImageCanvas.Width, ImageCanvas.Height);
+                SaveLabelsToStateJson(_currentImagePath);
+            }
+
+            // 드래그 끝난 결과 저장(디바운스)
+            if (!string.IsNullOrEmpty(_currentImagePath))
+                RequestSaveLabelsDebounced(_currentImagePath);
         }
 
         private void ImageCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
@@ -193,6 +214,13 @@ namespace CoilTrainingUI
                 item.HasLabel = _imageStateManager.HasLabel(_currentImagePath);
                 ImageListBox.Items.Refresh();
             }
+
+            _imageStateManager.RemoveLabel(_currentImagePath, removedBBox);
+
+            // ✅ 삭제 반영 저장
+            SaveLabelsToStateJson(_currentImagePath);
+
+            RequestSaveLabelsDebounced(_currentImagePath);
         }
 
 
@@ -215,24 +243,41 @@ namespace CoilTrainingUI
                 imageItem.HasLabel = _imageStateManager.HasLabel(_currentImagePath);
                 ImageListBox.Items.Refresh();
             }
+
+            _bboxManager.SetSelectedClass(className);
+            RequestSaveLabelsDebounced(_currentImagePath);
+
+            // ✅ 클래스 변경 반영 저장
+            SaveLabelsToStateJson(_currentImagePath);
+
         }
 
-        private void SaveLabel_Click(object sender, RoutedEventArgs e)
+        private void SaveLabelsToStateJson(string imagePath)
         {
-            if (string.IsNullOrEmpty(_currentImagePath))
-                return;
+            // 혹시 캔버스 변경이 남아있다면 확정(드래그 종료 등에서 호출하므로 안전)
+            _bboxManager.ForceUpdateAll(ImageCanvas.Width, ImageCanvas.Height);
 
-            // 🔥🔥🔥 이 줄이 핵심
-            _bboxManager.ForceUpdateAll(
-                ImageCanvas.Width,
-                ImageCanvas.Height
-            );
+            var state = _stateService.Load(imagePath);
 
-            var labels = _imageStateManager.GetLabels(_currentImagePath);
-            _yoloService.Save(_currentImagePath, labels);
+            state.Labels.Clear();
 
-            MessageBox.Show("YOLO label saved");
+            var boxes = _imageStateManager.GetLabels(imagePath);
+            foreach (var b in boxes)
+            {
+                state.Labels.Add(new LabelDto
+                {
+                    ClassName = b.ClassName,
+                    X = b.X,
+                    Y = b.Y,
+                    Width = b.Width,
+                    Height = b.Height
+                });
+            }
+
+            _stateService.Save(imagePath, state); // 여기서 IsNormal null이면 true로 정리되게 해놔야 함
         }
+
+
 
 
         private void LoadImage(string imagePath)
@@ -262,20 +307,38 @@ namespace CoilTrainingUI
                 // 3️⃣ Canvas 초기화
                 _bboxManager.ClearAll();
 
-                // 4️⃣ YOLO 라벨 로드
+                // 4️⃣ 라벨 로드: state.json 우선
+                _bboxManager.ClearAll();
                 _imageStateManager.ClearLabels(imagePath);
-                _yoloService.Load(
-                    imagePath,
-                    _imageStateManager.GetMutableLabels(imagePath)
-                );
 
+                var state = _stateService.Load(imagePath);
+
+                if (state.Labels.Count > 0)
+                {
+                    var mutable = _imageStateManager.GetMutableLabels(imagePath);
+
+                    foreach (var l in state.Labels)
+                    {
+                        mutable.Add(new BoundingBox
+                        {
+                            X = l.X,
+                            Y = l.Y,
+                            Width = l.Width,
+                            Height = l.Height,
+                            ClassName = l.ClassName
+                        });
+                    }
+                }
+                else
+                {
+                    // 레거시 txt fallback (읽기만)
+                    _yoloService.Load(imagePath, _imageStateManager.GetMutableLabels(imagePath));
+                }
+
+                // 캔버스에 표시
                 foreach (var bbox in _imageStateManager.GetLabels(imagePath))
                 {
-                    _bboxManager.AddFromModel(
-                        bbox,
-                        ImageCanvas.Width,
-                        ImageCanvas.Height
-                    );
+                    _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
                 }
 
                 // 5️⃣ Anomaly 상태
@@ -364,9 +427,27 @@ namespace CoilTrainingUI
                 _roiPreprocessService.EnsureProcessed(img, roiType);
 
                 // 1️⃣ YOLO 라벨 실제 로드
-                var labels = new List<BoundingBox>();
-                _yoloService.Load(img, labels);
-                bool hasLabel = labels.Count > 0;
+                var s = _stateService.Load(img);
+                bool hasLabel = s.Labels.Count > 0;
+
+                if (!hasLabel)
+                {
+                    var labels = new List<BoundingBox>();
+                    _yoloService.Load(img, labels);
+                    hasLabel = labels.Count > 0;
+
+                    // (선택) txt가 있으면 state.json으로 마이그레이션
+                    if (hasLabel)
+                    {
+                        s.Labels.Clear();
+                        foreach (var b in labels)
+                        {
+                            s.Labels.Add(new LabelDto { ClassName = b.ClassName, X = b.X, Y = b.Y, Width = b.Width, Height = b.Height });
+                        }
+                        _stateService.Save(img, s);
+                    }
+                }
+
 
                 // 2️⃣ Anomaly 상태 로드
                 bool isNormal = _anomalyService.Load(img);
@@ -582,8 +663,16 @@ namespace CoilTrainingUI
             _roiService.Save(imagePath, inferred2);  // None도 저장해두면 다음 실행 때 "처리됨" 상태가 됨
             return inferred2;
         }
+        private void RequestSaveLabelsDebounced(string imagePath) //디바운스 트리거
+        {
+            if (_isLoadingImage) return;
+            if (string.IsNullOrEmpty(imagePath)) return;
 
+            _pendingSaveImagePath = imagePath;
 
+            _labelSaveDebounceTimer.Stop();
+            _labelSaveDebounceTimer.Start();
+        }
 
         public MainWindow()
         {
@@ -599,6 +688,22 @@ namespace CoilTrainingUI
             _anomalyService = new AnomalyStateService();
             _roiService = new RoiStateService();
             _roiPreprocessService = new RoiPreprocessService();
+
+            //타이머 초기화
+            _labelSaveDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(LabelSaveDebounceMs)
+            };
+            _labelSaveDebounceTimer.Tick += (s, e) =>
+            {
+                _labelSaveDebounceTimer.Stop();
+
+                if (_isLoadingImage) return;
+                if (string.IsNullOrEmpty(_pendingSaveImagePath)) return;
+
+                SaveLabelsToStateJson(_pendingSaveImagePath);
+            };
+
 
             string folderPath = @"C:\Users\wnsgh\Desktop\input";
             LoadImageFolder(folderPath);
