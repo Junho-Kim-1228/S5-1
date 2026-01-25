@@ -14,11 +14,11 @@ namespace CoilTrainingUI.Services
     /// - state.json을 SSOT로 사용
     /// - YOLO 학습용으로 images/labels + data.yaml 생성
     /// </summary>
-    public class TrainingWorkspaceService
+    public class YoloWorkspaceService
     {
         private readonly ImageStateService _stateService;
 
-        public TrainingWorkspaceService(ImageStateService stateService)
+        public YoloWorkspaceService(ImageStateService stateService)
         {
             _stateService = stateService;
         }

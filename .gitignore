@@ -1,3 +1,6 @@
+#python scripts
+scripts/
+
 #training data
 datasets/
 models/

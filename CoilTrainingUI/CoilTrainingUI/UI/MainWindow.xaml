@@ -25,6 +25,9 @@
                 <MenuItem Header="Export Anomaly Dataset"
                           Click="ExportAnomalyDataset_Click"/>
 
+                <MenuItem Header="Train All (YOLO + Anomalib)" 
+                          Click="TrainAll_Click"/>
+
             </MenuItem>
 
             <MenuItem Header="Model">

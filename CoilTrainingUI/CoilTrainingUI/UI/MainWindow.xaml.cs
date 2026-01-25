@@ -1,23 +1,20 @@
 ﻿using CoilTrainingUI.Managers;
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Models;
 using CoilTrainingUI.Services;
-
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
-
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
-using CoilTrainingUI.Models;
-
-
-using IOPath = System.IO.Path;
 using System.Windows.Threading;
+using IOPath = System.IO.Path;
 
 
 namespace CoilTrainingUI
@@ -672,6 +669,162 @@ namespace CoilTrainingUI
 
             _labelSaveDebounceTimer.Stop();
             _labelSaveDebounceTimer.Start();
+        }
+
+        private async void TrainAll_Click(object sender, RoutedEventArgs e)
+        {
+            // 학습은 오래 걸리니 UI 멈춤 방지
+            try
+            {
+                if (_images.Count == 0)
+                {
+                    MessageBox.Show("이미지가 없습니다.");
+                    return;
+                }
+
+                // 1) runRoot
+                string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
+                string runRoot = IOPath.Combine(inputDir, "_train_runs");
+                Directory.CreateDirectory(runRoot);
+
+                // 2) 현재 이미지 경로
+                var imagePaths = _images.Select(x => x.FullPath)
+                                        .Where(File.Exists)
+                                        .ToList();
+
+                // 3) YOLO workspace 생성 (라벨 txt는 여기서 workspace에만 생성됨)
+                var yoloWsSvc = new YoloWorkspaceService(_stateService);
+                var yoloWs = yoloWsSvc.BuildYoloWorkspace(
+                    imagePaths,
+                    runRootDir: runRoot,
+                    trainRatio: 0.8,
+                    valRatio: 0.2,
+                    seed: 42,
+                    useRoiProcessedImages: true
+                );
+
+                // 4) Anoma workspace 생성 (정상만)
+                var anomaWsSvc = new AnomaWorkspaceService(_stateService);
+                var anomaWs = anomaWsSvc.BuildWorkspace(
+                    imagePaths,
+                    runRootDir: runRoot,
+                    trainRatio: 0.8,
+                    valRatio: 0.2,
+                    seed: 42,
+                    useRoiProcessedImages: true
+                );
+
+                // 5) 이번 실행 결과 폴더(로그/산출물)
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string runDir = IOPath.Combine(runRoot, $"run_{stamp}_all");
+                string logsDir = IOPath.Combine(runDir, "logs");
+                Directory.CreateDirectory(logsDir);
+
+                string yoloOut = IOPath.Combine(runDir, "yolo_out");
+                string anomaOut = IOPath.Combine(runDir, "anoma_out");
+                Directory.CreateDirectory(yoloOut);
+                Directory.CreateDirectory(anomaOut);
+
+                // 6) 파이썬 스크립트 실행(순차)
+                // ✅ 여긴 나중에 설정파일로 빼세요(지금은 하드코딩으로 먼저 동작시키는 게 우선)
+                string pythonExe = @"C:\Users\wnsgh\anaconda3\envs\mask_vision\python.exe";
+                string projectRoot = FindProjectRoot("capstone_design"); // 당신이 이미 구현한 함수 사용 가능
+
+                string yoloScript = IOPath.Combine(projectRoot, "scripts", "train_yolo.py");
+                string anomaScript = IOPath.Combine(projectRoot, "scripts", "train_anoma.py");
+
+                if (!File.Exists(yoloScript) || !File.Exists(anomaScript))
+                {
+                    MessageBox.Show("scripts/train_yolo.py 또는 scripts/train_anoma.py가 없습니다.");
+                    return;
+                }
+
+                var runner = new PythonRunner();
+                using var cts = new CancellationTokenSource(); // 추후 Cancel 메뉴 추가 가능
+
+                // (1) YOLO
+                int yoloCode = await runner.RunAsync(
+                    pythonExe: pythonExe,
+                    scriptPath: yoloScript,
+                    args: $"--workspace \"{yoloWs.WorkspaceRoot}\" --out \"{yoloOut}\"",
+                    workingDir: projectRoot,
+                    logPath: IOPath.Combine(logsDir, "yolo.log"),
+                    ct: cts.Token
+                );
+
+                if (yoloCode != 0)
+                {
+                    MessageBox.Show($"YOLO 학습 실패 (ExitCode={yoloCode})\nlogs/yolo.log 확인");
+                    OpenFolder(logsDir);
+                    return;
+                }
+
+                // (2) Anomalib
+                int anomaCode = await runner.RunAsync(
+                    pythonExe: pythonExe,
+                    scriptPath: anomaScript,
+                    args: $"--workspace \"{anomaWs.WorkspaceRoot}\" --out \"{anomaOut}\"",
+                    workingDir: projectRoot,
+                    logPath: IOPath.Combine(logsDir, "anoma.log"),
+                    ct: cts.Token
+                );
+
+                if (anomaCode != 0)
+                {
+                    MessageBox.Show($"Anomalib 학습 실패 (ExitCode={anomaCode})\nlogs/anoma.log 확인");
+                    OpenFolder(logsDir);
+                    return;
+                }
+
+                // 7) inference package 생성
+                string pkgDir = IOPath.Combine(runDir, "inference_package");
+                string modelsDir = IOPath.Combine(pkgDir, "models");
+                string cfgDir = IOPath.Combine(pkgDir, "config");
+                Directory.CreateDirectory(modelsDir);
+                Directory.CreateDirectory(cfgDir);
+                Directory.CreateDirectory(IOPath.Combine(pkgDir, "run"));
+
+                // ✅ 스크립트가 아래 파일명을 생성한다는 계약이 필요
+                string yoloOnnx = IOPath.Combine(yoloOut, "yolo.onnx");
+                string anomaOnnx = IOPath.Combine(anomaOut, "anoma.onnx");
+
+                if (!File.Exists(yoloOnnx) || !File.Exists(anomaOnnx))
+                {
+                    MessageBox.Show("ONNX 산출물이 없습니다. 스크립트가 yolo.onnx / anoma.onnx를 out 폴더에 생성해야 합니다.");
+                    OpenFolder(runDir);
+                    return;
+                }
+
+                File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
+                File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
+
+                File.WriteAllText(IOPath.Combine(cfgDir, "pipeline.json"),
+        @"{
+  ""preprocess"": { ""use_roi_processed"": true },
+  ""yolo"": { ""classes"": { ""dent"": 0, ""loose"": 1 } },
+  ""fusion"": { ""rule"": ""AND"", ""yolo_threshold"": 0.25, ""anoma_threshold"": 0.5 }
+}", System.Text.Encoding.UTF8);
+
+                MessageBox.Show($"Train All 완료\n\n{pkgDir}");
+                OpenFolder(pkgDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Train All 중 예외 발생:\n" + ex.Message);
+            }
+        }
+
+        private void OpenFolder(string path)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
+            }
+            catch { }
         }
 
         public MainWindow()
