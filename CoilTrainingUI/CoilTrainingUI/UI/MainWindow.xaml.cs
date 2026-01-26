@@ -682,6 +682,9 @@ namespace CoilTrainingUI
                     return;
                 }
 
+                string projectRoot = FindProjectRoot("capstone_design");
+                var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
+
                 // 1) runRoot
                 string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
                 string runRoot = IOPath.Combine(inputDir, "_train_runs");
@@ -697,10 +700,10 @@ namespace CoilTrainingUI
                 var yoloWs = yoloWsSvc.BuildYoloWorkspace(
                     imagePaths,
                     runRootDir: runRoot,
-                    trainRatio: 0.8,
-                    valRatio: 0.2,
-                    seed: 42,
-                    useRoiProcessedImages: true
+                    trainRatio: settings.Workspace.TrainRatio,
+                    valRatio: settings.Workspace.ValRatio,
+                    seed: settings.Workspace.Seed,
+                    useRoiProcessedImages: settings.Workspace.UseRoiProcessedImages
                 );
 
                 // 4) Anoma workspace 생성 (정상만)
@@ -708,10 +711,10 @@ namespace CoilTrainingUI
                 var anomaWs = anomaWsSvc.BuildWorkspace(
                     imagePaths,
                     runRootDir: runRoot,
-                    trainRatio: 0.8,
-                    valRatio: 0.2,
-                    seed: 42,
-                    useRoiProcessedImages: true
+                    trainRatio: settings.Workspace.TrainRatio,
+                    valRatio: settings.Workspace.ValRatio,
+                    seed: settings.Workspace.Seed,
+                    useRoiProcessedImages: settings.Workspace.UseRoiProcessedImages
                 );
 
                 // 5) 이번 실행 결과 폴더(로그/산출물)
@@ -726,12 +729,10 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(anomaOut);
 
                 // 6) 파이썬 스크립트 실행(순차)
-                // ✅ 여긴 나중에 설정파일로 빼세요(지금은 하드코딩으로 먼저 동작시키는 게 우선)
-                string pythonExe = @"C:\Users\wnsgh\anaconda3\envs\mask_vision\python.exe";
-                string projectRoot = FindProjectRoot("capstone_design"); // 당신이 이미 구현한 함수 사용 가능
+                string pythonExe = settings.PythonExe;
+                string yoloScript = IOPath.Combine(projectRoot, settings.Scripts.YoloTrain);
+                string anomaScript = IOPath.Combine(projectRoot, settings.Scripts.AnomaTrain);
 
-                string yoloScript = IOPath.Combine(projectRoot, "scripts", "train_yolo.py");
-                string anomaScript = IOPath.Combine(projectRoot, "scripts", "train_anoma.py");
 
                 if (!File.Exists(yoloScript) || !File.Exists(anomaScript))
                 {
@@ -799,11 +800,16 @@ namespace CoilTrainingUI
                 File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
                 File.WriteAllText(IOPath.Combine(cfgDir, "pipeline.json"),
-        @"{
-  ""preprocess"": { ""use_roi_processed"": true },
-  ""yolo"": { ""classes"": { ""dent"": 0, ""loose"": 1 } },
-  ""fusion"": { ""rule"": ""AND"", ""yolo_threshold"": 0.25, ""anoma_threshold"": 0.5 }
-}", System.Text.Encoding.UTF8);
+                $@"{{
+                    ""preprocess"": {{ ""use_roi_processed"": true }},
+                    ""yolo"": {{ ""classes"": {{ ""dent"": 0, ""loose"": 1 }} }},
+                    ""fusion"": {{
+                    ""rule"": ""{settings.Fusion.Rule}"",
+                    ""yolo_threshold"": {settings.Fusion.YoloThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)},
+                    ""anoma_threshold"": {settings.Fusion.AnomaThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)}
+                    }}
+                }}", System.Text.Encoding.UTF8);
+
 
                 MessageBox.Show($"Train All 완료\n\n{pkgDir}");
                 OpenFolder(pkgDir);
