@@ -27,6 +27,9 @@
 
                 <MenuItem Header="Train All (YOLO + Anomalib)" 
                           Click="TrainAll_Click"/>
+                <Separator/>
+                <MenuItem Header="Build Package Only" 
+                          Click="BuildPackageOnly_Click"/>
 
             </MenuItem>
 

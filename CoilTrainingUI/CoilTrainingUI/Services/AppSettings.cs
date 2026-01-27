@@ -10,6 +10,8 @@ namespace CoilTrainingUI.Services
         public ScriptsSection Scripts { get; set; } = new();
         public WorkspaceSection Workspace { get; set; } = new();
         public FusionSection Fusion { get; set; } = new();
+        public YoloInferSection YoloInfer { get; set; } = new();
+        public AnomaInferSection AnomaInfer { get; set; } = new();
 
         public class ScriptsSection
         {
@@ -54,4 +56,20 @@ namespace CoilTrainingUI.Services
             return settings;
         }
     }
+    public class YoloInferSection
+    {
+        public int ImgSz { get; set; } = 1024;
+        public bool Letterbox { get; set; } = true;
+        public double ConfThres { get; set; } = 0.25;
+        public double IouThres { get; set; } = 0.45;
+        public int MaxDet { get; set; } = 300;
+    }
+
+    public class AnomaInferSection
+    {
+        public string Mode { get; set; } = "crop"; // "crop" 고정 권장
+        public int InputSize { get; set; } = 256;
+        public double ScoreThres { get; set; } = 0.5;
+    }
+
 }

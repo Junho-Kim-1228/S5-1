@@ -15,6 +15,8 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using IOPath = System.IO.Path;
+using System.Globalization;
+using System.Text.Json;
 
 
 namespace CoilTrainingUI
@@ -57,7 +59,7 @@ namespace CoilTrainingUI
             = new ObservableCollection<ImageItem>();
 
         private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj)
-    where T : DependencyObject
+        where T : DependencyObject
         {
             if (depObj == null) yield break;
 
@@ -682,8 +684,10 @@ namespace CoilTrainingUI
                     return;
                 }
 
+
                 string projectRoot = FindProjectRoot("capstone_design");
                 var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
+
 
                 // 1) runRoot
                 string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
@@ -694,6 +698,9 @@ namespace CoilTrainingUI
                 var imagePaths = _images.Select(x => x.FullPath)
                                         .Where(File.Exists)
                                         .ToList();
+
+                int totalImages = imagePaths.Count;
+                int normalImages = imagePaths.Count(p => (_stateService.Load(p).IsNormal ?? true) == true);
 
                 // 3) YOLO workspace 생성 (라벨 txt는 여기서 workspace에만 생성됨)
                 var yoloWsSvc = new YoloWorkspaceService(_stateService);
@@ -799,16 +806,67 @@ namespace CoilTrainingUI
                 File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
                 File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
-                File.WriteAllText(IOPath.Combine(cfgDir, "pipeline.json"),
-                $@"{{
-                    ""preprocess"": {{ ""use_roi_processed"": true }},
-                    ""yolo"": {{ ""classes"": {{ ""dent"": 0, ""loose"": 1 }} }},
-                    ""fusion"": {{
-                    ""rule"": ""{settings.Fusion.Rule}"",
-                    ""yolo_threshold"": {settings.Fusion.YoloThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)},
-                    ""anoma_threshold"": {settings.Fusion.AnomaThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)}
-                    }}
-                }}", System.Text.Encoding.UTF8);
+                var pipelineObj = new
+                {
+                    schema_version = 1,
+                    input = new
+                    {
+                        image_format = "bmp",
+                        use_roi_processed = settings.Workspace.UseRoiProcessedImages
+                    },
+                    yolo = new
+                    {
+                        model = "models/yolo.onnx",
+                        imgsz = settings.YoloInfer.ImgSz,
+                        letterbox = settings.YoloInfer.Letterbox,
+                        conf_thres = settings.YoloInfer.ConfThres,
+                        iou_thres = settings.YoloInfer.IouThres,
+                        max_det = settings.YoloInfer.MaxDet,
+                        class_map = new { dent = 0, loose = 1 }
+                    },
+                    anoma = new
+                    {
+                        model = "models/anoma.onnx",
+                        mode = settings.AnomaInfer.Mode,
+                        input_size = settings.AnomaInfer.InputSize,
+                        score_thres = settings.AnomaInfer.ScoreThres
+                    },
+                    fusion = new
+                    {
+                        rule = settings.Fusion.Rule,
+                        yolo_conf_thres = settings.Fusion.YoloThreshold,
+                        anoma_score_thres = settings.Fusion.AnomaThreshold
+                    }
+                };
+
+                string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
+                File.WriteAllText(
+                    pipelinePath,
+                    System.Text.Json.JsonSerializer.Serialize(pipelineObj, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }),
+                    System.Text.Encoding.UTF8
+                );
+
+
+                // ✅ 패키지 검증 (없으면 성공 처리 금지)
+                VerifyInferencePackageOrThrow(pkgDir);
+
+                // ✅ manifest 기록 (재현성/디버깅용)
+                WriteRunManifest(
+                    runDir: runDir,
+                    projectRoot: projectRoot,
+                    pythonExe: pythonExe,
+                    yoloScript: yoloScript,
+                    anomaScript: anomaScript,
+                    yoloWorkspaceRoot: yoloWs.WorkspaceRoot,
+                    anomaWorkspaceRoot: anomaWs.WorkspaceRoot,
+                    yoloOutDir: yoloOut,
+                    anomaOutDir: anomaOut,
+                    inferencePackageDir: pkgDir,
+                    settings: settings,
+                    totalImages: totalImages,
+                    normalImages: normalImages
+                );
+
 
 
                 MessageBox.Show($"Train All 완료\n\n{pkgDir}");
@@ -817,7 +875,11 @@ namespace CoilTrainingUI
             catch (Exception ex)
             {
                 MessageBox.Show("Train All 중 예외 발생:\n" + ex.Message);
+
+                // runDir 변수가 스코프 밖이면, 최소 logs 위치라도 열게 구조를 잡으세요.
+                // (가장 쉬운 방법: runDir을 함수 시작에서 string? runDir = null;로 선언하고 나중에 채우기)
             }
+
         }
 
         private void OpenFolder(string path)
@@ -832,6 +894,196 @@ namespace CoilTrainingUI
             }
             catch { }
         }
+
+    private void VerifyInferencePackageOrThrow(string pkgDir)
+    {
+        string modelsDir = IOPath.Combine(pkgDir, "models");
+        string cfgDir = IOPath.Combine(pkgDir, "config");
+
+        string yoloOnnx = IOPath.Combine(modelsDir, "yolo.onnx");
+        string anomaOnnx = IOPath.Combine(modelsDir, "anoma.onnx");
+        string pipeline = IOPath.Combine(cfgDir, "pipeline.json");
+
+        if (!File.Exists(yoloOnnx))
+            throw new FileNotFoundException("Missing yolo.onnx in inference_package/models", yoloOnnx);
+
+        if (!File.Exists(anomaOnnx))
+            throw new FileNotFoundException("Missing anoma.onnx in inference_package/models", anomaOnnx);
+
+        if (!File.Exists(pipeline))
+            throw new FileNotFoundException("Missing pipeline.json in inference_package/config", pipeline);
+
+        // 0바이트 방지
+        var yoloSize = new FileInfo(yoloOnnx).Length;
+        var anomaSize = new FileInfo(anomaOnnx).Length;
+
+        if (yoloSize <= 0)
+            throw new InvalidOperationException("yolo.onnx is empty (0 bytes).");
+
+        if (anomaSize <= 0)
+            throw new InvalidOperationException("anoma.onnx is empty (0 bytes).");
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(pipeline));
+            var root = doc.RootElement;
+
+            Require(root, "schema_version");
+            Require(root, "yolo");
+            Require(root, "anoma");
+            Require(root, "fusion");
+
+            var yolo = root.GetProperty("yolo");
+            Require(yolo, "model");
+            Require(yolo, "imgsz");
+            Require(yolo, "conf_thres");
+            Require(yolo, "iou_thres");
+            Require(yolo, "max_det");
+            Require(yolo, "class_map");
+
+            var anoma = root.GetProperty("anoma");
+            Require(anoma, "model");
+            Require(anoma, "mode");
+            Require(anoma, "input_size");
+            Require(anoma, "score_thres");
+
+            var fusion = root.GetProperty("fusion");
+            Require(fusion, "rule");
+            Require(fusion, "yolo_conf_thres");
+            Require(fusion, "anoma_score_thres");
+
+        }
+
+        private void Require(JsonElement obj, string prop)
+        {
+            if (!obj.TryGetProperty(prop, out _))
+                throw new InvalidOperationException($"pipeline.json missing required field: {prop}");
+        }
+
+
+        private void WriteRunManifest(
+            string runDir,
+            string projectRoot,
+            string pythonExe,
+            string yoloScript,
+            string anomaScript,
+            string yoloWorkspaceRoot,
+            string anomaWorkspaceRoot,
+            string yoloOutDir,
+            string anomaOutDir,
+            string inferencePackageDir,
+            AppSettings settings,
+            int totalImages,
+            int normalImages
+        )
+        {
+            var manifest = new
+            {
+                CreatedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                ProjectRoot = projectRoot,
+                PythonExe = pythonExe,
+                Scripts = new { Yolo = yoloScript, Anoma = anomaScript },
+                Workspaces = new { Yolo = yoloWorkspaceRoot, Anoma = anomaWorkspaceRoot },
+                Outputs = new { YoloOut = yoloOutDir, AnomaOut = anomaOutDir, InferencePackage = inferencePackageDir },
+                Dataset = new { TotalImages = totalImages, NormalImages = normalImages },
+                Settings = settings
+            };
+
+            string path = IOPath.Combine(runDir, "run_manifest.json");
+            var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(path, json);
+        }
+
+        private void BuildPackageOnly_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_images.Count == 0)
+                {
+                    MessageBox.Show("이미지가 없습니다.");
+                    return;
+                }
+
+                string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
+                string runRoot = IOPath.Combine(inputDir, "_train_runs");
+                if (!Directory.Exists(runRoot))
+                {
+                    MessageBox.Show("_train_runs 폴더가 없습니다.");
+                    return;
+                }
+
+                // ✅ 가장 최근 run_..._all 찾기
+                var latestRunDir = Directory.GetDirectories(runRoot, "run_*_all")
+                                            .Select(d => new DirectoryInfo(d))
+                                            .OrderByDescending(d => d.CreationTimeUtc)
+                                            .FirstOrDefault();
+
+                if (latestRunDir == null)
+                {
+                    MessageBox.Show("run_*_all 폴더가 없습니다.");
+                    return;
+                }
+
+                string runDir = latestRunDir.FullName;
+
+                string yoloOut = IOPath.Combine(runDir, "yolo_out");
+                string anomaOut = IOPath.Combine(runDir, "anoma_out");
+
+                string yoloOnnx = IOPath.Combine(yoloOut, "yolo.onnx");
+                string anomaOnnx = IOPath.Combine(anomaOut, "anoma.onnx");
+
+                // ✅ 여기서부터는 학습 재실행 없음. 없으면 그냥 실패해야 정상.
+                if (!File.Exists(yoloOnnx) || !File.Exists(anomaOnnx))
+                {
+                    MessageBox.Show(
+                        "필요한 ONNX가 없습니다.\n\n" +
+                        $"yolo: {yoloOnnx}\n" +
+                        $"anoma: {anomaOnnx}\n\n" +
+                        "Train All을 먼저 수행했는지 확인하세요."
+                    );
+                    OpenFolder(runDir);
+                    return;
+                }
+
+                // 패키지 재생성
+                string pkgDir = IOPath.Combine(runDir, "inference_package");
+                string modelsDir = IOPath.Combine(pkgDir, "models");
+                string cfgDir = IOPath.Combine(pkgDir, "config");
+
+                Directory.CreateDirectory(modelsDir);
+                Directory.CreateDirectory(cfgDir);
+                Directory.CreateDirectory(IOPath.Combine(pkgDir, "run"));
+
+                File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
+                File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
+
+                // pipeline.json은 기존이 있으면 그대로 두고, 없으면 최소 생성
+                string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
+                if (!File.Exists(pipelinePath))
+                {
+                    File.WriteAllText(pipelinePath,
+                @"{ 
+                  ""preprocess"": { ""use_roi_processed"": true },
+                  ""yolo"": { ""classes"": { ""dent"": 0, ""loose"": 1 } },
+                  ""fusion"": { ""rule"": ""AND"", ""yolo_threshold"": 0.25, ""anoma_threshold"": 0.5 }
+                }", System.Text.Encoding.UTF8);
+                }
+
+                // ✅ 검증
+                VerifyInferencePackageOrThrow(pkgDir);
+
+                MessageBox.Show($"Package Only 완료\n\n{pkgDir}");
+                OpenFolder(pkgDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Build Package Only 실패:\n" + ex.Message);
+            }
+        }
+
+
 
         public MainWindow()
         {
