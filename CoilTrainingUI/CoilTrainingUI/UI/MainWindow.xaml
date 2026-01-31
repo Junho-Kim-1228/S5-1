@@ -52,25 +52,34 @@
         <!-- 메인 영역 -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="220"/>
+                <ColumnDefinition Width="290"/>
                 <!-- 좌측 -->
                 <ColumnDefinition Width="*"/>
                 <!-- 중앙 -->
-                <ColumnDefinition Width="260"/>
+                <ColumnDefinition Width="190"/>
                 <!-- 우측 -->
             </Grid.ColumnDefinitions>
 
             <!-- 좌측: 데이터 탐색 -->
             <Border Grid.Column="0" Background="#333" Padding="3">
-                <StackPanel>
+                
+                <DockPanel>
 
                     <TextBlock Text="Dataset"
                                Foreground="White"
                                FontWeight="Bold"
-                               Margin="0,0,0,5"/>
+                               Margin="0,0,0,5"
+                               DockPanel.Dock="Top"/>
+
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10" Background="#444">
+                        <TextBlock x:Name="TotalCountText" Text="Total: 0" Foreground="White" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <TextBlock x:Name="NormalCountText" Text="Normal: 0" Foreground="#A0FFA0" FontSize="12"/>
+                        <TextBlock x:Name="DefectCountText" Text="Defect: 0" Foreground="#FFA0A0" FontSize="12"/>
+                    </StackPanel>
 
                     <ListBox x:Name="ImageListBox"
                         SelectionChanged="ImageListBox_SelectionChanged">
+
 
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -128,7 +137,7 @@
                     </ListBox>
 
 
-                </StackPanel>
+                </DockPanel>
             </Border>
 
             <!-- 중앙: 이미지 뷰어 -->

@@ -39,22 +39,32 @@ namespace CoilTrainingUI.Services
     {
         public static AppSettings LoadOrThrow(string projectRoot)
         {
-            // capstone_design/config/appsettings.json 고정
-            string path = Path.Combine(projectRoot, "config", "appsettings.json");
-            if (!File.Exists(path))
-                throw new FileNotFoundException($"Missing appsettings.json: {path}");
+            string basePath = Path.Combine(projectRoot, "config", "appsettings.json");
+            if (!File.Exists(basePath))
+                throw new FileNotFoundException($"Missing appsettings.json: {basePath}");
 
-            var json = File.ReadAllText(path);
-            var settings = JsonSerializer.Deserialize<AppSettings>(json);
+            var baseSettings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(basePath))
+                              ?? new AppSettings();
 
-            if (settings == null)
-                throw new InvalidOperationException("Invalid appsettings.json (deserialize returned null)");
+            // local 덮어쓰기
+            string localPath = Path.Combine(projectRoot, "config", "appsettings.local.json");
+            if (File.Exists(localPath))
+            {
+                var local = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(localPath));
+                if (local != null)
+                {
+                    // 필요한 필드만 덮어쓰기 (특히 PythonExe)
+                    if (!string.IsNullOrWhiteSpace(local.PythonExe))
+                        baseSettings.PythonExe = local.PythonExe;
+                }
+            }
 
-            if (string.IsNullOrWhiteSpace(settings.PythonExe))
-                throw new InvalidOperationException("PythonExe is empty in appsettings.json");
+            if (string.IsNullOrWhiteSpace(baseSettings.PythonExe))
+                throw new InvalidOperationException("PythonExe is empty. Set it in config/appsettings.local.json");
 
-            return settings;
+            return baseSettings;
         }
+
     }
     public class YoloInferSection
     {
@@ -70,6 +80,7 @@ namespace CoilTrainingUI.Services
         public string Mode { get; set; } = "crop"; // "crop" 고정 권장
         public int InputSize { get; set; } = 256;
         public double ScoreThres { get; set; } = 0.5;
+        public int CropPaddingPx { get; set; } = 8;
     }
 
 }

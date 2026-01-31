@@ -1,6 +1,5 @@
 ﻿using CoilTrainingUI.Managers;
 using CoilTrainingUI.Models;
-using CoilTrainingUI.Models;
 using CoilTrainingUI.Services;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -15,7 +14,6 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using IOPath = System.IO.Path;
-using System.Globalization;
 using System.Text.Json;
 
 
@@ -35,6 +33,10 @@ namespace CoilTrainingUI
         private BitmapSource _originalBitmap;
         private RoiPreprocessService _roiPreprocessService;
         private readonly ImageStateService _stateService = new();
+
+        private FileSystemWatcher? _watcher;
+        private readonly HashSet<string> _knownImages = new(StringComparer.OrdinalIgnoreCase);
+        private readonly SemaphoreSlim _watchLock = new(1, 1);
 
         private DispatcherTimer _labelSaveDebounceTimer;
         private string? _pendingSaveImagePath;
@@ -123,6 +125,7 @@ namespace CoilTrainingUI
 
 
             SaveLabelsToStateJson(_currentImagePath);
+            RefreshSummaryCounts();
         }
 
         private void ImageCanvas_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -220,6 +223,8 @@ namespace CoilTrainingUI
             SaveLabelsToStateJson(_currentImagePath);
 
             RequestSaveLabelsDebounced(_currentImagePath);
+            RefreshSummaryCounts();
+
         }
 
 
@@ -459,6 +464,7 @@ namespace CoilTrainingUI
                     IsNormal = isNormal,
                     RoiType = roiType
                 });
+                RefreshSummaryCounts();
             }
 
             ImageListBox.ItemsSource = _images;
@@ -497,6 +503,7 @@ namespace CoilTrainingUI
             item.IsNormal = true;
 
             ImageListBox.Items.Refresh();
+            RefreshSummaryCounts();
         }
 
         private void AbnormalRadio_Checked(object sender, RoutedEventArgs e)
@@ -510,6 +517,7 @@ namespace CoilTrainingUI
             item.IsNormal = false;
 
             ImageListBox.Items.Refresh();
+            RefreshSummaryCounts();
         }
 
 
@@ -829,22 +837,32 @@ namespace CoilTrainingUI
                         model = "models/anoma.onnx",
                         mode = settings.AnomaInfer.Mode,
                         input_size = settings.AnomaInfer.InputSize,
-                        score_thres = settings.AnomaInfer.ScoreThres
+                        score_thres = settings.AnomaInfer.ScoreThres,
+                        crop_padding_px = settings.AnomaInfer.CropPaddingPx
                     },
                     fusion = new
                     {
                         rule = settings.Fusion.Rule,
                         yolo_conf_thres = settings.Fusion.YoloThreshold,
                         anoma_score_thres = settings.Fusion.AnomaThreshold
+                    },
+                    output = new
+                    {
+                        format = "json",
+                        schema = "detections_v1"
                     }
                 };
 
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
                 File.WriteAllText(
                     pipelinePath,
-                    System.Text.Json.JsonSerializer.Serialize(pipelineObj, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }),
+                    System.Text.Json.JsonSerializer.Serialize(
+                        pipelineObj,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
+                    ),
                     System.Text.Encoding.UTF8
                 );
+
 
 
                 // ✅ 패키지 검증 (없으면 성공 처리 금지)
@@ -1006,6 +1024,9 @@ namespace CoilTrainingUI
                     return;
                 }
 
+                string projectRoot = FindProjectRoot("capstone_design");
+                var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
+
                 string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
                 string runRoot = IOPath.Combine(inputDir, "_train_runs");
                 if (!Directory.Exists(runRoot))
@@ -1061,15 +1082,55 @@ namespace CoilTrainingUI
 
                 // pipeline.json은 기존이 있으면 그대로 두고, 없으면 최소 생성
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
-                if (!File.Exists(pipelinePath))
+
+                // ✅ appsettings 기반 pipeline 객체 생성
+                var pipelineObj = new
                 {
-                    File.WriteAllText(pipelinePath,
-                @"{ 
-                  ""preprocess"": { ""use_roi_processed"": true },
-                  ""yolo"": { ""classes"": { ""dent"": 0, ""loose"": 1 } },
-                  ""fusion"": { ""rule"": ""AND"", ""yolo_threshold"": 0.25, ""anoma_threshold"": 0.5 }
-                }", System.Text.Encoding.UTF8);
-                }
+                    schema_version = 1,
+                    input = new
+                    {
+                        image_format = "bmp",
+                        use_roi_processed = settings.Workspace.UseRoiProcessedImages
+                    },
+                    yolo = new
+                    {
+                        model = "models/yolo.onnx",
+                        imgsz = settings.YoloInfer.ImgSz,
+                        letterbox = settings.YoloInfer.Letterbox,
+                        conf_thres = settings.YoloInfer.ConfThres,
+                        iou_thres = settings.YoloInfer.IouThres,
+                        max_det = settings.YoloInfer.MaxDet,
+                        class_map = new { dent = 0, loose = 1 }
+                    },
+                    anoma = new
+                    {
+                        model = "models/anoma.onnx",
+                        mode = settings.AnomaInfer.Mode,
+                        input_size = settings.AnomaInfer.InputSize,
+                        score_thres = settings.AnomaInfer.ScoreThres,
+                        crop_padding_px = settings.AnomaInfer.CropPaddingPx
+                    },
+                    fusion = new
+                    {
+                        rule = settings.Fusion.Rule,
+                        yolo_conf_thres = settings.Fusion.YoloThreshold,
+                        anoma_score_thres = settings.Fusion.AnomaThreshold
+                    },
+                    output = new
+                    {
+                        format = "json",
+                        schema = "detections_v1"
+                    }
+                };
+
+                // ✅ 항상 덮어쓰기 (조건문 제거)
+                File.WriteAllText(
+                    pipelinePath,
+                    System.Text.Json.JsonSerializer.Serialize(pipelineObj,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }),
+                    System.Text.Encoding.UTF8
+                );
+
 
                 // ✅ 검증
                 VerifyInferencePackageOrThrow(pkgDir);
@@ -1083,7 +1144,215 @@ namespace CoilTrainingUI
             }
         }
 
+        private void StartWatchingInputFolder(string folderPath)
+        {
+            _knownImages.Clear();
+            foreach (var it in _images)
+                _knownImages.Add(it.FullPath);
 
+            _watcher = new FileSystemWatcher(folderPath, "*.bmp")
+            {
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.Size
+            };
+
+            _watcher.Created += async (_, e) => await OnNewImageArrived(e.FullPath);
+            _watcher.Renamed += async (_, e) => await OnImageRenamed(e.OldFullPath, e.FullPath);
+            _watcher.Deleted += async (_, e) => await OnImageDeleted(e.FullPath);
+        }
+
+
+        private async Task OnNewImageArrived(string path)
+        {
+            if (!path.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await _watchLock.WaitAsync();
+            try
+            {
+                if (_knownImages.Contains(path))
+                    return;
+
+                if (!await WaitUntilFileReady(path, retries: 10, delayMs: 200))
+                    return;
+
+                _knownImages.Add(path);
+
+                // ✅ 상태 로드
+                var state = _stateService.Load(path);
+
+                // ✅ None인 경우만 자동 ROI 추론
+                var roiType = ParseRoiTypeSafe(state.RoiType);
+                if (roiType == RoiType.None)
+                {
+                    var inferred = InferRoiTypeFromFileName(System.IO.Path.GetFileName(path));
+                    if (inferred != RoiType.None)
+                    {
+                        state.RoiType = inferred.ToString();
+                        _stateService.Save(path, state);
+
+                        _roiPreprocessService.EnsureProcessed(path, inferred);
+                        roiType = inferred;
+                    }
+                }
+
+                // ✅ 라벨 여부만 체크(표시용)
+                var labels = new List<BoundingBox>();
+                _yoloService.Load(path, labels);
+
+                bool isNormal = state.IsNormal ?? true;
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    // 중복 UI 방지(혹시라도)
+                    if (_images.Any(x => string.Equals(x.FullPath, path, StringComparison.OrdinalIgnoreCase)))
+                        return;
+
+                    _images.Add(new ImageItem
+                    {
+                        FileName = System.IO.Path.GetFileName(path),
+                        FullPath = path,
+                        HasLabel = labels.Count > 0,
+                        IsNormal = isNormal,
+                        RoiType = roiType
+                    });
+                    RefreshSummaryCounts();
+
+                    ImageListBox.Items.Refresh();
+                });
+            }
+            finally
+            {
+                _watchLock.Release();
+            }
+        }
+
+        private async Task OnImageDeleted(string path)
+        {
+            await _watchLock.WaitAsync();
+            try
+            {
+                _knownImages.Remove(path);
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    var target = _images.FirstOrDefault(x =>
+                        string.Equals(x.FullPath, path, StringComparison.OrdinalIgnoreCase));
+
+                    if (target != null)
+                    {
+                        // 현재 선택된 이미지가 삭제되면 UI도 안전하게 처리
+                        bool wasSelected = string.Equals(_currentImagePath, path, StringComparison.OrdinalIgnoreCase);
+
+                        _images.Remove(target);
+                        RefreshSummaryCounts();
+                        ImageListBox.Items.Refresh();
+
+                        if (wasSelected)
+                        {
+                            _currentImagePath = null;
+                            MainImage.Source = null;
+                            _bboxManager.ClearAll();
+                        }
+                    }
+                });
+            }
+            finally
+            {
+                _watchLock.Release();
+            }
+        }
+
+        private async Task OnImageRenamed(string oldPath, string newPath)
+        {
+            if (!newPath.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await _watchLock.WaitAsync();
+            try
+            {
+                _knownImages.Remove(oldPath);
+
+                if (await WaitUntilFileReady(newPath, retries: 10, delayMs: 200))
+                    _knownImages.Add(newPath);
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    var item = _images.FirstOrDefault(x =>
+                        string.Equals(x.FullPath, oldPath, StringComparison.OrdinalIgnoreCase));
+
+                    if (item != null)
+                    {
+                        item.FullPath = newPath;
+                        item.FileName = System.IO.Path.GetFileName(newPath);
+                        ImageListBox.Items.Refresh();
+
+                        if (string.Equals(_currentImagePath, oldPath, StringComparison.OrdinalIgnoreCase))
+                            _currentImagePath = newPath;
+                    }
+                    else
+                    {
+                        // 목록에 없던 게 renamed로 들어오면 그냥 추가로 처리
+                        // (안전하게)
+                        _ = OnNewImageArrived(newPath);
+                    }
+                });
+            }
+            finally
+            {
+                _watchLock.Release();
+            }
+        }
+
+
+        private static RoiType ParseRoiTypeSafe(string? roiStr)
+        {
+            if (Enum.TryParse<RoiType>(roiStr, out var r))
+                return r;
+            return RoiType.None;
+        }
+
+        private async Task<bool> WaitUntilFileReady(string path, int retries, int delayMs)
+        {
+            for (int i = 0; i < retries; i++)
+            {
+                try
+                {
+                    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    if (fs.Length > 0) return true;
+                }
+                catch { }
+                await Task.Delay(delayMs);
+            }
+            return false;
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            base.OnClosed(e);
+            try
+            {
+                if (_watcher != null)
+                {
+                    _watcher.EnableRaisingEvents = false;
+                    _watcher.Dispose();
+                }
+            }
+            catch { }
+        }
+
+        private void RefreshSummaryCounts()
+        {
+            int total = _images.Count;
+
+            int defect = _images.Count(i => i.HasLabel || !i.IsNormal);
+            int normal = total - defect;
+
+            TotalCountText.Text = $"총 {total}개";
+            NormalCountText.Text = $"정상 {normal}개";
+            DefectCountText.Text = $"불량 {defect}개 (YOLO 또는 Anoma)";
+        }
 
         public MainWindow()
         {
@@ -1118,6 +1387,10 @@ namespace CoilTrainingUI
 
             string folderPath = @"C:\Users\wnsgh\Desktop\input";
             LoadImageFolder(folderPath);
+            StartWatchingInputFolder(folderPath);
+            ImageListBox.ItemsSource = _images;
+            RefreshSummaryCounts();
+
 
             Loaded += (s, e) =>
             {

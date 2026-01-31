@@ -1,5 +1,5 @@
 #congig files
-config/
+config/appsettings.local.json
 
 #python scripts
 scripts/
