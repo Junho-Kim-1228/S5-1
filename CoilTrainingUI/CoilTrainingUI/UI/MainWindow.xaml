@@ -22,6 +22,9 @@
             </MenuItem>
 
             <MenuItem Header="Training">
+                <MenuItem Header="Import Inference Batch..."
+                          Click="ImportInferenceBatch_Click"/>
+
                 <MenuItem Header="Export Anomaly Dataset"
                           Click="ExportAnomalyDataset_Click"/>
 

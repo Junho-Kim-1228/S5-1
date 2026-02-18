@@ -1,6 +1,7 @@
 ﻿using CoilTrainingUI.Managers;
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Models.InferenceBatch;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,6 +16,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using IOPath = System.IO.Path;
 using System.Text.Json;
+using WinForms = System.Windows.Forms;
 
 
 namespace CoilTrainingUI
@@ -531,6 +533,121 @@ namespace CoilTrainingUI
 
             // 3. 결과를 사용자에게 보여줌
             MessageBox.Show($"완료: {outputPath}");
+        }
+
+        private void ImportInferenceBatch_Click(object sender, RoutedEventArgs e)
+        {
+            using var dialog = new WinForms.FolderBrowserDialog
+            {
+                Description = "Import inference batch folder"
+            };
+
+            if (dialog.ShowDialog() != WinForms.DialogResult.OK)
+                return;
+
+            var result = ValidateInferenceBatchForImport(dialog.SelectedPath);
+            MessageBox.Show(
+                result.Message,
+                "Import Inference Batch",
+                MessageBoxButton.OK,
+                result.IsValid ? MessageBoxImage.Information : MessageBoxImage.Warning
+            );
+        }
+
+        private InferenceBatchValidationResult ValidateInferenceBatchForImport(string batchFolder)
+        {
+            if (string.IsNullOrWhiteSpace(batchFolder) || !Directory.Exists(batchFolder))
+                return InferenceBatchValidationResult.Fail("배치 폴더가 존재하지 않습니다.");
+
+            string metaDir = IOPath.Combine(batchFolder, "meta");
+            string doneFlag = IOPath.Combine(metaDir, "DONE.flag");
+
+            if (!Directory.Exists(metaDir))
+                return InferenceBatchValidationResult.Fail("meta 폴더가 없습니다.");
+
+            if (!File.Exists(doneFlag))
+                return InferenceBatchValidationResult.Fail("완성되지 않은 배치입니다. DONE.flag가 없습니다.");
+
+            string manifestPath = IOPath.Combine(metaDir, "manifest.json");
+            if (!File.Exists(manifestPath))
+                return InferenceBatchValidationResult.Fail("manifest.json 파일이 없습니다.");
+
+            ManifestDto manifest;
+            try
+            {
+                manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+            }
+            catch (Exception ex)
+            {
+                return InferenceBatchValidationResult.Fail($"manifest.json 파싱 실패: {ex.Message}");
+            }
+
+            var missingFiles = new List<string>();
+            foreach (var item in manifest.Items)
+            {
+                if (string.IsNullOrWhiteSpace(item.ProcessedImage))
+                {
+                    missingFiles.Add($"[{item.Id}] processed_image가 비어 있음");
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(item.InferJson))
+                {
+                    missingFiles.Add($"[{item.Id}] infer_json가 비어 있음");
+                    continue;
+                }
+
+                var processedPath = Path.IsPathRooted(item.ProcessedImage)
+                    ? item.ProcessedImage
+                    : IOPath.Combine(batchFolder, item.ProcessedImage);
+
+                var inferPath = Path.IsPathRooted(item.InferJson)
+                    ? item.InferJson
+                    : IOPath.Combine(batchFolder, item.InferJson);
+
+                if (!File.Exists(processedPath))
+                    missingFiles.Add(item.ProcessedImage);
+
+                if (!File.Exists(inferPath))
+                    missingFiles.Add(item.InferJson);
+            }
+
+            string previewIds = string.Join(", ", manifest.Items
+                .Select(item => string.IsNullOrWhiteSpace(item.Id) ? "(no id)" : item.Id)
+                .Take(3));
+
+            if (missingFiles.Count > 0)
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("배치 검증 실패");
+                sb.AppendLine($"총 item 수: {manifest.Items.Count}");
+                sb.AppendLine($"누락 파일 개수: {missingFiles.Count}");
+                sb.AppendLine("누락 파일 목록:");
+                foreach (var item in missingFiles)
+                    sb.AppendLine($"- {item}");
+                sb.AppendLine($"첫 3개 id: {previewIds}");
+
+                return new InferenceBatchValidationResult
+                {
+                    IsValid = false,
+                    Message = sb.ToString().TrimEnd()
+                };
+            }
+
+            return new InferenceBatchValidationResult
+            {
+                IsValid = true,
+                Message = $"배치 검증 OK\n총 item 수: {manifest.Items.Count}\n누락 파일 개수: 0\n첫 3개 id: {previewIds}"
+            };
+        }
+
+        private sealed class InferenceBatchValidationResult
+        {
+            public bool IsValid { get; set; }
+            public string Message { get; set; } = "";
+
+            public static InferenceBatchValidationResult Fail(string message)
+                => new() { IsValid = false, Message = message };
         }
 
         private string FindProjectRoot(string targetFolderName)
