@@ -28,6 +28,7 @@ namespace CoilTrainingUI
         private YoloLabelService _yoloService;
         private BoundingBoxManager _bboxManager;
         private readonly DatasetExportService _exportService = new();
+        private readonly InferenceBatchImportService _inferenceBatchImportService = new();
         private CanvasInteractionManager _canvasInteractionManager;
         private ImageStateManager _imageStateManager;
         private AnomalyStateService _anomalyService;
@@ -542,12 +543,37 @@ namespace CoilTrainingUI
                 return;
 
             var result = ValidateInferenceBatchForImport(selectedBatchFolder);
-            MessageBox.Show(
-                result.Message,
-                "Import Inference Batch",
-                MessageBoxButton.OK,
-                result.IsValid ? MessageBoxImage.Information : MessageBoxImage.Warning
-            );
+            if (!result.IsValid)
+            {
+                MessageBox.Show(
+                    result.Message,
+                    "Import Inference Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+                return;
+            }
+
+            try
+            {
+                var projectRoot = FindProjectRoot("capstone_design");
+                var imported = _inferenceBatchImportService.Import(selectedBatchFolder, projectRoot);
+                MessageBox.Show(
+                    $"imported path: {imported.ImportedPath}",
+                    "Import Inference Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"배치 Import 실패: {ex.Message}",
+                    "Import Inference Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+            }
         }
 
         private string? TrySelectBatchFolder()
