@@ -7,6 +7,7 @@ scripts/
 #training data
 datasets/
 models/
+training_inbox/
 
 # NuGet
 packages/
