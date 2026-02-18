@@ -14,9 +14,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Reflection;
 using IOPath = System.IO.Path;
 using System.Text.Json;
-using WinForms = System.Windows.Forms;
 
 
 namespace CoilTrainingUI
@@ -537,21 +537,60 @@ namespace CoilTrainingUI
 
         private void ImportInferenceBatch_Click(object sender, RoutedEventArgs e)
         {
-            using var dialog = new WinForms.FolderBrowserDialog
-            {
-                Description = "Import inference batch folder"
-            };
-
-            if (dialog.ShowDialog() != WinForms.DialogResult.OK)
+            var selectedBatchFolder = TrySelectBatchFolder();
+            if (string.IsNullOrWhiteSpace(selectedBatchFolder))
                 return;
 
-            var result = ValidateInferenceBatchForImport(dialog.SelectedPath);
+            var result = ValidateInferenceBatchForImport(selectedBatchFolder);
             MessageBox.Show(
                 result.Message,
                 "Import Inference Batch",
                 MessageBoxButton.OK,
                 result.IsValid ? MessageBoxImage.Information : MessageBoxImage.Warning
             );
+        }
+
+        private string? TrySelectBatchFolder()
+        {
+            var folderDialogType = Type.GetType("System.Windows.Forms.FolderBrowserDialog, System.Windows.Forms");
+            if (folderDialogType == null)
+            {
+                MessageBox.Show("폴더 선택 대화상자를 사용할 수 없습니다. (System.Windows.Forms 로드 실패)");
+                return null;
+            }
+
+            object? dialog = null;
+            try
+            {
+                dialog = Activator.CreateInstance(folderDialogType);
+                if (dialog == null)
+                    return null;
+
+                folderDialogType.GetProperty("Description")?.SetValue(dialog, "Import inference batch folder");
+
+                var showMethod = folderDialogType.GetMethod("ShowDialog", Type.EmptyTypes);
+                if (showMethod == null)
+                {
+                    MessageBox.Show("폴더 선택 대화상자 ShowDialog를 찾을 수 없습니다.");
+                    return null;
+                }
+
+                var showResult = showMethod.Invoke(dialog, null);
+                if (!Equals(showResult?.ToString(), "OK"))
+                    return null;
+
+                return folderDialogType.GetProperty("SelectedPath")?.GetValue(dialog) as string;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"폴더 선택 실패: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                if (dialog is IDisposable disposable)
+                    disposable.Dispose();
+            }
         }
 
         private InferenceBatchValidationResult ValidateInferenceBatchForImport(string batchFolder)
