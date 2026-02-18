@@ -636,11 +636,11 @@ namespace CoilTrainingUI
                     continue;
                 }
 
-                var processedPath = Path.IsPathRooted(item.ProcessedImage)
+                var processedPath = IOPath.IsPathRooted(item.ProcessedImage)
                     ? item.ProcessedImage
                     : IOPath.Combine(batchFolder, item.ProcessedImage);
 
-                var inferPath = Path.IsPathRooted(item.InferJson)
+                var inferPath = IOPath.IsPathRooted(item.InferJson)
                     ? item.InferJson
                     : IOPath.Combine(batchFolder, item.InferJson);
 
@@ -1342,7 +1342,7 @@ namespace CoilTrainingUI
                 var roiType = ParseRoiTypeSafe(state.RoiType);
                 if (roiType == RoiType.None)
                 {
-                    var inferred = InferRoiTypeFromFileName(System.IO.Path.GetFileName(path));
+                    var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(path));
                     if (inferred != RoiType.None)
                     {
                         state.RoiType = inferred.ToString();
@@ -1367,7 +1367,7 @@ namespace CoilTrainingUI
 
                     _images.Add(new ImageItem
                     {
-                        FileName = System.IO.Path.GetFileName(path),
+                        FileName = IOPath.GetFileName(path),
                         FullPath = path,
                         HasLabel = labels.Count > 0,
                         IsNormal = isNormal,
@@ -1441,7 +1441,7 @@ namespace CoilTrainingUI
                     if (item != null)
                     {
                         item.FullPath = newPath;
-                        item.FileName = System.IO.Path.GetFileName(newPath);
+                        item.FileName = IOPath.GetFileName(newPath);
                         ImageListBox.Items.Refresh();
 
                         if (string.Equals(_currentImagePath, oldPath, StringComparison.OrdinalIgnoreCase))
