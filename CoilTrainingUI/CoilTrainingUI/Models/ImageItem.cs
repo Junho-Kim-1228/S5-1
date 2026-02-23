@@ -12,10 +12,28 @@ namespace CoilTrainingUI.Models
         public string FullPath { get; set; }
         public bool HasLabel { get; set; }           // YOLO 박스 존재 여부
         public bool IsNormal { get; set; } = true;  // Anomaly 기준 정상 여부
+        public bool HasAiInfer { get; set; }        // infer.json 존재/파싱 성공 여부
+        public bool AiIsDefect { get; set; }        // AI 기준 불량 여부
 
         // UI 표시용
         public string YoloStatusText => HasLabel ? "불량" : "정상";
         public string AnomalyStatusText => IsNormal ? "정상" : "불량";
+        public string StatusText
+        {
+            get
+            {
+                if (HasLabel || !IsNormal)
+                    return "불량";
+
+                if (HasAiInfer && AiIsDefect)
+                    return "AI불량";
+
+                if (HasAiInfer && !AiIsDefect)
+                    return "AI정상";
+
+                return "정상";
+            }
+        }
 
         public RoiType RoiType { get; set; } = RoiType.None;
     }

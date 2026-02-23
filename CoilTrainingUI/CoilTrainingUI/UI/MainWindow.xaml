@@ -111,7 +111,6 @@
 
                                         <!-- 상태 표시 -->
                                         <StackPanel Orientation="Horizontal">
-
                                             <!-- YOLO -->
                                             <TextBlock Text="YOLO:"
                                                        FontSize="12"

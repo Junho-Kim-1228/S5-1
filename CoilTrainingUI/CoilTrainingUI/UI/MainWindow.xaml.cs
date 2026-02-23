@@ -363,6 +363,13 @@ namespace CoilTrainingUI
 
                 // 5️⃣ Anomaly 상태
                 bool isNormal = _anomalyService.Load(imagePath);
+                if (_currentDataSource == DataSourceKind.ImportedBatch &&
+                    ImageListBox.SelectedItem is ImageItem importedItem &&
+                    !state.IsNormal.HasValue)
+                {
+                    // imported batch는 state가 없으면 infer 기반 초기값을 유지
+                    isNormal = importedItem.IsNormal;
+                }
                 _imageStateManager.SetNormal(imagePath, isNormal);
 
                 // 6) ROI 기능은 현재 비활성화 상태로 고정
@@ -382,7 +389,18 @@ namespace CoilTrainingUI
                 if (ImageListBox.SelectedItem is ImageItem item)
                 {
                     item.IsNormal = isNormal;
-                    item.HasLabel = _imageStateManager.HasLabel(imagePath);
+                    bool hasGtLabel = _imageStateManager.HasLabel(imagePath);
+                    if (_currentDataSource == DataSourceKind.ImportedBatch && !hasGtLabel && item.HasAiInfer)
+                    {
+                        if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
+                            item.HasLabel = EvaluateInferMetaFromInfer(inferJsonPath).HasYoloDefect;
+                        else
+                            item.HasLabel = false;
+                    }
+                    else
+                    {
+                        item.HasLabel = hasGtLabel;
+                    }
                     item.RoiType = roiType;
 
                     NormalRadio.IsChecked = isNormal;
@@ -634,7 +652,7 @@ namespace CoilTrainingUI
                 return;
             }
 
-            var validation = ValidateInferenceBatchForImport(selectedBatchFolder);
+            var validation = ValidateImportedBatchForView(selectedBatchFolder);
             if (!validation.IsValid)
             {
                 MessageBox.Show(
@@ -784,6 +802,7 @@ namespace CoilTrainingUI
             {
                 string imagePath = ResolveImportedImagePath(batchFolder, item);
                 string inferJsonPath = ResolveImportedInferJsonPath(batchFolder, item);
+                var aiMeta = EvaluateInferMetaFromInfer(inferJsonPath);
 
                 _imageStateManager.EnsureImage(imagePath);
 
@@ -796,8 +815,10 @@ namespace CoilTrainingUI
                 {
                     FileName = IOPath.GetFileName(imagePath),
                     FullPath = imagePath,
-                    HasLabel = false,
-                    IsNormal = true,
+                    HasLabel = aiMeta.HasYoloDefect,
+                    IsNormal = aiMeta.IsAnomaNormal,
+                    HasAiInfer = aiMeta.HasAiInfer,
+                    AiIsDefect = aiMeta.HasYoloDefect || !aiMeta.IsAnomaNormal,
                     RoiType = roiType
                 });
 
@@ -832,14 +853,60 @@ namespace CoilTrainingUI
 
         private static string ResolveImportedInferJsonPath(string batchFolder, ManifestItemDto item)
         {
-            string inferPath = IOPath.IsPathRooted(item.InferJson)
+            return IOPath.IsPathRooted(item.InferJson)
                 ? item.InferJson
                 : IOPath.Combine(batchFolder, item.InferJson);
+        }
 
-            if (File.Exists(inferPath))
-                return inferPath;
+        private static (bool HasAiInfer, bool HasYoloDefect, bool IsAnomaNormal) EvaluateInferMetaFromInfer(string inferJsonPath)
+        {
+            if (string.IsNullOrWhiteSpace(inferJsonPath) || !File.Exists(inferJsonPath))
+                return (false, false, true);
 
-            throw new FileNotFoundException($"infer json을 찾을 수 없습니다. id={item.Id}", inferPath);
+            try
+            {
+                var infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
+                bool hasYoloDefect = infer.Yolo?.Detections?.Count > 0;
+                bool isAnomaNormal = !string.Equals(infer.Anoma?.Decision, "anomaly", StringComparison.OrdinalIgnoreCase);
+                return (true, hasYoloDefect, isAnomaNormal);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"AI status parse failed: {inferJsonPath}, {ex.Message}");
+                return (false, false, true);
+            }
+        }
+
+        private InferenceBatchValidationResult ValidateImportedBatchForView(string batchFolder)
+        {
+            if (string.IsNullOrWhiteSpace(batchFolder) || !Directory.Exists(batchFolder))
+                return InferenceBatchValidationResult.Fail("배치 폴더가 존재하지 않습니다.");
+
+            string metaDir = IOPath.Combine(batchFolder, "meta");
+            if (!Directory.Exists(metaDir))
+                return InferenceBatchValidationResult.Fail("meta 폴더가 없습니다.");
+
+            if (!File.Exists(IOPath.Combine(metaDir, "DONE.flag")))
+                return InferenceBatchValidationResult.Fail("완성되지 않은 배치입니다. DONE.flag가 없습니다.");
+
+            string manifestPath = IOPath.Combine(metaDir, "manifest.json");
+            if (!File.Exists(manifestPath))
+                return InferenceBatchValidationResult.Fail("manifest.json 파일이 없습니다.");
+
+            try
+            {
+                _ = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+            }
+            catch (Exception ex)
+            {
+                return InferenceBatchValidationResult.Fail($"manifest.json 파싱 실패: {ex.Message}");
+            }
+
+            return new InferenceBatchValidationResult
+            {
+                IsValid = true,
+                Message = "배치 검증 OK"
+            };
         }
 
         private void RenderPredictionOverlays(string imagePath)
@@ -1936,7 +2003,7 @@ namespace CoilTrainingUI
                 ShowRoiCheckBox.IsChecked = false;
             }
 
-            //타이머 초기화
+            //타이머 초기화   
             _labelSaveDebounceTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(LabelSaveDebounceMs)
