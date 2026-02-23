@@ -43,6 +43,8 @@ namespace CoilTrainingUI
         private readonly string _defaultInputFolder = @"C:\Users\wnsgh\Desktop\input";
         private DataSourceKind _currentDataSource = DataSourceKind.LocalInput;
         private const bool RoiFeaturesEnabled = false;
+        private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
+        private const string PredictionOverlayTag = "__prediction_overlay";
 
         private DispatcherTimer _labelSaveDebounceTimer;
         private string? _pendingSaveImagePath;
@@ -357,6 +359,8 @@ namespace CoilTrainingUI
                     _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
                 }
 
+                RenderPredictionOverlays(imagePath);
+
                 // 5️⃣ Anomaly 상태
                 bool isNormal = _anomalyService.Load(imagePath);
                 _imageStateManager.SetNormal(imagePath, isNormal);
@@ -427,6 +431,7 @@ namespace CoilTrainingUI
         private void LoadImageFolder(string folderPath)
         {
             _images.Clear();
+            _inferJsonByImagePath.Clear();
 
             var imageFiles = Directory.GetFiles(folderPath, "*.bmp");
 
@@ -773,10 +778,12 @@ namespace CoilTrainingUI
 
             _images.Clear();
             _knownImages.Clear();
+            _inferJsonByImagePath.Clear();
 
             foreach (var item in manifest.Items)
             {
                 string imagePath = ResolveImportedImagePath(batchFolder, item);
+                string inferJsonPath = ResolveImportedInferJsonPath(batchFolder, item);
 
                 _imageStateManager.EnsureImage(imagePath);
 
@@ -793,6 +800,8 @@ namespace CoilTrainingUI
                     IsNormal = true,
                     RoiType = roiType
                 });
+
+                _inferJsonByImagePath[imagePath] = inferJsonPath;
             }
 
             ImageListBox.ItemsSource = _images;
@@ -819,6 +828,120 @@ namespace CoilTrainingUI
                 return fromManifest;
 
             throw new FileNotFoundException($"processed image를 찾을 수 없습니다. id={item.Id}", byIdPath);
+        }
+
+        private static string ResolveImportedInferJsonPath(string batchFolder, ManifestItemDto item)
+        {
+            string inferPath = IOPath.IsPathRooted(item.InferJson)
+                ? item.InferJson
+                : IOPath.Combine(batchFolder, item.InferJson);
+
+            if (File.Exists(inferPath))
+                return inferPath;
+
+            throw new FileNotFoundException($"infer json을 찾을 수 없습니다. id={item.Id}", inferPath);
+        }
+
+        private void RenderPredictionOverlays(string imagePath)
+        {
+            ClearPredictionOverlays();
+
+            if (string.IsNullOrWhiteSpace(imagePath))
+                return;
+
+            if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
+                return;
+
+            if (!File.Exists(inferJsonPath))
+                return;
+
+            InferResultDto infer;
+            try
+            {
+                infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Prediction overlay parse failed: {inferJsonPath}, {ex.Message}");
+                return;
+            }
+
+            double canvasWidth = ImageCanvas.Width;
+            double canvasHeight = ImageCanvas.Height;
+
+            if (canvasWidth <= 1 || canvasHeight <= 1)
+                return;
+
+            foreach (var detection in infer.Yolo.Detections)
+            {
+                if (detection.BboxXywhNorm == null || detection.BboxXywhNorm.Length != 4)
+                    continue;
+
+                var cx = detection.BboxXywhNorm[0];
+                var cy = detection.BboxXywhNorm[1];
+                var bw = detection.BboxXywhNorm[2];
+                var bh = detection.BboxXywhNorm[3];
+
+                if (bw <= 0 || bh <= 0)
+                    continue;
+
+                if (double.IsNaN(cx) || double.IsNaN(cy) || double.IsNaN(bw) || double.IsNaN(bh))
+                    continue;
+
+                double left = (cx - bw / 2.0) * canvasWidth;
+                double top = (cy - bh / 2.0) * canvasHeight;
+                double width = bw * canvasWidth;
+                double height = bh * canvasHeight;
+
+                if (left < 0)
+                {
+                    width += left;
+                    left = 0;
+                }
+
+                if (top < 0)
+                {
+                    height += top;
+                    top = 0;
+                }
+
+                if (left + width > canvasWidth)
+                    width = canvasWidth - left;
+
+                if (top + height > canvasHeight)
+                    height = canvasHeight - top;
+
+                if (width <= 1 || height <= 1)
+                    continue;
+
+                var rect = new Rectangle
+                {
+                    Width = width,
+                    Height = height,
+                    Stroke = Brushes.DodgerBlue,
+                    StrokeThickness = 1,
+                    StrokeDashArray = new DoubleCollection { 4, 2 },
+                    Fill = Brushes.Transparent,
+                    IsHitTestVisible = false,
+                    Tag = PredictionOverlayTag
+                };
+
+                Canvas.SetLeft(rect, left);
+                Canvas.SetTop(rect, top);
+                Panel.SetZIndex(rect, 100);
+                ImageCanvas.Children.Add(rect);
+            }
+        }
+
+        private void ClearPredictionOverlays()
+        {
+            var overlays = ImageCanvas.Children
+                .OfType<Rectangle>()
+                .Where(rect => Equals(rect.Tag, PredictionOverlayTag))
+                .ToList();
+
+            foreach (var overlay in overlays)
+                ImageCanvas.Children.Remove(overlay);
         }
 
         private static bool IsPathUnderRoot(string path, string rootPath)
