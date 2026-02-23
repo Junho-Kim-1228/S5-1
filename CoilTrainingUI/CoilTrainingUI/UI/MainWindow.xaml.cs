@@ -40,6 +40,8 @@ namespace CoilTrainingUI
         private FileSystemWatcher? _watcher;
         private readonly HashSet<string> _knownImages = new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _watchLock = new(1, 1);
+        private readonly string _defaultInputFolder = @"C:\Users\wnsgh\Desktop\input";
+        private DataSourceKind _currentDataSource = DataSourceKind.LocalInput;
 
         private DispatcherTimer _labelSaveDebounceTimer;
         private string? _pendingSaveImagePath;
@@ -62,6 +64,12 @@ namespace CoilTrainingUI
 
         private ObservableCollection<ImageItem> _images
             = new ObservableCollection<ImageItem>();
+
+        private enum DataSourceKind
+        {
+            LocalInput,
+            ImportedBatch
+        }
 
         private static IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj)
         where T : DependencyObject
@@ -538,7 +546,7 @@ namespace CoilTrainingUI
 
         private void ImportInferenceBatch_Click(object sender, RoutedEventArgs e)
         {
-            var selectedBatchFolder = TrySelectBatchFolder();
+            var selectedBatchFolder = TrySelectFolder("Import inference batch folder");
             if (string.IsNullOrWhiteSpace(selectedBatchFolder))
                 return;
 
@@ -576,7 +584,96 @@ namespace CoilTrainingUI
             }
         }
 
-        private string? TrySelectBatchFolder()
+        private void LoadImportedBatch_Click(object sender, RoutedEventArgs e)
+        {
+            string projectRoot = FindProjectRoot("capstone_design");
+            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
+
+            if (!Directory.Exists(inboxRoot))
+            {
+                MessageBox.Show(
+                    $"training_inbox 폴더가 없습니다.\n{inboxRoot}",
+                    "Load Imported Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+                return;
+            }
+
+            var selectedBatchFolder = TrySelectFolder("Load imported batch folder", inboxRoot);
+            if (string.IsNullOrWhiteSpace(selectedBatchFolder))
+                return;
+
+            if (!IsPathUnderRoot(selectedBatchFolder, inboxRoot))
+            {
+                MessageBox.Show(
+                    "training_inbox 하위 폴더만 선택할 수 있습니다.",
+                    "Load Imported Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+                return;
+            }
+
+            var validation = ValidateInferenceBatchForImport(selectedBatchFolder);
+            if (!validation.IsValid)
+            {
+                MessageBox.Show(
+                    validation.Message,
+                    "Load Imported Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+                return;
+            }
+
+            try
+            {
+                LoadImportedBatchFromFolder(selectedBatchFolder);
+                MessageBox.Show(
+                    $"Imported batch loaded\n{selectedBatchFolder}\n총 item 수: {_images.Count}",
+                    "Load Imported Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Imported batch 로드 실패: {ex.Message}",
+                    "Load Imported Batch",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+            }
+        }
+
+        private void LoadLocalInput_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!LoadLocalInputFolder(showErrorMessage: true))
+                    return;
+
+                MessageBox.Show(
+                    $"Local input 로딩 완료\n{_defaultInputFolder}\n총 item 수: {_images.Count}",
+                    "Load Local Input",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Local input 로딩 실패: {ex.Message}",
+                    "Load Local Input",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+            }
+        }
+
+        private string? TrySelectFolder(string description, string? initialPath = null)
         {
             var folderDialogType = Type.GetType("System.Windows.Forms.FolderBrowserDialog, System.Windows.Forms");
             if (folderDialogType == null)
@@ -592,7 +689,10 @@ namespace CoilTrainingUI
                 if (dialog == null)
                     return null;
 
-                folderDialogType.GetProperty("Description")?.SetValue(dialog, "Import inference batch folder");
+                folderDialogType.GetProperty("Description")?.SetValue(dialog, description);
+
+                if (!string.IsNullOrWhiteSpace(initialPath) && Directory.Exists(initialPath))
+                    folderDialogType.GetProperty("SelectedPath")?.SetValue(dialog, initialPath);
 
                 var showMethod = folderDialogType.GetMethod("ShowDialog", Type.EmptyTypes);
                 if (showMethod == null)
@@ -617,6 +717,111 @@ namespace CoilTrainingUI
                 if (dialog is IDisposable disposable)
                     disposable.Dispose();
             }
+        }
+
+        private bool LoadLocalInputFolder(bool showErrorMessage)
+        {
+            if (!Directory.Exists(_defaultInputFolder))
+            {
+                if (showErrorMessage)
+                {
+                    MessageBox.Show(
+                        $"Local input 폴더가 없습니다.\n{_defaultInputFolder}",
+                        "Load Local Input",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning
+                    );
+                }
+                return false;
+            }
+
+            StopWatchingInputFolder();
+            _currentDataSource = DataSourceKind.LocalInput;
+
+            LoadImageFolder(_defaultInputFolder);
+            StartWatchingInputFolder(_defaultInputFolder);
+
+            if (_images.Count > 0)
+                ImageListBox.SelectedIndex = 0;
+            else
+                ResetImageDisplay();
+
+            return true;
+        }
+
+        private void LoadImportedBatchFromFolder(string batchFolder)
+        {
+            string manifestPath = IOPath.Combine(batchFolder, "meta", "manifest.json");
+            var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+
+            StopWatchingInputFolder();
+            _currentDataSource = DataSourceKind.ImportedBatch;
+
+            _images.Clear();
+            _knownImages.Clear();
+
+            foreach (var item in manifest.Items)
+            {
+                string imagePath = ResolveImportedImagePath(batchFolder, item);
+
+                _imageStateManager.EnsureImage(imagePath);
+
+                var roiType = ParseRoiTypeSafe(item.RoiType);
+                _imageStateManager.SetRoiType(imagePath, roiType);
+
+                _images.Add(new ImageItem
+                {
+                    FileName = IOPath.GetFileName(imagePath),
+                    FullPath = imagePath,
+                    HasLabel = false,
+                    IsNormal = true,
+                    RoiType = roiType
+                });
+            }
+
+            ImageListBox.ItemsSource = _images;
+            ImageListBox.Items.Refresh();
+            RefreshSummaryCounts();
+
+            if (_images.Count > 0)
+                ImageListBox.SelectedIndex = 0;
+            else
+                ResetImageDisplay();
+        }
+
+        private string ResolveImportedImagePath(string batchFolder, ManifestItemDto item)
+        {
+            string byIdPath = IOPath.Combine(batchFolder, "images", $"{item.Id}.bmp");
+            if (File.Exists(byIdPath))
+                return byIdPath;
+
+            string fromManifest = IOPath.IsPathRooted(item.ProcessedImage)
+                ? item.ProcessedImage
+                : IOPath.Combine(batchFolder, item.ProcessedImage);
+
+            if (File.Exists(fromManifest))
+                return fromManifest;
+
+            throw new FileNotFoundException($"processed image를 찾을 수 없습니다. id={item.Id}", byIdPath);
+        }
+
+        private static bool IsPathUnderRoot(string path, string rootPath)
+        {
+            var fullPath = IOPath.GetFullPath(path)
+                .TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)
+                + IOPath.DirectorySeparatorChar;
+            var fullRoot = IOPath.GetFullPath(rootPath)
+                .TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)
+                + IOPath.DirectorySeparatorChar;
+
+            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void ResetImageDisplay()
+        {
+            _currentImagePath = null;
+            MainImage.Source = null;
+            _bboxManager.ClearAll();
         }
 
         private InferenceBatchValidationResult ValidateInferenceBatchForImport(string batchFolder)
@@ -1326,12 +1531,34 @@ namespace CoilTrainingUI
             }
         }
 
+        private void StopWatchingInputFolder()
+        {
+            if (_watcher == null)
+                return;
+
+            try
+            {
+                _watcher.EnableRaisingEvents = false;
+                _watcher.Dispose();
+            }
+            catch
+            {
+            }
+            finally
+            {
+                _watcher = null;
+            }
+        }
+
         private void StartWatchingInputFolder(string folderPath)
         {
+            StopWatchingInputFolder();
+
             _knownImages.Clear();
             foreach (var it in _images)
                 _knownImages.Add(it.FullPath);
 
+            _currentDataSource = DataSourceKind.LocalInput;
             _watcher = new FileSystemWatcher(folderPath, "*.bmp")
             {
                 IncludeSubdirectories = false,
@@ -1347,6 +1574,9 @@ namespace CoilTrainingUI
 
         private async Task OnNewImageArrived(string path)
         {
+            if (_currentDataSource != DataSourceKind.LocalInput)
+                return;
+
             if (!path.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
                 return;
 
@@ -1412,6 +1642,9 @@ namespace CoilTrainingUI
 
         private async Task OnImageDeleted(string path)
         {
+            if (_currentDataSource != DataSourceKind.LocalInput)
+                return;
+
             await _watchLock.WaitAsync();
             try
             {
@@ -1448,6 +1681,9 @@ namespace CoilTrainingUI
 
         private async Task OnImageRenamed(string oldPath, string newPath)
         {
+            if (_currentDataSource != DataSourceKind.LocalInput)
+                return;
+
             if (!newPath.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
                 return;
 
@@ -1490,7 +1726,7 @@ namespace CoilTrainingUI
 
         private static RoiType ParseRoiTypeSafe(string? roiStr)
         {
-            if (Enum.TryParse<RoiType>(roiStr, out var r))
+            if (Enum.TryParse<RoiType>(roiStr, ignoreCase: true, out var r))
                 return r;
             return RoiType.None;
         }
@@ -1513,15 +1749,7 @@ namespace CoilTrainingUI
         protected override void OnClosed(EventArgs e)
         {
             base.OnClosed(e);
-            try
-            {
-                if (_watcher != null)
-                {
-                    _watcher.EnableRaisingEvents = false;
-                    _watcher.Dispose();
-                }
-            }
-            catch { }
+            StopWatchingInputFolder();
         }
 
         private void RefreshSummaryCounts()
@@ -1566,12 +1794,7 @@ namespace CoilTrainingUI
                 SaveLabelsToStateJson(_pendingSaveImagePath);
             };
 
-
-            string folderPath = @"C:\Users\wnsgh\Desktop\input";
-            LoadImageFolder(folderPath);
-            StartWatchingInputFolder(folderPath);
-            ImageListBox.ItemsSource = _images;
-            RefreshSummaryCounts();
+            LoadLocalInputFolder(showErrorMessage: false);
 
 
             Loaded += (s, e) =>

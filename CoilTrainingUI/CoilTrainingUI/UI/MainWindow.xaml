@@ -22,8 +22,16 @@
             </MenuItem>
 
             <MenuItem Header="Training">
+                <MenuItem Header="Load Local Input"
+                          Click="LoadLocalInput_Click"/>
+
                 <MenuItem Header="Import Inference Batch..."
                           Click="ImportInferenceBatch_Click"/>
+
+                <MenuItem Header="Load Imported Batch..."
+                          Click="LoadImportedBatch_Click"/>
+
+                <Separator/>
 
                 <MenuItem Header="Export Anomaly Dataset"
                           Click="ExportAnomalyDataset_Click"/>
