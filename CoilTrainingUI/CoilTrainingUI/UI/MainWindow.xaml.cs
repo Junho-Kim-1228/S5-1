@@ -42,6 +42,7 @@ namespace CoilTrainingUI
         private readonly SemaphoreSlim _watchLock = new(1, 1);
         private readonly string _defaultInputFolder = @"C:\Users\wnsgh\Desktop\input";
         private DataSourceKind _currentDataSource = DataSourceKind.LocalInput;
+        private const bool RoiFeaturesEnabled = false;
 
         private DispatcherTimer _labelSaveDebounceTimer;
         private string? _pendingSaveImagePath;
@@ -360,11 +361,18 @@ namespace CoilTrainingUI
                 bool isNormal = _anomalyService.Load(imagePath);
                 _imageStateManager.SetNormal(imagePath, isNormal);
 
-                // 6️⃣ ROI 타입
-                var roiType = _roiService.Load(imagePath);
-                _imageStateManager.SetRoiType(imagePath, roiType);
-
-                _roiPreprocessService.EnsureProcessed(imagePath, roiType);
+                // 6) ROI 기능은 현재 비활성화 상태로 고정
+                RoiType roiType = RoiType.None;
+                if (RoiFeaturesEnabled)
+                {
+                    roiType = _roiService.Load(imagePath);
+                    _imageStateManager.SetRoiType(imagePath, roiType);
+                    _roiPreprocessService.EnsureProcessed(imagePath, roiType);
+                }
+                else
+                {
+                    _imageStateManager.SetRoiType(imagePath, RoiType.None);
+                }
 
                 // 7️⃣ UI 반영
                 if (ImageListBox.SelectedItem is ImageItem item)
@@ -377,7 +385,8 @@ namespace CoilTrainingUI
                     AbnormalRadio.IsChecked = !isNormal;
                 }
 
-                RestoreRoiTypeUI(imagePath);
+                if (RoiFeaturesEnabled)
+                    RestoreRoiTypeUI(imagePath);
                 ImageListBox.Items.Refresh();
 
                 // 🔥 8️⃣ ROI 체크 상태에 따라 화면 갱신 (이게 핵심)
@@ -393,6 +402,12 @@ namespace CoilTrainingUI
         {
             if (_rawBitmap == null || string.IsNullOrEmpty(_currentImagePath))
                 return;
+
+            if (!RoiFeaturesEnabled)
+            {
+                MainImage.Source = _rawBitmap;
+                return;
+            }
 
             if (ShowRoiCheckBox.IsChecked == true)
             {
@@ -419,27 +434,26 @@ namespace CoilTrainingUI
             {
                 _imageStateManager.EnsureImage(img);
 
-                // ✅ 1) 저장된 ROI 먼저 로드 (없으면 None으로 간주)
                 RoiType roiType = RoiType.None;
-
-                if (_roiService.HasState(img))
-                    roiType = _roiService.Load(img);
-
-                // ✅ 2) 저장값이 None일 때만 파일명 규칙으로 자동 지정
-                if (roiType == RoiType.None)
+                if (RoiFeaturesEnabled)
                 {
-                    var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(img));
+                    if (_roiService.HasState(img))
+                        roiType = _roiService.Load(img);
 
-                    // inferred가 None이어도 저장해두면 "처리됨" 상태가 유지됨(원하면 조건 걸어도 됨)
-                    roiType = inferred;
-                    _roiService.Save(img, roiType);
+                    if (roiType == RoiType.None)
+                    {
+                        var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(img));
+                        roiType = inferred;
+                        _roiService.Save(img, roiType);
+                    }
+
+                    _imageStateManager.SetRoiType(img, roiType);
+                    _roiPreprocessService.EnsureProcessed(img, roiType);
                 }
-
-                // ✅ 3) 메모리 반영
-                _imageStateManager.SetRoiType(img, roiType);
-
-                // ✅ 4) 전처리 생성(Show 상관 없음)
-                _roiPreprocessService.EnsureProcessed(img, roiType);
+                else
+                {
+                    _imageStateManager.SetRoiType(img, RoiType.None);
+                }
 
                 // 1️⃣ YOLO 라벨 실제 로드
                 var s = _stateService.Load(img);
@@ -766,7 +780,9 @@ namespace CoilTrainingUI
 
                 _imageStateManager.EnsureImage(imagePath);
 
-                var roiType = ParseRoiTypeSafe(item.RoiType);
+                var roiType = RoiFeaturesEnabled
+                    ? ParseRoiTypeSafe(item.RoiType)
+                    : RoiType.None;
                 _imageStateManager.SetRoiType(imagePath, roiType);
 
                 _images.Add(new ImageItem
@@ -937,6 +953,9 @@ namespace CoilTrainingUI
 
         private void RoiTypeRadio_Checked(object sender, RoutedEventArgs e)
         {
+            if (!RoiFeaturesEnabled)
+                return;
+
             if (_isLoadingImage) return;
 
             if (ImageListBox.SelectedItem is not ImageItem item)
@@ -986,11 +1005,17 @@ namespace CoilTrainingUI
 
         private void ShowRoiCheckBox_Checked(object sender, RoutedEventArgs e)
         {
+            if (!RoiFeaturesEnabled)
+                return;
+
             UpdateRoiDisplay();
         }
 
         private void ShowRoiCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
+            if (!RoiFeaturesEnabled)
+                return;
+
             UpdateRoiDisplay();
         }
 
@@ -1594,18 +1619,21 @@ namespace CoilTrainingUI
                 // ✅ 상태 로드
                 var state = _stateService.Load(path);
 
-                // ✅ None인 경우만 자동 ROI 추론
-                var roiType = ParseRoiTypeSafe(state.RoiType);
-                if (roiType == RoiType.None)
+                var roiType = RoiType.None;
+                if (RoiFeaturesEnabled)
                 {
-                    var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(path));
-                    if (inferred != RoiType.None)
+                    roiType = ParseRoiTypeSafe(state.RoiType);
+                    if (roiType == RoiType.None)
                     {
-                        state.RoiType = inferred.ToString();
-                        _stateService.Save(path, state);
+                        var inferred = InferRoiTypeFromFileName(IOPath.GetFileName(path));
+                        if (inferred != RoiType.None)
+                        {
+                            state.RoiType = inferred.ToString();
+                            _stateService.Save(path, state);
 
-                        _roiPreprocessService.EnsureProcessed(path, inferred);
-                        roiType = inferred;
+                            _roiPreprocessService.EnsureProcessed(path, inferred);
+                            roiType = inferred;
+                        }
                     }
                 }
 
@@ -1778,6 +1806,12 @@ namespace CoilTrainingUI
             _anomalyService = new AnomalyStateService();
             _roiService = new RoiStateService();
             _roiPreprocessService = new RoiPreprocessService();
+
+            if (!RoiFeaturesEnabled)
+            {
+                ShowRoiCheckBox.IsEnabled = false;
+                ShowRoiCheckBox.IsChecked = false;
+            }
 
             //타이머 초기화
             _labelSaveDebounceTimer = new DispatcherTimer

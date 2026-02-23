@@ -227,7 +227,10 @@
                         </StackPanel>
                     </GroupBox>
 
-                    <GroupBox Header="ROI Type" Margin="0,15,0,0">
+                    <GroupBox x:Name="RoiTypeGroupBox"
+                              Header="ROI Type"
+                              Margin="0,15,0,0"
+                              IsEnabled="False">
                         <StackPanel>
                             <RadioButton Content="None"
                                          Tag="None"
@@ -249,6 +252,7 @@
                     </GroupBox>
                     <CheckBox x:Name="ShowRoiCheckBox"
                                 Content="Show ROI Mask"
+                                IsEnabled="False"
                                 Checked="ShowRoiCheckBox_Checked"
                                 Unchecked="ShowRoiCheckBox_Unchecked"/>
 
