@@ -10,8 +10,9 @@ namespace CoilTrainingUI.Services
         {
             var s = _state.Load(imagePath);
 
-            // 상태 통합 파일에 저장
+            // 상태 통합 파일에 저장 (수동으로 변경된 값이라는 표시를 남긴다)
             s.IsNormal = isNormal;
+            s.HasManualAnomalyDecision = true;
 
             _state.Save(imagePath, s);
         }

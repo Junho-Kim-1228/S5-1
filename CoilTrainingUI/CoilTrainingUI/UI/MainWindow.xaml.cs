@@ -139,6 +139,12 @@ namespace CoilTrainingUI
 
 
             SaveLabelsToStateJson(_currentImagePath);
+            var selectedItem = _images.FirstOrDefault(i => i.FullPath == _currentImagePath);
+            if (selectedItem != null)
+            {
+                selectedItem.HasLabel = true;
+                ImageListBox.Items.Refresh();
+            }
             RefreshSummaryCounts();
         }
 
@@ -292,7 +298,10 @@ namespace CoilTrainingUI
                 });
             }
 
-            _stateService.Save(imagePath, state); // 여기서 IsNormal null이면 true로 정리되게 해놔야 함
+            // 라벨 편집(추가/삭제/수정)이 발생했다는 뜻이므로, 이후에는 infer 대신 GT를 우선한다.
+            state.HasManualYoloDecision = true;
+
+            _stateService.Save(imagePath, state);
         }
 
 
@@ -359,16 +368,31 @@ namespace CoilTrainingUI
                     _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
                 }
 
-                RenderPredictionOverlays(imagePath);
+                bool hasGtLabel = _imageStateManager.HasLabel(imagePath);
+                UpdatePredictionOverlayVisibility(imagePath);
 
                 // 5️⃣ Anomaly 상태
-                bool isNormal = _anomalyService.Load(imagePath);
-                if (_currentDataSource == DataSourceKind.ImportedBatch &&
-                    ImageListBox.SelectedItem is ImageItem importedItem &&
-                    !state.IsNormal.HasValue)
+                bool isNormal;
+                if (_currentDataSource == DataSourceKind.ImportedBatch)
                 {
-                    // imported batch는 state가 없으면 infer 기반 초기값을 유지
-                    isNormal = importedItem.IsNormal;
+                    // Imported batch는 infer 기본값을 우선 사용하고,
+                    // 사용자가 수동으로 Anomaly를 바꾼 경우에만 state 값을 적용한다.
+                    if (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
+                    {
+                        isNormal = state.IsNormal.Value;
+                    }
+                    else if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
+                    {
+                        isNormal = EvaluateInferMetaFromInfer(inferJsonPath).IsAnomaNormal;
+                    }
+                    else
+                    {
+                        isNormal = true;
+                    }
+                }
+                else
+                {
+                    isNormal = _anomalyService.Load(imagePath);
                 }
                 _imageStateManager.SetNormal(imagePath, isNormal);
 
@@ -389,13 +413,20 @@ namespace CoilTrainingUI
                 if (ImageListBox.SelectedItem is ImageItem item)
                 {
                     item.IsNormal = isNormal;
-                    bool hasGtLabel = _imageStateManager.HasLabel(imagePath);
-                    if (_currentDataSource == DataSourceKind.ImportedBatch && !hasGtLabel && item.HasAiInfer)
+                    if (_currentDataSource == DataSourceKind.ImportedBatch)
                     {
-                        if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
+                        if (state.HasManualYoloDecision)
+                        {
+                            item.HasLabel = hasGtLabel;
+                        }
+                        else if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
+                        {
                             item.HasLabel = EvaluateInferMetaFromInfer(inferJsonPath).HasYoloDefect;
+                        }
                         else
-                            item.HasLabel = false;
+                        {
+                            item.HasLabel = hasGtLabel;
+                        }
                     }
                     else
                     {
@@ -710,6 +741,175 @@ namespace CoilTrainingUI
             }
         }
 
+        private void ApplyPredictionsToLabelsCurrentImage_Click(object sender, RoutedEventArgs e)
+        {
+            if (ImageListBox.SelectedItem is not ImageItem item || string.IsNullOrWhiteSpace(item.FullPath))
+            {
+                MessageBox.Show(
+                    "현재 선택된 이미지가 없습니다.",
+                    "Apply Predictions to Labels",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+                return;
+            }
+
+            string imagePath = item.FullPath;
+
+            if (!string.Equals(_currentImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+                LoadImage(imagePath);
+
+            if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
+            {
+                MessageBox.Show(
+                    "현재 이미지에 연결된 infer.json이 없습니다.",
+                    "Apply Predictions to Labels",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+                return;
+            }
+
+            InferResultDto infer;
+            try
+            {
+                infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"infer.json 로드 실패:\n{inferJsonPath}\n{ex.Message}",
+                    "Apply Predictions to Labels",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+                return;
+            }
+
+            var predictionBoxes = ConvertDetectionsToGtBoxes(infer.Yolo?.Detections);
+            if (predictionBoxes.Count == 0)
+            {
+                string anomaDecision = infer.Anoma?.Decision ?? "(none)";
+                MessageBox.Show(
+                    $"YOLO 예측 박스가 0개라서 GT로 복사할 수 없습니다.\nAnoma decision: {anomaDecision}",
+                    "Apply Predictions to Labels",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+                return;
+            }
+
+            int existingGtCount = _imageStateManager.GetLabels(imagePath).Count;
+            if (existingGtCount > 0)
+            {
+                var overwrite = MessageBox.Show(
+                    $"현재 이미지에 GT 라벨이 {existingGtCount}개 있습니다.\n기존 GT를 삭제하고 예측을 적용할까요?",
+                    "Apply Predictions to Labels",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question
+                );
+
+                if (overwrite != MessageBoxResult.Yes)
+                    return;
+
+                _imageStateManager.ClearLabels(imagePath);
+                _bboxManager.ClearAll();
+                RenderPredictionOverlays(imagePath);
+            }
+
+            var mutableLabels = _imageStateManager.GetMutableLabels(imagePath);
+            foreach (var bbox in predictionBoxes)
+            {
+                mutableLabels.Add(bbox);
+                _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
+            }
+
+            UpdatePredictionOverlayVisibility(imagePath);
+
+            item.HasLabel = _imageStateManager.HasLabel(imagePath);
+            ImageListBox.Items.Refresh();
+            RefreshSummaryCounts();
+
+            SaveLabelsToStateJson(imagePath);
+            RequestSaveLabelsDebounced(imagePath);
+
+            MessageBox.Show(
+                $"예측 박스 {predictionBoxes.Count}개를 GT 라벨로 적용했습니다.",
+                "Apply Predictions to Labels",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information
+            );
+        }
+
+        private List<BoundingBox> ConvertDetectionsToGtBoxes(IReadOnlyList<DetectionDto>? detections)
+        {
+            var boxes = new List<BoundingBox>();
+            if (detections == null)
+                return boxes;
+
+            foreach (var detection in detections)
+            {
+                if (TryConvertDetectionToBoundingBox(detection, out var bbox))
+                    boxes.Add(bbox);
+            }
+
+            return boxes;
+        }
+
+        private bool TryConvertDetectionToBoundingBox(DetectionDto detection, out BoundingBox bbox)
+        {
+            bbox = new BoundingBox();
+
+            if (detection.BboxXywhNorm == null || detection.BboxXywhNorm.Length != 4)
+                return false;
+
+            double cx = detection.BboxXywhNorm[0];
+            double cy = detection.BboxXywhNorm[1];
+            double bw = detection.BboxXywhNorm[2];
+            double bh = detection.BboxXywhNorm[3];
+
+            if (!IsFinite(cx) || !IsFinite(cy) || !IsFinite(bw) || !IsFinite(bh))
+                return false;
+
+            if (bw <= 0 || bh <= 0)
+                return false;
+
+            double left = Math.Clamp(cx - (bw / 2.0), 0.0, 1.0);
+            double right = Math.Clamp(cx + (bw / 2.0), 0.0, 1.0);
+            double top = Math.Clamp(cy - (bh / 2.0), 0.0, 1.0);
+            double bottom = Math.Clamp(cy + (bh / 2.0), 0.0, 1.0);
+
+            double width = right - left;
+            double height = bottom - top;
+            if (width <= 0 || height <= 0)
+                return false;
+
+            string className = NormalizeClassName(detection.ClassName);
+
+            bbox = new BoundingBox
+            {
+                ClassName = className,
+                X = (left + right) / 2.0,
+                Y = (top + bottom) / 2.0,
+                Width = width,
+                Height = height
+            };
+
+            return true;
+        }
+
+        private string NormalizeClassName(string? className)
+        {
+            if (string.IsNullOrWhiteSpace(className))
+                return "dent";
+
+            string normalized = className.Trim().ToLowerInvariant();
+            return _classToId.ContainsKey(normalized) ? normalized : "dent";
+        }
+
+        private static bool IsFinite(double value)
+            => !double.IsNaN(value) && !double.IsInfinity(value);
+
         private string? TrySelectFolder(string description, string? initialPath = null)
         {
             var folderDialogType = Type.GetType("System.Windows.Forms.FolderBrowserDialog, System.Windows.Forms");
@@ -803,6 +1003,14 @@ namespace CoilTrainingUI
                 string imagePath = ResolveImportedImagePath(batchFolder, item);
                 string inferJsonPath = ResolveImportedInferJsonPath(batchFolder, item);
                 var aiMeta = EvaluateInferMetaFromInfer(inferJsonPath);
+                var state = _stateService.Load(imagePath);
+                bool hasGtLabel = state.Labels.Count > 0;
+                bool isNormal = (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
+                    ? state.IsNormal.Value
+                    : aiMeta.IsAnomaNormal;
+                bool hasYoloDefectForView = state.HasManualYoloDecision
+                    ? hasGtLabel
+                    : aiMeta.HasYoloDefect;
 
                 _imageStateManager.EnsureImage(imagePath);
 
@@ -815,8 +1023,8 @@ namespace CoilTrainingUI
                 {
                     FileName = IOPath.GetFileName(imagePath),
                     FullPath = imagePath,
-                    HasLabel = aiMeta.HasYoloDefect,
-                    IsNormal = aiMeta.IsAnomaNormal,
+                    HasLabel = hasYoloDefectForView,
+                    IsNormal = isNormal,
                     HasAiInfer = aiMeta.HasAiInfer,
                     AiIsDefect = aiMeta.HasYoloDefect || !aiMeta.IsAnomaNormal,
                     RoiType = roiType
@@ -998,6 +1206,22 @@ namespace CoilTrainingUI
                 Panel.SetZIndex(rect, 100);
                 ImageCanvas.Children.Add(rect);
             }
+        }
+
+        private void UpdatePredictionOverlayVisibility(string? imagePath = null)
+        {
+            string? targetPath = imagePath ?? _currentImagePath;
+
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                ClearPredictionOverlays();
+                return;
+            }
+
+            if (ShowPredictionCheckBox.IsChecked == true)
+                RenderPredictionOverlays(targetPath);
+            else
+                ClearPredictionOverlays();
         }
 
         private void ClearPredictionOverlays()
@@ -1207,6 +1431,16 @@ namespace CoilTrainingUI
                 return;
 
             UpdateRoiDisplay();
+        }
+
+        private void ShowPredictionCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            UpdatePredictionOverlayVisibility();
+        }
+
+        private void ShowPredictionCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            UpdatePredictionOverlayVisibility();
         }
 
         private RoiType InferRoiTypeFromFileName(string fileName)

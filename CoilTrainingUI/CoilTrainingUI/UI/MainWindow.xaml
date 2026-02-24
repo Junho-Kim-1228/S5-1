@@ -18,7 +18,8 @@
             </MenuItem>
 
             <MenuItem Header="Labeling">
-                <!-- YOLO 관련 메뉴 예정 -->
+                <MenuItem Header="Apply Predictions to Labels (Current Image)"
+                          Click="ApplyPredictionsToLabelsCurrentImage_Click"/>
             </MenuItem>
 
             <MenuItem Header="Training">
@@ -254,6 +255,13 @@
                                 IsEnabled="False"
                                 Checked="ShowRoiCheckBox_Checked"
                                 Unchecked="ShowRoiCheckBox_Unchecked"/>
+
+                    <CheckBox x:Name="ShowPredictionCheckBox"
+                              Content="Show Prediction Overlay"
+                              Margin="0,8,0,0"
+                              IsChecked="False"
+                              Checked="ShowPredictionCheckBox_Checked"
+                              Unchecked="ShowPredictionCheckBox_Unchecked"/>
 
                 </StackPanel>
             </Border>

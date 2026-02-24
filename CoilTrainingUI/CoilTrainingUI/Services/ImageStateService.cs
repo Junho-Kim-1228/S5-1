@@ -32,10 +32,6 @@ namespace CoilTrainingUI.Services
         {
             var path = GetStatePath(imagePath);
 
-            // ✅ 기본값 정책 고정: 설정 안 된 상태는 정상(true)
-            if (state.IsNormal == null)
-                state.IsNormal = true;
-
             state.UpdatedAt = DateTime.UtcNow;
 
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions
@@ -56,6 +52,8 @@ namespace CoilTrainingUI.Services
     {
         public string RoiType { get; set; } = CoilTrainingUI.Models.RoiType.None.ToString();
         public bool? IsNormal { get; set; } = null;
+        public bool HasManualAnomalyDecision { get; set; } = false;
+        public bool HasManualYoloDecision { get; set; } = false;
 
         // ✅ 라벨을 클래스 이름으로 저장
         public List<LabelDto> Labels { get; set; } = new();
