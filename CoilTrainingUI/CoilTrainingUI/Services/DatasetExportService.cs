@@ -11,7 +11,10 @@ namespace CoilTrainingUI.Services
 {
     public class DatasetExportService
     {
-        public string ExportAnomalyDataset(IEnumerable<ImageItem> images, string projectRoot)
+        public string ExportAnomalyDataset(
+            IEnumerable<ImageItem> images,
+            string projectRoot,
+            bool applyRoiMask = true)
         {
             // ===============================
             // 1. Dataset 디렉토리 준비
@@ -62,7 +65,7 @@ namespace CoilTrainingUI.Services
                 // -------------------------------
                 // ROI 적용 여부 판단
                 // -------------------------------
-                if (item.RoiType == RoiType.None)
+                if (!applyRoiMask || item.RoiType == RoiType.None)
                 {
                     // ROI 없으면 원본 그대로
                     File.Copy(item.FullPath, destPath, overwrite: true);

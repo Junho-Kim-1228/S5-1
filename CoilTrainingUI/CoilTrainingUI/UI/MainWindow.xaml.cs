@@ -604,9 +604,10 @@ namespace CoilTrainingUI
         {
             // 1. 프로젝트 루트는 UI가 판단
             string root = FindProjectRoot("capstone_design");
+            bool applyRoiMask = _currentDataSource != DataSourceKind.ImportedBatch;
 
             // 2. 실제 export는 서비스에게 맡김
-            string outputPath = _exportService.ExportAnomalyDataset(_images, root);
+            string outputPath = _exportService.ExportAnomalyDataset(_images, root, applyRoiMask);
 
             // 3. 결과를 사용자에게 보여줌
             MessageBox.Show($"완료: {outputPath}");
@@ -1350,6 +1351,34 @@ namespace CoilTrainingUI
                 => new() { IsValid = false, Message = message };
         }
 
+        private sealed class DatasetValidationResult
+        {
+            public int TotalImages { get; set; }
+            public int NormalizedIsNormalCount { get; set; }
+            public List<string> Errors { get; } = new();
+            public bool IsValid => Errors.Count == 0;
+
+            public string ToErrorMessage()
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("학습 데이터 검증 실패");
+                sb.AppendLine($"총 이미지 수: {TotalImages}");
+                if (NormalizedIsNormalCount > 0)
+                    sb.AppendLine($"IsNormal null -> true 보정: {NormalizedIsNormalCount}");
+                sb.AppendLine($"오류 개수: {Errors.Count}");
+                sb.AppendLine();
+
+                const int maxShow = 80;
+                foreach (var err in Errors.Take(maxShow))
+                    sb.AppendLine($"- {err}");
+
+                if (Errors.Count > maxShow)
+                    sb.AppendLine($"... 외 {Errors.Count - maxShow}건");
+
+                return sb.ToString().TrimEnd();
+            }
+        }
+
         private string FindProjectRoot(string targetFolderName)
         {
             DirectoryInfo? dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
@@ -1517,6 +1546,139 @@ namespace CoilTrainingUI
             _labelSaveDebounceTimer.Start();
         }
 
+        private DatasetValidationResult ValidateDataset(IReadOnlyList<string> imagePaths)
+        {
+            var result = new DatasetValidationResult
+            {
+                TotalImages = imagePaths?.Count ?? 0
+            };
+
+            if (imagePaths == null || imagePaths.Count == 0)
+            {
+                result.Errors.Add("검증할 이미지 경로가 없습니다.");
+                return result;
+            }
+
+            var normalCandidates = new List<string>();
+
+            foreach (var imagePath in imagePaths)
+            {
+                if (string.IsNullOrWhiteSpace(imagePath))
+                {
+                    result.Errors.Add("빈 이미지 경로가 포함되어 있습니다.");
+                    continue;
+                }
+
+                if (!File.Exists(imagePath))
+                {
+                    result.Errors.Add($"processed image 없음: {imagePath}");
+                    continue;
+                }
+
+                if (_currentDataSource == DataSourceKind.ImportedBatch)
+                {
+                    if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath) ||
+                        string.IsNullOrWhiteSpace(inferJsonPath))
+                    {
+                        result.Errors.Add($"infer.json 경로 매핑이 없습니다: {imagePath}");
+                    }
+                    else if (!File.Exists(inferJsonPath))
+                    {
+                        result.Errors.Add($"infer.json 없음: {inferJsonPath}");
+                    }
+                }
+
+                var state = _stateService.Load(imagePath);
+                if (_currentDataSource == DataSourceKind.ImportedBatch &&
+                    !state.HasManualAnomalyDecision)
+                {
+                    bool inferredIsNormal = true;
+                    if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath) &&
+                        !string.IsNullOrWhiteSpace(inferJsonPath) &&
+                        File.Exists(inferJsonPath))
+                    {
+                        inferredIsNormal = EvaluateInferMetaFromInfer(inferJsonPath).IsAnomaNormal;
+                    }
+
+                    state.IsNormal = inferredIsNormal;
+                    _stateService.Save(imagePath, state);
+                }
+                else if (!state.IsNormal.HasValue)
+                {
+                    state.IsNormal = true;
+                    _stateService.Save(imagePath, state);
+                    result.NormalizedIsNormalCount++;
+                }
+
+                var labels = state.Labels ?? new List<LabelDto>();
+                for (int i = 0; i < labels.Count; i++)
+                {
+                    if (!TryValidateGtLabel(labels[i], out var reason))
+                    {
+                        result.Errors.Add(
+                            $"GT 좌표 오류: {IOPath.GetFileName(imagePath)} label[{i}] {reason}");
+                    }
+                }
+
+                if (state.IsNormal == true)
+                    normalCandidates.Add(imagePath);
+            }
+
+            var abnormalMixedInNormalSet = normalCandidates
+                .Where(path => (_stateService.Load(path).IsNormal ?? true) == false)
+                .ToList();
+
+            if (abnormalMixedInNormalSet.Count > 0)
+            {
+                foreach (var mixed in abnormalMixedInNormalSet)
+                    result.Errors.Add($"정상 학습셋에 IsNormal=false가 섞여 있습니다: {mixed}");
+            }
+
+            if (normalCandidates.Count < 2)
+                result.Errors.Add("anoma 학습용 정상 이미지가 2장 미만입니다. (최소 2장 필요)");
+
+            return result;
+        }
+
+        private static bool TryValidateGtLabel(LabelDto label, out string reason)
+        {
+            if (label == null)
+            {
+                reason = "label 객체가 null입니다.";
+                return false;
+            }
+
+            if (!IsFinite01(label.X))
+            {
+                reason = $"X={label.X} (0~1 범위 아님)";
+                return false;
+            }
+
+            if (!IsFinite01(label.Y))
+            {
+                reason = $"Y={label.Y} (0~1 범위 아님)";
+                return false;
+            }
+
+            if (!IsFinite01(label.Width) || label.Width <= 0)
+            {
+                reason = $"Width={label.Width} (0~1 범위의 양수 아님)";
+                return false;
+            }
+
+            if (!IsFinite01(label.Height) || label.Height <= 0)
+            {
+                reason = $"Height={label.Height} (0~1 범위의 양수 아님)";
+                return false;
+            }
+
+            reason = "";
+            return true;
+        }
+
+        private static bool IsFinite01(double value)
+            => !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0.0 && value <= 1.0;
+
         private async void TrainAll_Click(object sender, RoutedEventArgs e)
         {
             // 학습은 오래 걸리니 UI 멈춤 방지
@@ -1540,8 +1702,31 @@ namespace CoilTrainingUI
 
                 // 2) 현재 이미지 경로
                 var imagePaths = _images.Select(x => x.FullPath)
-                                        .Where(File.Exists)
+                                        .Where(p => !string.IsNullOrWhiteSpace(p))
+                                        .Distinct(StringComparer.OrdinalIgnoreCase)
                                         .ToList();
+
+                if (imagePaths.Count == 0)
+                {
+                    MessageBox.Show("학습에 사용할 이미지 경로가 없습니다.");
+                    return;
+                }
+
+                var validation = ValidateDataset(imagePaths);
+                if (!validation.IsValid)
+                {
+                    MessageBox.Show(
+                        validation.ToErrorMessage(),
+                        "Train Dataset Validation Failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning
+                    );
+                    return;
+                }
+
+                bool useRoiProcessedImagesForTraining =
+                    _currentDataSource != DataSourceKind.ImportedBatch &&
+                    settings.Workspace.UseRoiProcessedImages;
 
                 int totalImages = imagePaths.Count;
                 int normalImages = imagePaths.Count(p => (_stateService.Load(p).IsNormal ?? true) == true);
@@ -1554,7 +1739,7 @@ namespace CoilTrainingUI
                     trainRatio: settings.Workspace.TrainRatio,
                     valRatio: settings.Workspace.ValRatio,
                     seed: settings.Workspace.Seed,
-                    useRoiProcessedImages: settings.Workspace.UseRoiProcessedImages
+                    useRoiProcessedImages: useRoiProcessedImagesForTraining
                 );
 
                 // 4) Anoma workspace 생성 (정상만)
@@ -1565,7 +1750,7 @@ namespace CoilTrainingUI
                     trainRatio: settings.Workspace.TrainRatio,
                     valRatio: settings.Workspace.ValRatio,
                     seed: settings.Workspace.Seed,
-                    useRoiProcessedImages: settings.Workspace.UseRoiProcessedImages
+                    useRoiProcessedImages: useRoiProcessedImagesForTraining
                 );
 
                 // 5) 이번 실행 결과 폴더(로그/산출물)
@@ -1656,7 +1841,7 @@ namespace CoilTrainingUI
                     input = new
                     {
                         image_format = "bmp",
-                        use_roi_processed = settings.Workspace.UseRoiProcessedImages
+                        use_roi_processed = useRoiProcessedImagesForTraining
                     },
                     yolo = new
                     {
