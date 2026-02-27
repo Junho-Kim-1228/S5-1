@@ -398,7 +398,7 @@ namespace CoilTrainingUI
 
                 // 6) ROI 기능은 현재 비활성화 상태로 고정
                 RoiType roiType = RoiType.None;
-                if (RoiFeaturesEnabled)
+                if (RoiFeaturesEnabled && _currentDataSource == DataSourceKind.LocalInput)
                 {
                     roiType = _roiService.Load(imagePath);
                     _imageStateManager.SetRoiType(imagePath, roiType);
@@ -457,6 +457,12 @@ namespace CoilTrainingUI
                 return;
 
             if (!RoiFeaturesEnabled)
+            {
+                MainImage.Source = _rawBitmap;
+                return;
+            }
+
+            if (_currentDataSource != DataSourceKind.LocalInput)
             {
                 MainImage.Source = _rawBitmap;
                 return;
@@ -957,6 +963,30 @@ namespace CoilTrainingUI
             }
         }
 
+        private void UpdateDataSourceUiState()
+        {
+            bool isLocalInput = _currentDataSource == DataSourceKind.LocalInput;
+            bool roiEditable = RoiFeaturesEnabled && isLocalInput;
+
+            RoiTypeGroupBox.IsEnabled = roiEditable;
+            ShowRoiCheckBox.IsEnabled = roiEditable;
+
+            if (!roiEditable)
+                ShowRoiCheckBox.IsChecked = false;
+
+            if (isLocalInput)
+            {
+                RoiTypeGroupBox.ToolTip = null;
+                ShowRoiCheckBox.ToolTip = null;
+            }
+            else
+            {
+                const string tooltip = "Imported mode에서는 ROI 변경을 지원하지 않습니다.";
+                RoiTypeGroupBox.ToolTip = tooltip;
+                ShowRoiCheckBox.ToolTip = tooltip;
+            }
+        }
+
         private bool LoadLocalInputFolder(bool showErrorMessage)
         {
             if (!Directory.Exists(_defaultInputFolder))
@@ -975,6 +1005,7 @@ namespace CoilTrainingUI
 
             StopWatchingInputFolder();
             _currentDataSource = DataSourceKind.LocalInput;
+            UpdateDataSourceUiState();
 
             LoadImageFolder(_defaultInputFolder);
             StartWatchingInputFolder(_defaultInputFolder);
@@ -994,6 +1025,7 @@ namespace CoilTrainingUI
 
             StopWatchingInputFolder();
             _currentDataSource = DataSourceKind.ImportedBatch;
+            UpdateDataSourceUiState();
 
             _images.Clear();
             _knownImages.Clear();
@@ -1075,7 +1107,7 @@ namespace CoilTrainingUI
             try
             {
                 var infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
-                bool hasYoloDefect = infer.Yolo?.Detections?.Count > 0;
+                bool hasYoloDefect = infer.Yolo?.Detections?.Any(IsUsableDetectionForPrediction) == true;
                 bool isAnomaNormal = !string.Equals(infer.Anoma?.Decision, "anomaly", StringComparison.OrdinalIgnoreCase);
                 return (true, hasYoloDefect, isAnomaNormal);
             }
@@ -1084,6 +1116,30 @@ namespace CoilTrainingUI
                 Trace.WriteLine($"AI status parse failed: {inferJsonPath}, {ex.Message}");
                 return (false, false, true);
             }
+        }
+
+        private static bool IsUsableDetectionForPrediction(DetectionDto detection)
+        {
+            if (detection.BboxXywhNorm == null || detection.BboxXywhNorm.Length != 4)
+                return false;
+
+            double cx = detection.BboxXywhNorm[0];
+            double cy = detection.BboxXywhNorm[1];
+            double bw = detection.BboxXywhNorm[2];
+            double bh = detection.BboxXywhNorm[3];
+
+            if (!IsFinite(cx) || !IsFinite(cy) || !IsFinite(bw) || !IsFinite(bh))
+                return false;
+
+            if (bw <= 0 || bh <= 0)
+                return false;
+
+            double left = Math.Clamp(cx - (bw / 2.0), 0.0, 1.0);
+            double right = Math.Clamp(cx + (bw / 2.0), 0.0, 1.0);
+            double top = Math.Clamp(cy - (bh / 2.0), 0.0, 1.0);
+            double bottom = Math.Clamp(cy + (bh / 2.0), 0.0, 1.0);
+
+            return (right - left) > 0 && (bottom - top) > 0;
         }
 
         private InferenceBatchValidationResult ValidateImportedBatchForView(string batchFolder)
@@ -1398,6 +1454,8 @@ namespace CoilTrainingUI
         {
             if (!RoiFeaturesEnabled)
                 return;
+            if (_currentDataSource != DataSourceKind.LocalInput)
+                return;
 
             if (_isLoadingImage) return;
 
@@ -1450,6 +1508,8 @@ namespace CoilTrainingUI
         {
             if (!RoiFeaturesEnabled)
                 return;
+            if (_currentDataSource != DataSourceKind.LocalInput)
+                return;
 
             UpdateRoiDisplay();
         }
@@ -1457,6 +1517,8 @@ namespace CoilTrainingUI
         private void ShowRoiCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             if (!RoiFeaturesEnabled)
+                return;
+            if (_currentDataSource != DataSourceKind.LocalInput)
                 return;
 
             UpdateRoiDisplay();
@@ -2193,6 +2255,7 @@ namespace CoilTrainingUI
                 _knownImages.Add(it.FullPath);
 
             _currentDataSource = DataSourceKind.LocalInput;
+            UpdateDataSourceUiState();
             _watcher = new FileSystemWatcher(folderPath, "*.bmp")
             {
                 IncludeSubdirectories = false,
@@ -2415,12 +2478,7 @@ namespace CoilTrainingUI
             _anomalyService = new AnomalyStateService();
             _roiService = new RoiStateService();
             _roiPreprocessService = new RoiPreprocessService();
-
-            if (!RoiFeaturesEnabled)
-            {
-                ShowRoiCheckBox.IsEnabled = false;
-                ShowRoiCheckBox.IsChecked = false;
-            }
+            UpdateDataSourceUiState();
 
             //타이머 초기화   
             _labelSaveDebounceTimer = new DispatcherTimer
