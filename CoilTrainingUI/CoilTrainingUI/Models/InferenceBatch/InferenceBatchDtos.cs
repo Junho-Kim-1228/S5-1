@@ -8,6 +8,12 @@ public class ManifestDto
     [JsonPropertyName("schema_version")]
     public int SchemaVersion { get; set; } = 1;
 
+    [JsonPropertyName("batch_type")]
+    public string BatchType { get; set; } = "";
+
+    [JsonPropertyName("batch_id")]
+    public string BatchId { get; set; } = "";
+
     [JsonPropertyName("created_at")]
     public string CreatedAt { get; set; } = "";
 
@@ -25,6 +31,9 @@ public class ManifestItemDto
 
     [JsonPropertyName("infer_json")]
     public string InferJson { get; set; } = "";
+
+    [JsonPropertyName("raw_image")]
+    public string RawImage { get; set; } = "";
 
     [JsonPropertyName("roi_type")]
     public string RoiType { get; set; } = "";

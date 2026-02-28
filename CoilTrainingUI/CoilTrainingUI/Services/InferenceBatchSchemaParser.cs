@@ -91,7 +91,6 @@ public static class InferenceBatchSchemaParser
                 throw new InvalidDataException($"Invalid item type in 'manifest.items' (object expected): {path}");
 
             _ = GetRequiredProperty(item, "manifest.items[]", "processed_image", path);
-            _ = GetRequiredProperty(item, "manifest.items[]", "infer_json", path);
             _ = GetRequiredProperty(item, "manifest.items[]", "id", path);
         }
     }

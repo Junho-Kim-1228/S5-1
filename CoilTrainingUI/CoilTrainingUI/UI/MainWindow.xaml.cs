@@ -27,7 +27,6 @@ namespace CoilTrainingUI
 
         private YoloLabelService _yoloService;
         private BoundingBoxManager _bboxManager;
-        private readonly DatasetExportService _exportService = new();
         private readonly InferenceBatchImportService _inferenceBatchImportService = new();
         private CanvasInteractionManager _canvasInteractionManager;
         private ImageStateManager _imageStateManager;
@@ -41,10 +40,15 @@ namespace CoilTrainingUI
         private readonly HashSet<string> _knownImages = new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _watchLock = new(1, 1);
         private readonly string _defaultInputFolder = @"C:\Users\wnsgh\Desktop\input";
-        private DataSourceKind _currentDataSource = DataSourceKind.LocalInput;
+        private DataSourceKind _currentDataSource = DataSourceKind.ImportedBatch;
         private const bool RoiFeaturesEnabled = false;
         private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private const string PredictionOverlayTag = "__prediction_overlay";
+        private string? _currentBatchRoot;
+        private string _currentBatchType = "";
+        private bool _currentBatchRequiresInfer;
+        private bool _currentBatchHasAnyInfer;
+        private const string LastLoadedBatchFileName = ".last_loaded_batch.txt";
 
         private DispatcherTimer _labelSaveDebounceTimer;
         private string? _pendingSaveImagePath;
@@ -52,6 +56,9 @@ namespace CoilTrainingUI
 
         // 항상 원본은 유지
         private BitmapSource _rawBitmap;
+        private BitmapSource? _rawViewBitmap;
+        private string? _rawViewBitmapPath;
+        private bool _suppressRawToggleEvent;
 
         // ROI 적용된 "실제 사용 이미지"
         private BitmapSource _processedBitmap;
@@ -375,20 +382,10 @@ namespace CoilTrainingUI
                 bool isNormal;
                 if (_currentDataSource == DataSourceKind.ImportedBatch)
                 {
-                    // Imported batch는 infer 기본값을 우선 사용하고,
-                    // 사용자가 수동으로 Anomaly를 바꾼 경우에만 state 값을 적용한다.
-                    if (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
-                    {
-                        isNormal = state.IsNormal.Value;
-                    }
-                    else if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
-                    {
-                        isNormal = EvaluateInferMetaFromInfer(inferJsonPath).IsAnomaNormal;
-                    }
-                    else
-                    {
-                        isNormal = true;
-                    }
+                    // Imported batch에서는 수동 확정이 없는 경우 기본 정상(true)으로 처리한다.
+                    isNormal = (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
+                        ? state.IsNormal.Value
+                        : true;
                 }
                 else
                 {
@@ -413,25 +410,7 @@ namespace CoilTrainingUI
                 if (ImageListBox.SelectedItem is ImageItem item)
                 {
                     item.IsNormal = isNormal;
-                    if (_currentDataSource == DataSourceKind.ImportedBatch)
-                    {
-                        if (state.HasManualYoloDecision)
-                        {
-                            item.HasLabel = hasGtLabel;
-                        }
-                        else if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
-                        {
-                            item.HasLabel = EvaluateInferMetaFromInfer(inferJsonPath).HasYoloDefect;
-                        }
-                        else
-                        {
-                            item.HasLabel = hasGtLabel;
-                        }
-                    }
-                    else
-                    {
-                        item.HasLabel = hasGtLabel;
-                    }
+                    item.HasLabel = hasGtLabel;
                     item.RoiType = roiType;
 
                     NormalRadio.IsChecked = isNormal;
@@ -456,15 +435,17 @@ namespace CoilTrainingUI
             if (_rawBitmap == null || string.IsNullOrEmpty(_currentImagePath))
                 return;
 
+            BitmapSource baseSource = _rawBitmap;
+
             if (!RoiFeaturesEnabled)
             {
-                MainImage.Source = _rawBitmap;
+                UpdateMainImageSourceFromViewToggle(showMissingRawMessage: false, fallbackSource: baseSource);
                 return;
             }
 
             if (_currentDataSource != DataSourceKind.LocalInput)
             {
-                MainImage.Source = _rawBitmap;
+                UpdateMainImageSourceFromViewToggle(showMissingRawMessage: false, fallbackSource: baseSource);
                 return;
             }
 
@@ -473,12 +454,63 @@ namespace CoilTrainingUI
                 var roiType = _imageStateManager.GetRoiType(_currentImagePath);
 
                 // ✅ 서비스가 알아서 (생성/로드)해서 BitmapSource 반환
-                MainImage.Source = _roiPreprocessService.GetOrCreateProcessedImage(_currentImagePath, roiType);
+                baseSource = _roiPreprocessService.GetOrCreateProcessedImage(_currentImagePath, roiType);
             }
-            else
+
+            UpdateMainImageSourceFromViewToggle(showMissingRawMessage: false, fallbackSource: baseSource);
+        }
+
+        private void UpdateMainImageSourceFromViewToggle(bool showMissingRawMessage, BitmapSource? fallbackSource = null)
+        {
+            BitmapSource? processedSource = fallbackSource ?? _rawBitmap;
+            if (processedSource == null)
+                return;
+
+            if (ShowRawCheckBox.IsChecked != true)
             {
-                MainImage.Source = _rawBitmap;
+                MainImage.Source = processedSource;
+                return;
             }
+
+            if (ImageListBox.SelectedItem is not ImageItem currentItem)
+            {
+                MainImage.Source = processedSource;
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentItem.RawPath) || !File.Exists(currentItem.RawPath))
+            {
+                if (showMissingRawMessage)
+                {
+                    MessageBox.Show(
+                        "RAW 이미지가 배치에 없습니다.",
+                        "Show RAW",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information
+                    );
+                }
+
+                _suppressRawToggleEvent = true;
+                ShowRawCheckBox.IsChecked = false;
+                _suppressRawToggleEvent = false;
+                MainImage.Source = processedSource;
+                return;
+            }
+
+            if (!string.Equals(_rawViewBitmapPath, currentItem.RawPath, StringComparison.OrdinalIgnoreCase) ||
+                _rawViewBitmap == null)
+            {
+                var rawBitmap = new BitmapImage();
+                rawBitmap.BeginInit();
+                rawBitmap.UriSource = new Uri(currentItem.RawPath, UriKind.Absolute);
+                rawBitmap.CacheOption = BitmapCacheOption.OnLoad;
+                rawBitmap.EndInit();
+
+                _rawViewBitmap = rawBitmap;
+                _rawViewBitmapPath = currentItem.RawPath;
+            }
+
+            MainImage.Source = _rawViewBitmap;
         }
 
 
@@ -544,7 +576,7 @@ namespace CoilTrainingUI
                 _images.Add(new ImageItem
                 {
                     FileName = IOPath.GetFileName(img),
-                    FullPath = img,
+                    ProcessedPath = img,
                     HasLabel = hasLabel,
                     IsNormal = isNormal,
                     RoiType = roiType
@@ -560,9 +592,11 @@ namespace CoilTrainingUI
 
         private void ImageListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            UpdatePredictionFeatureUiState();
+
             if (ImageListBox.SelectedItem is ImageItem item)
             {
-                LoadImage(item.FullPath);
+                LoadImage(item.ProcessedPath);
 
                 NormalRadio.IsChecked = item.IsNormal;
                 AbnormalRadio.IsChecked = !item.IsNormal;
@@ -579,10 +613,10 @@ namespace CoilTrainingUI
                 return;
 
             // 1️⃣ 메모리 상태 변경
-            _imageStateManager.SetNormal(item.FullPath, true);
+            _imageStateManager.SetNormal(item.ProcessedPath, true);
 
             // 2️⃣ 파일 저장
-            _anomalyService.Save(item.FullPath, true);
+            _anomalyService.Save(item.ProcessedPath, true);
 
             // 3️⃣ UI 모델 반영
             item.IsNormal = true;
@@ -596,8 +630,8 @@ namespace CoilTrainingUI
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
 
-            _imageStateManager.SetNormal(item.FullPath, false);
-            _anomalyService.Save(item.FullPath, false);
+            _imageStateManager.SetNormal(item.ProcessedPath, false);
+            _anomalyService.Save(item.ProcessedPath, false);
 
             item.IsNormal = false;
 
@@ -606,108 +640,58 @@ namespace CoilTrainingUI
         }
 
 
-        private void ExportAnomalyDataset_Click(object sender, RoutedEventArgs e)
-        {
-            // 1. 프로젝트 루트는 UI가 판단
-            string root = FindProjectRoot("capstone_design");
-            bool applyRoiMask = _currentDataSource != DataSourceKind.ImportedBatch;
-
-            // 2. 실제 export는 서비스에게 맡김
-            string outputPath = _exportService.ExportAnomalyDataset(_images, root, applyRoiMask);
-
-            // 3. 결과를 사용자에게 보여줌
-            MessageBox.Show($"완료: {outputPath}");
-        }
-
-        private void ImportInferenceBatch_Click(object sender, RoutedEventArgs e)
-        {
-            var selectedBatchFolder = TrySelectFolder("Import inference batch folder");
-            if (string.IsNullOrWhiteSpace(selectedBatchFolder))
-                return;
-
-            var result = ValidateInferenceBatchForImport(selectedBatchFolder);
-            if (!result.IsValid)
-            {
-                MessageBox.Show(
-                    result.Message,
-                    "Import Inference Batch",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-                return;
-            }
-
-            try
-            {
-                var projectRoot = FindProjectRoot("capstone_design");
-                var imported = _inferenceBatchImportService.Import(selectedBatchFolder, projectRoot);
-                MessageBox.Show(
-                    $"imported path: {imported.ImportedPath}",
-                    "Import Inference Batch",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information
-                );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"배치 Import 실패: {ex.Message}",
-                    "Import Inference Batch",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-            }
-        }
-
-        private void LoadImportedBatch_Click(object sender, RoutedEventArgs e)
+        private void ImportBatch_Click(object sender, RoutedEventArgs e)
         {
             string projectRoot = FindProjectRoot("capstone_design");
             string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
+            Directory.CreateDirectory(inboxRoot);
 
-            if (!Directory.Exists(inboxRoot))
-            {
-                MessageBox.Show(
-                    $"training_inbox 폴더가 없습니다.\n{inboxRoot}",
-                    "Load Imported Batch",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-                return;
-            }
-
-            var selectedBatchFolder = TrySelectFolder("Load imported batch folder", inboxRoot);
+            var selectedBatchFolder = TrySelectFolder("Import batch folder", inboxRoot);
             if (string.IsNullOrWhiteSpace(selectedBatchFolder))
                 return;
 
-            if (!IsPathUnderRoot(selectedBatchFolder, inboxRoot))
-            {
-                MessageBox.Show(
-                    "training_inbox 하위 폴더만 선택할 수 있습니다.",
-                    "Load Imported Batch",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-                return;
-            }
-
-            var validation = ValidateImportedBatchForView(selectedBatchFolder);
-            if (!validation.IsValid)
-            {
-                MessageBox.Show(
-                    validation.Message,
-                    "Load Imported Batch",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-                return;
-            }
-
             try
             {
-                LoadImportedBatchFromFolder(selectedBatchFolder);
+                string batchToLoad;
+                if (IsPathUnderRoot(selectedBatchFolder, inboxRoot))
+                {
+                    var validation = ValidateBatchFolder(selectedBatchFolder);
+                    if (!validation.IsValid)
+                    {
+                        MessageBox.Show(
+                            validation.Message,
+                            "Import Batch",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning
+                        );
+                        return;
+                    }
+
+                    batchToLoad = selectedBatchFolder;
+                }
+                else
+                {
+                    var validation = ValidateBatchFolder(selectedBatchFolder);
+                    if (!validation.IsValid)
+                    {
+                        MessageBox.Show(
+                            validation.Message,
+                            "Import Batch",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning
+                        );
+                        return;
+                    }
+
+                    var imported = _inferenceBatchImportService.Import(selectedBatchFolder, projectRoot);
+                    batchToLoad = imported.ImportedPath;
+                }
+
+                LoadBatchFromFolder(batchToLoad);
+
                 MessageBox.Show(
-                    $"Imported batch loaded\n{selectedBatchFolder}\n총 item 수: {_images.Count}",
-                    "Load Imported Batch",
+                    $"Batch loaded\n{batchToLoad}\n총 item 수: {_images.Count}",
+                    "Import Batch",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information
                 );
@@ -715,42 +699,25 @@ namespace CoilTrainingUI
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    $"Imported batch 로드 실패: {ex.Message}",
-                    "Load Imported Batch",
+                    $"Batch import/load 실패: {ex.Message}",
+                    "Import Batch",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning
                 );
             }
         }
 
-        private void LoadLocalInput_Click(object sender, RoutedEventArgs e)
+        private void OpenTrainingInbox_Click(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                if (!LoadLocalInputFolder(showErrorMessage: true))
-                    return;
-
-                MessageBox.Show(
-                    $"Local input 로딩 완료\n{_defaultInputFolder}\n총 item 수: {_images.Count}",
-                    "Load Local Input",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information
-                );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"Local input 로딩 실패: {ex.Message}",
-                    "Load Local Input",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-            }
+            string projectRoot = FindProjectRoot("capstone_design");
+            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
+            Directory.CreateDirectory(inboxRoot);
+            OpenFolder(inboxRoot);
         }
 
         private void ApplyPredictionsToLabelsCurrentImage_Click(object sender, RoutedEventArgs e)
         {
-            if (ImageListBox.SelectedItem is not ImageItem item || string.IsNullOrWhiteSpace(item.FullPath))
+            if (ImageListBox.SelectedItem is not ImageItem item || string.IsNullOrWhiteSpace(item.ProcessedPath))
             {
                 MessageBox.Show(
                     "현재 선택된 이미지가 없습니다.",
@@ -761,7 +728,18 @@ namespace CoilTrainingUI
                 return;
             }
 
-            string imagePath = item.FullPath;
+            string imagePath = item.ProcessedPath;
+
+            if (!item.HasAiInfer)
+            {
+                MessageBox.Show(
+                    "현재 이미지에는 사용할 예측(infer.json)이 없습니다.",
+                    "Apply Predictions to Labels",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+                return;
+            }
 
             if (!string.Equals(_currentImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
                 LoadImage(imagePath);
@@ -981,10 +959,28 @@ namespace CoilTrainingUI
             }
             else
             {
-                const string tooltip = "Imported mode에서는 ROI 변경을 지원하지 않습니다.";
+                const string tooltip = "Batch mode에서는 ROI 변경을 지원하지 않습니다.";
                 RoiTypeGroupBox.ToolTip = tooltip;
                 ShowRoiCheckBox.ToolTip = tooltip;
             }
+
+            UpdatePredictionFeatureUiState();
+        }
+
+        private void UpdatePredictionFeatureUiState()
+        {
+            bool predictionAvailableInBatch = _currentBatchHasAnyInfer;
+
+            ShowPredictionCheckBox.IsEnabled = predictionAvailableInBatch;
+            if (!predictionAvailableInBatch)
+                ShowPredictionCheckBox.IsChecked = false;
+
+            bool canApplyCurrentImage =
+                predictionAvailableInBatch &&
+                ImageListBox.SelectedItem is ImageItem item &&
+                item.HasAiInfer;
+
+            ApplyPredictionsMenuItem.IsEnabled = canApplyCurrentImage;
         }
 
         private bool LoadLocalInputFolder(bool showErrorMessage)
@@ -1005,6 +1001,10 @@ namespace CoilTrainingUI
 
             StopWatchingInputFolder();
             _currentDataSource = DataSourceKind.LocalInput;
+            _currentBatchRoot = null;
+            _currentBatchType = "";
+            _currentBatchRequiresInfer = false;
+            _currentBatchHasAnyInfer = false;
             UpdateDataSourceUiState();
 
             LoadImageFolder(_defaultInputFolder);
@@ -1018,32 +1018,46 @@ namespace CoilTrainingUI
             return true;
         }
 
-        private void LoadImportedBatchFromFolder(string batchFolder)
+        private void LoadBatchFromFolder(string batchFolder)
         {
             string manifestPath = IOPath.Combine(batchFolder, "meta", "manifest.json");
             var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+            bool requiresInfer = DetermineBatchRequiresInfer(batchFolder, manifest);
 
             StopWatchingInputFolder();
             _currentDataSource = DataSourceKind.ImportedBatch;
+            _currentBatchRoot = batchFolder;
+            _currentBatchType = string.IsNullOrWhiteSpace(manifest.BatchType)
+                ? (requiresInfer ? "inference" : "no_infer")
+                : manifest.BatchType;
+            _currentBatchRequiresInfer = requiresInfer;
             UpdateDataSourceUiState();
 
             _images.Clear();
             _knownImages.Clear();
             _inferJsonByImagePath.Clear();
+            _currentBatchHasAnyInfer = false;
 
             foreach (var item in manifest.Items)
             {
-                string imagePath = ResolveImportedImagePath(batchFolder, item);
-                string inferJsonPath = ResolveImportedInferJsonPath(batchFolder, item);
+                string imagePath = ResolveBatchImagePath(batchFolder, item);
+                string? rawImagePath = ResolveBatchRawImagePath(batchFolder, item);
+                string inferJsonPath = ResolveBatchInferJsonPath(batchFolder, item);
                 var aiMeta = EvaluateInferMetaFromInfer(inferJsonPath);
+
+                bool hadStateFile = _stateService.HasState(imagePath);
                 var state = _stateService.Load(imagePath);
+                if (!hadStateFile)
+                {
+                    // 배치 로드시 state.json을 기본 생성해 경로별 상태 파일을 명시적으로 고정한다.
+                    state.IsNormal = true;
+                    _stateService.Save(imagePath, state);
+                }
+
                 bool hasGtLabel = state.Labels.Count > 0;
                 bool isNormal = (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
                     ? state.IsNormal.Value
-                    : aiMeta.IsAnomaNormal;
-                bool hasYoloDefectForView = state.HasManualYoloDecision
-                    ? hasGtLabel
-                    : aiMeta.HasYoloDefect;
+                    : true;
 
                 _imageStateManager.EnsureImage(imagePath);
 
@@ -1055,28 +1069,118 @@ namespace CoilTrainingUI
                 _images.Add(new ImageItem
                 {
                     FileName = IOPath.GetFileName(imagePath),
-                    FullPath = imagePath,
-                    HasLabel = hasYoloDefectForView,
+                    ProcessedPath = imagePath,
+                    RawPath = rawImagePath,
+                    HasLabel = hasGtLabel,
                     IsNormal = isNormal,
                     HasAiInfer = aiMeta.HasAiInfer,
                     AiIsDefect = aiMeta.HasYoloDefect || !aiMeta.IsAnomaNormal,
+                    AiYoloDefect = aiMeta.HasYoloDefect,
+                    AiAnomaDefect = !aiMeta.IsAnomaNormal,
                     RoiType = roiType
                 });
 
                 _inferJsonByImagePath[imagePath] = inferJsonPath;
+                if (aiMeta.HasAiInfer)
+                    _currentBatchHasAnyInfer = true;
             }
 
             ImageListBox.ItemsSource = _images;
             ImageListBox.Items.Refresh();
             RefreshSummaryCounts();
+            UpdatePredictionFeatureUiState();
 
             if (_images.Count > 0)
                 ImageListBox.SelectedIndex = 0;
             else
                 ResetImageDisplay();
+
+            SaveLastLoadedBatchPath(batchFolder);
         }
 
-        private string ResolveImportedImagePath(string batchFolder, ManifestItemDto item)
+        private void TryRestoreLastLoadedBatch()
+        {
+            string? savedPath = ReadLastLoadedBatchPath();
+            if (string.IsNullOrWhiteSpace(savedPath))
+                return;
+
+            string fullPath;
+            try
+            {
+                fullPath = IOPath.GetFullPath(savedPath);
+            }
+            catch
+            {
+                ClearLastLoadedBatchPath();
+                return;
+            }
+
+            if (!Directory.Exists(fullPath))
+            {
+                ClearLastLoadedBatchPath();
+                return;
+            }
+
+            var validation = ValidateBatchFolder(fullPath);
+            if (!validation.IsValid)
+            {
+                ClearLastLoadedBatchPath();
+                return;
+            }
+
+            try
+            {
+                LoadBatchFromFolder(fullPath);
+            }
+            catch
+            {
+                ClearLastLoadedBatchPath();
+            }
+        }
+
+        private void SaveLastLoadedBatchPath(string batchFolder)
+        {
+            if (string.IsNullOrWhiteSpace(batchFolder))
+                return;
+
+            string statePath = GetLastLoadedBatchStatePath();
+            Directory.CreateDirectory(IOPath.GetDirectoryName(statePath)!);
+            File.WriteAllText(statePath, IOPath.GetFullPath(batchFolder), Encoding.UTF8);
+        }
+
+        private string? ReadLastLoadedBatchPath()
+        {
+            string statePath = GetLastLoadedBatchStatePath();
+            if (!File.Exists(statePath))
+                return null;
+
+            var text = File.ReadAllText(statePath).Trim();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+
+        private void ClearLastLoadedBatchPath()
+        {
+            string statePath = GetLastLoadedBatchStatePath();
+            if (!File.Exists(statePath))
+                return;
+
+            try
+            {
+                File.Delete(statePath);
+            }
+            catch
+            {
+            }
+        }
+
+        private string GetLastLoadedBatchStatePath()
+        {
+            string projectRoot = FindProjectRoot("capstone_design");
+            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
+            return IOPath.Combine(inboxRoot, LastLoadedBatchFileName);
+        }
+
+        private string ResolveBatchImagePath(string batchFolder, ManifestItemDto item)
         {
             string byIdPath = IOPath.Combine(batchFolder, "images", $"{item.Id}.bmp");
             if (File.Exists(byIdPath))
@@ -1092,11 +1196,55 @@ namespace CoilTrainingUI
             throw new FileNotFoundException($"processed image를 찾을 수 없습니다. id={item.Id}", byIdPath);
         }
 
-        private static string ResolveImportedInferJsonPath(string batchFolder, ManifestItemDto item)
+        private static string ResolveBatchInferJsonPath(string batchFolder, ManifestItemDto item)
         {
+            if (string.IsNullOrWhiteSpace(item.InferJson))
+                return IOPath.Combine(batchFolder, "inference", $"{item.Id}.infer.json");
+
             return IOPath.IsPathRooted(item.InferJson)
                 ? item.InferJson
                 : IOPath.Combine(batchFolder, item.InferJson);
+        }
+
+        private static string? ResolveBatchRawImagePath(string batchFolder, ManifestItemDto item)
+        {
+            if (!string.IsNullOrWhiteSpace(item.RawImage))
+            {
+                string configuredPath = IOPath.IsPathRooted(item.RawImage)
+                    ? item.RawImage
+                    : IOPath.Combine(batchFolder, item.RawImage);
+                return File.Exists(configuredPath) ? configuredPath : null;
+            }
+
+            if (string.IsNullOrWhiteSpace(item.Id))
+            {
+                if (string.IsNullOrWhiteSpace(item.ProcessedImage))
+                    return null;
+
+                string processedFileName = IOPath.GetFileName(item.ProcessedImage);
+                if (string.IsNullOrWhiteSpace(processedFileName))
+                    return null;
+
+                string byProcessedNamePath = IOPath.Combine(batchFolder, "raw", processedFileName);
+                return File.Exists(byProcessedNamePath) ? byProcessedNamePath : null;
+            }
+
+            string byIdPath = IOPath.Combine(batchFolder, "raw", $"{item.Id}.bmp");
+            if (File.Exists(byIdPath))
+                return byIdPath;
+
+            if (!string.IsNullOrWhiteSpace(item.ProcessedImage))
+            {
+                string processedFileName = IOPath.GetFileName(item.ProcessedImage);
+                if (!string.IsNullOrWhiteSpace(processedFileName))
+                {
+                    string byProcessedNamePath = IOPath.Combine(batchFolder, "raw", processedFileName);
+                    if (File.Exists(byProcessedNamePath))
+                        return byProcessedNamePath;
+                }
+            }
+
+            return null;
         }
 
         private static (bool HasAiInfer, bool HasYoloDefect, bool IsAnomaNormal) EvaluateInferMetaFromInfer(string inferJsonPath)
@@ -1142,7 +1290,7 @@ namespace CoilTrainingUI
             return (right - left) > 0 && (bottom - top) > 0;
         }
 
-        private InferenceBatchValidationResult ValidateImportedBatchForView(string batchFolder)
+        private InferenceBatchValidationResult ValidateBatchFolder(string batchFolder)
         {
             if (string.IsNullOrWhiteSpace(batchFolder) || !Directory.Exists(batchFolder))
                 return InferenceBatchValidationResult.Fail("배치 폴더가 존재하지 않습니다.");
@@ -1158,20 +1306,113 @@ namespace CoilTrainingUI
             if (!File.Exists(manifestPath))
                 return InferenceBatchValidationResult.Fail("manifest.json 파일이 없습니다.");
 
+            ManifestDto manifest;
             try
             {
-                _ = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+                manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
             }
             catch (Exception ex)
             {
                 return InferenceBatchValidationResult.Fail($"manifest.json 파싱 실패: {ex.Message}");
             }
 
+            bool requiresInfer = DetermineBatchRequiresInfer(batchFolder, manifest);
+            var missingFiles = new List<string>();
+            foreach (var item in manifest.Items)
+            {
+                if (string.IsNullOrWhiteSpace(item.ProcessedImage))
+                {
+                    missingFiles.Add($"[{item.Id}] processed_image가 비어 있음");
+                    continue;
+                }
+
+                var processedPath = ResolveBatchRelativePath(batchFolder, item.ProcessedImage);
+                if (!File.Exists(processedPath))
+                    missingFiles.Add(item.ProcessedImage);
+
+                if (!string.IsNullOrWhiteSpace(item.RawImage))
+                {
+                    var rawPath = ResolveBatchRelativePath(batchFolder, item.RawImage);
+                    if (!File.Exists(rawPath))
+                        missingFiles.Add(item.RawImage);
+                }
+
+                if (requiresInfer)
+                {
+                    if (string.IsNullOrWhiteSpace(item.InferJson))
+                    {
+                        missingFiles.Add($"[{item.Id}] infer_json가 비어 있음");
+                        continue;
+                    }
+
+                    var inferPath = ResolveBatchRelativePath(batchFolder, item.InferJson);
+                    if (!File.Exists(inferPath))
+                        missingFiles.Add(item.InferJson);
+                }
+            }
+
+            string previewIds = string.Join(", ", manifest.Items
+                .Select(item => string.IsNullOrWhiteSpace(item.Id) ? "(no id)" : item.Id)
+                .Take(3));
+
+            string inferredBatchType = string.IsNullOrWhiteSpace(manifest.BatchType)
+                ? (requiresInfer ? "inference" : "no_infer")
+                : manifest.BatchType;
+
+            if (missingFiles.Count > 0)
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("배치 검증 실패");
+                sb.AppendLine($"batch_type: {inferredBatchType}");
+                sb.AppendLine($"총 item 수: {manifest.Items.Count}");
+                sb.AppendLine($"누락 파일 개수: {missingFiles.Count}");
+                sb.AppendLine("누락 파일 목록:");
+                foreach (var item in missingFiles)
+                    sb.AppendLine($"- {item}");
+                sb.AppendLine($"첫 3개 id: {previewIds}");
+
+                return new InferenceBatchValidationResult
+                {
+                    IsValid = false,
+                    Message = sb.ToString().TrimEnd()
+                };
+            }
+
             return new InferenceBatchValidationResult
             {
                 IsValid = true,
-                Message = "배치 검증 OK"
+                Message = $"배치 검증 OK\nbatch_type: {inferredBatchType}\n총 item 수: {manifest.Items.Count}\n누락 파일 개수: 0\n첫 3개 id: {previewIds}"
             };
+        }
+
+        private static bool DetermineBatchRequiresInfer(string batchFolder, ManifestDto manifest)
+        {
+            string batchType = (manifest.BatchType ?? "").Trim().ToLowerInvariant();
+            if (batchType == "no_infer")
+                return false;
+
+            if (batchType == "inference")
+                return true;
+
+            bool hasInferReference = manifest.Items.Any(item => !string.IsNullOrWhiteSpace(item.InferJson));
+            if (hasInferReference)
+                return true;
+
+            string inferenceDir = IOPath.Combine(batchFolder, "inference");
+            if (Directory.Exists(inferenceDir) &&
+                Directory.EnumerateFiles(inferenceDir, "*.json", SearchOption.TopDirectoryOnly).Any())
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string ResolveBatchRelativePath(string batchFolder, string relativeOrAbsolutePath)
+        {
+            if (IOPath.IsPathRooted(relativeOrAbsolutePath))
+                return relativeOrAbsolutePath;
+            return IOPath.Combine(batchFolder, relativeOrAbsolutePath);
         }
 
         private void RenderPredictionOverlays(string imagePath)
@@ -1309,93 +1550,7 @@ namespace CoilTrainingUI
             _currentImagePath = null;
             MainImage.Source = null;
             _bboxManager.ClearAll();
-        }
-
-        private InferenceBatchValidationResult ValidateInferenceBatchForImport(string batchFolder)
-        {
-            if (string.IsNullOrWhiteSpace(batchFolder) || !Directory.Exists(batchFolder))
-                return InferenceBatchValidationResult.Fail("배치 폴더가 존재하지 않습니다.");
-
-            string metaDir = IOPath.Combine(batchFolder, "meta");
-            string doneFlag = IOPath.Combine(metaDir, "DONE.flag");
-
-            if (!Directory.Exists(metaDir))
-                return InferenceBatchValidationResult.Fail("meta 폴더가 없습니다.");
-
-            if (!File.Exists(doneFlag))
-                return InferenceBatchValidationResult.Fail("완성되지 않은 배치입니다. DONE.flag가 없습니다.");
-
-            string manifestPath = IOPath.Combine(metaDir, "manifest.json");
-            if (!File.Exists(manifestPath))
-                return InferenceBatchValidationResult.Fail("manifest.json 파일이 없습니다.");
-
-            ManifestDto manifest;
-            try
-            {
-                manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
-            }
-            catch (Exception ex)
-            {
-                return InferenceBatchValidationResult.Fail($"manifest.json 파싱 실패: {ex.Message}");
-            }
-
-            var missingFiles = new List<string>();
-            foreach (var item in manifest.Items)
-            {
-                if (string.IsNullOrWhiteSpace(item.ProcessedImage))
-                {
-                    missingFiles.Add($"[{item.Id}] processed_image가 비어 있음");
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(item.InferJson))
-                {
-                    missingFiles.Add($"[{item.Id}] infer_json가 비어 있음");
-                    continue;
-                }
-
-                var processedPath = IOPath.IsPathRooted(item.ProcessedImage)
-                    ? item.ProcessedImage
-                    : IOPath.Combine(batchFolder, item.ProcessedImage);
-
-                var inferPath = IOPath.IsPathRooted(item.InferJson)
-                    ? item.InferJson
-                    : IOPath.Combine(batchFolder, item.InferJson);
-
-                if (!File.Exists(processedPath))
-                    missingFiles.Add(item.ProcessedImage);
-
-                if (!File.Exists(inferPath))
-                    missingFiles.Add(item.InferJson);
-            }
-
-            string previewIds = string.Join(", ", manifest.Items
-                .Select(item => string.IsNullOrWhiteSpace(item.Id) ? "(no id)" : item.Id)
-                .Take(3));
-
-            if (missingFiles.Count > 0)
-            {
-                var sb = new StringBuilder();
-                sb.AppendLine("배치 검증 실패");
-                sb.AppendLine($"총 item 수: {manifest.Items.Count}");
-                sb.AppendLine($"누락 파일 개수: {missingFiles.Count}");
-                sb.AppendLine("누락 파일 목록:");
-                foreach (var item in missingFiles)
-                    sb.AppendLine($"- {item}");
-                sb.AppendLine($"첫 3개 id: {previewIds}");
-
-                return new InferenceBatchValidationResult
-                {
-                    IsValid = false,
-                    Message = sb.ToString().TrimEnd()
-                };
-            }
-
-            return new InferenceBatchValidationResult
-            {
-                IsValid = true,
-                Message = $"배치 검증 OK\n총 item 수: {manifest.Items.Count}\n누락 파일 개수: 0\n첫 3개 id: {previewIds}"
-            };
+            UpdatePredictionFeatureUiState();
         }
 
         private sealed class InferenceBatchValidationResult
@@ -1468,13 +1623,13 @@ namespace CoilTrainingUI
 
             // 1) 메모리(UI 모델 + StateManager 둘 다)
             item.RoiType = roiType;
-            _imageStateManager.SetRoiType(item.FullPath, roiType);
+            _imageStateManager.SetRoiType(item.ProcessedPath, roiType);
 
             // 2) 파일 저장
-            _roiService.Save(item.FullPath, roiType);
+            _roiService.Save(item.ProcessedPath, roiType);
 
             // ✅ Show 여부와 무관하게 "전처리 파일"을 생성/갱신
-            _roiPreprocessService.EnsureProcessed(item.FullPath, roiType);
+            _roiPreprocessService.EnsureProcessed(item.ProcessedPath, roiType);
 
             // 4) 즉시 화면 갱신
             UpdateRoiDisplay();
@@ -1532,6 +1687,22 @@ namespace CoilTrainingUI
         private void ShowPredictionCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             UpdatePredictionOverlayVisibility();
+        }
+
+        private void ShowRawCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressRawToggleEvent)
+                return;
+
+            UpdateMainImageSourceFromViewToggle(showMissingRawMessage: true);
+        }
+
+        private void ShowRawCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressRawToggleEvent)
+                return;
+
+            UpdateMainImageSourceFromViewToggle(showMissingRawMessage: false);
         }
 
         private RoiType InferRoiTypeFromFileName(string fileName)
@@ -1637,7 +1808,7 @@ namespace CoilTrainingUI
                     continue;
                 }
 
-                if (_currentDataSource == DataSourceKind.ImportedBatch)
+                if (_currentBatchRequiresInfer)
                 {
                     if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath) ||
                         string.IsNullOrWhiteSpace(inferJsonPath))
@@ -1651,19 +1822,14 @@ namespace CoilTrainingUI
                 }
 
                 var state = _stateService.Load(imagePath);
-                if (_currentDataSource == DataSourceKind.ImportedBatch &&
-                    !state.HasManualAnomalyDecision)
+                if (!state.HasManualAnomalyDecision)
                 {
-                    bool inferredIsNormal = true;
-                    if (_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath) &&
-                        !string.IsNullOrWhiteSpace(inferJsonPath) &&
-                        File.Exists(inferJsonPath))
+                    if (state.IsNormal != true)
                     {
-                        inferredIsNormal = EvaluateInferMetaFromInfer(inferJsonPath).IsAnomaNormal;
+                        state.IsNormal = true;
+                        _stateService.Save(imagePath, state);
+                        result.NormalizedIsNormalCount++;
                     }
-
-                    state.IsNormal = inferredIsNormal;
-                    _stateService.Save(imagePath, state);
                 }
                 else if (!state.IsNormal.HasValue)
                 {
@@ -1758,12 +1924,12 @@ namespace CoilTrainingUI
 
 
                 // 1) runRoot
-                string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
+                string inputDir = IOPath.GetDirectoryName(_images[0].ProcessedPath)!;
                 string runRoot = IOPath.Combine(inputDir, "_train_runs");
                 Directory.CreateDirectory(runRoot);
 
                 // 2) 현재 이미지 경로
-                var imagePaths = _images.Select(x => x.FullPath)
+                var imagePaths = _images.Select(x => x.ProcessedPath)
                                         .Where(p => !string.IsNullOrWhiteSpace(p))
                                         .Distinct(StringComparer.OrdinalIgnoreCase)
                                         .ToList();
@@ -1786,9 +1952,8 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                bool useRoiProcessedImagesForTraining =
-                    _currentDataSource != DataSourceKind.ImportedBatch &&
-                    settings.Workspace.UseRoiProcessedImages;
+                // Batch 로딩 기준에서는 _images.ProcessedPath가 이미 학습 입력 이미지이므로 ROI 재생성을 사용하지 않는다.
+                bool useRoiProcessedImagesForTraining = false;
 
                 int totalImages = imagePaths.Count;
                 int normalImages = imagePaths.Count(p => (_stateService.Load(p).IsNormal ?? true) == true);
@@ -2110,7 +2275,7 @@ namespace CoilTrainingUI
                 string projectRoot = FindProjectRoot("capstone_design");
                 var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
 
-                string inputDir = IOPath.GetDirectoryName(_images[0].FullPath)!;
+                string inputDir = IOPath.GetDirectoryName(_images[0].ProcessedPath)!;
                 string runRoot = IOPath.Combine(inputDir, "_train_runs");
                 if (!Directory.Exists(runRoot))
                 {
@@ -2324,7 +2489,7 @@ namespace CoilTrainingUI
                     _images.Add(new ImageItem
                     {
                         FileName = IOPath.GetFileName(path),
-                        FullPath = path,
+                        ProcessedPath = path,
                         HasLabel = labels.Count > 0,
                         IsNormal = isNormal,
                         RoiType = roiType
@@ -2402,7 +2567,7 @@ namespace CoilTrainingUI
 
                     if (item != null)
                     {
-                        item.FullPath = newPath;
+                        item.ProcessedPath = newPath;
                         item.FileName = IOPath.GetFileName(newPath);
                         ImageListBox.Items.Refresh();
 
@@ -2494,12 +2659,16 @@ namespace CoilTrainingUI
 
                 SaveLabelsToStateJson(_pendingSaveImagePath);
             };
-
-            LoadLocalInputFolder(showErrorMessage: false);
+            ImageListBox.ItemsSource = _images;
+            RefreshSummaryCounts();
+            ResetImageDisplay();
 
 
             Loaded += (s, e) =>
             {
+                if (_images.Count == 0)
+                    TryRestoreLastLoadedBatch();
+
                 if (_images.Count > 0)
                 {
                     ImageListBox.SelectedIndex = 0;

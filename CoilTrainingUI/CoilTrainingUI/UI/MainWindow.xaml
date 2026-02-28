@@ -18,28 +18,29 @@
             </MenuItem>
 
             <MenuItem Header="Labeling">
-                <MenuItem Header="Apply Predictions to Labels (Current Image)"
+                <MenuItem x:Name="ApplyPredictionsMenuItem"
+                          Header="Apply Predictions to Labels (Current Image)"
                           Click="ApplyPredictionsToLabelsCurrentImage_Click"/>
             </MenuItem>
 
             <MenuItem Header="Training">
-                <MenuItem Header="Load Local Input"
-                          Click="LoadLocalInput_Click"/>
+                <MenuItem Header="A. 데이터 유입(배치 관리)"
+                          IsEnabled="False"/>
 
-                <MenuItem Header="Import Inference Batch..."
-                          Click="ImportInferenceBatch_Click"/>
+                <MenuItem Header="Import Batch..."
+                          Click="ImportBatch_Click"/>
 
-                <MenuItem Header="Load Imported Batch..."
-                          Click="LoadImportedBatch_Click"/>
+                <MenuItem Header="Open training_inbox"
+                          Click="OpenTrainingInbox_Click"/>
 
                 <Separator/>
 
-                <MenuItem Header="Export Anomaly Dataset"
-                          Click="ExportAnomalyDataset_Click"/>
+                <MenuItem Header="B. 학습/패키징"
+                          IsEnabled="False"/>
 
                 <MenuItem Header="Train All (YOLO + Anomalib)" 
                           Click="TrainAll_Click"/>
-                <Separator/>
+
                 <MenuItem Header="Build Package Only" 
                           Click="BuildPackageOnly_Click"/>
 
@@ -110,32 +111,52 @@
                                                    FontSize="13"
                                                    Margin="0,0,0,2"/>
 
-                                        <!-- 상태 표시 -->
+                                        <!-- 상태 표시 (4개 고정) -->
                                         <StackPanel Orientation="Horizontal">
-                                            <!-- YOLO -->
-                                            <TextBlock Text="YOLO:"
+                                            <TextBlock Text="AI YOLO:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding YoloStatusText}"
+                                            <TextBlock Text="{Binding AiYoloStatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding HasLabel,
-                                                                    Converter={StaticResource YoloStatusColorConverter}}"
+                                                       Foreground="{Binding AiYoloStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,12,0"/>
 
-                                            <!-- Anomaly -->
-                                            <TextBlock Text="Anomaly:"
+                                            <TextBlock Text="AI Anoma:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding AnomalyStatusText}"
+                                            <TextBlock Text="{Binding AiAnomaStatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding IsNormal,
-                                                                    Converter={StaticResource AnomalyStatusColorConverter}}"
+                                                       Foreground="{Binding AiAnomaStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Margin="4,0,0,0"/>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="GT YOLO:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding GtYoloStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding GtYoloStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Margin="4,0,12,0"/>
+
+                                            <TextBlock Text="GT Anoma:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding GtAnomaStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding GtAnomaStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,0,0"/>
                                         </StackPanel>
 
@@ -262,6 +283,13 @@
                               IsChecked="False"
                               Checked="ShowPredictionCheckBox_Checked"
                               Unchecked="ShowPredictionCheckBox_Unchecked"/>
+
+                    <CheckBox x:Name="ShowRawCheckBox"
+                              Content="Show RAW"
+                              Margin="0,8,0,0"
+                              IsChecked="False"
+                              Checked="ShowRawCheckBox_Checked"
+                              Unchecked="ShowRawCheckBox_Unchecked"/>
 
                 </StackPanel>
             </Border>

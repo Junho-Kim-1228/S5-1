@@ -13,13 +13,15 @@ namespace CoilTrainingUI.Converters
             if (value is not ImageItem item)
                 return Brushes.White;
 
-            bool isAbnormal =
-                item.HasLabel        // YOLO 불량
-                || !item.IsNormal;   // Anomaly 불량
+            // 확정 불량(수동/GT)은 빨간색 계열
+            if (item.HasLabel || !item.IsNormal)
+                return new SolidColorBrush(Color.FromRgb(255, 220, 220));
 
-            return isAbnormal
-                ? new SolidColorBrush(Color.FromRgb(255, 220, 220)) // 연한 빨강
-                : Brushes.White;
+            // AI 예측 불량은 파란색 계열 (확정 불량과 구분)
+            if (item.HasAiInfer && item.AiIsDefect)
+                return new SolidColorBrush(Color.FromRgb(220, 235, 255));
+
+            return Brushes.White;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
