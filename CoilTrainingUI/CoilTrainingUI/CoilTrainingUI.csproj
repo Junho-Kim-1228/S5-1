@@ -7,23 +7,4 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Remove="Resources\ROI\roi_A.bmp" />
-    <None Remove="Resources\ROI\roi_B.bmp" />
-    <None Remove="Resources\ROI\roi_C.bmp" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="Resources\ROI\roi_A.bmp">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Resources\ROI\roi_B.bmp">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Resources\ROI\roi_C.bmp">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
-
 </Project>

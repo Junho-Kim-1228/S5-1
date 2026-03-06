@@ -1,6 +1,13 @@
+#congig files
+config/appsettings.local.json
+
+#python scripts
+scripts/
+
 #training data
 datasets/
 models/
+training_inbox/
 
 # NuGet
 packages/

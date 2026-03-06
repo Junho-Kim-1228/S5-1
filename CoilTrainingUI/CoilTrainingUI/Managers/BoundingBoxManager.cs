@@ -23,6 +23,7 @@ namespace CoilTrainingUI.Managers
         private bool _isDrawing;
         private bool _isDragging;
         private bool _hasDragged;
+        private bool _dragMoved;
 
         public BoundingBoxManager(Canvas canvas)
         {
@@ -149,6 +150,7 @@ namespace CoilTrainingUI.Managers
             _selectedRect.Stroke = Brushes.LimeGreen;
 
             _isDragging = true;
+            _dragMoved = false;
             _dragStartPoint = mousePoint;
             _selectedRect.CaptureMouse();
 
@@ -165,21 +167,28 @@ namespace CoilTrainingUI.Managers
             double dx = currentPoint.X - _dragStartPoint.X;
             double dy = currentPoint.Y - _dragStartPoint.Y;
 
+            if (Math.Abs(dx) > 0.01 || Math.Abs(dy) > 0.01)
+                _dragMoved = true;
+
             Canvas.SetLeft(_selectedRect, Canvas.GetLeft(_selectedRect) + dx);
             Canvas.SetTop(_selectedRect, Canvas.GetTop(_selectedRect) + dy);
 
             _dragStartPoint = currentPoint;
         }
 
-        public void EndDrag(double imageWidth, double imageHeight)
+        public bool EndDrag(double imageWidth, double imageHeight)
         {
             if (_selectedRect == null)
-                return;
+                return false;
 
             _isDragging = false;
             _selectedRect.ReleaseMouseCapture();
 
+            if (!_dragMoved)
+                return false;
+
             UpdateBBoxModel(_selectedRect, imageWidth, imageHeight);
+            return true;
         }
 
         // ========================

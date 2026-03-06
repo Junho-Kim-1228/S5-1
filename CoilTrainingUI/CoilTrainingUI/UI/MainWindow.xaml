@@ -7,6 +7,47 @@
         KeyDown="Window_KeyDown"
         Focusable="True">
 
+    <Window.Resources>
+        <Style x:Key="SidebarIconButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,6,0,0"/>
+            <Setter Property="Background" Value="#4A4A4A"/>
+            <Setter Property="Foreground" Value="#F0F0F0"/>
+            <Setter Property="BorderBrush" Value="#6A6A6A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#5A5A5A"/>
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#8A8A8A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#3A3A3A"/>
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#8A8A8A"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <DockPanel>
 
         <!-- 상단 메뉴 -->
@@ -18,12 +59,45 @@
             </MenuItem>
 
             <MenuItem Header="Labeling">
-                <!-- YOLO 관련 메뉴 예정 -->
+                <MenuItem x:Name="ApplyPredictionsMenuItem"
+                          Header="Apply Predictions to Labels (Current Image)"
+                          Click="ApplyPredictionsToLabelsCurrentImage_Click"/>
+                <Separator/>
+                <MenuItem x:Name="PreLabelBatchMenuItem"
+                          Header="Pre-label Batch from Predictions"
+                          Click="PreLabelBatchFromPredictions_Click"/>
+                <MenuItem x:Name="AutoApproveSafeMenuItem"
+                          Header="Auto-Approve Safe Normals"
+                          Click="AutoApproveSafeNormals_Click"/>
+                <MenuItem x:Name="ShowReviewQueueMenuItem"
+                          Header="Show Review Queue"
+                          Click="ShowReviewQueue_Click"/>
             </MenuItem>
 
             <MenuItem Header="Training">
-                <MenuItem Header="Export Anomaly Dataset"
-                  Click="ExportAnomalyDataset_Click"/>
+                <MenuItem Header="A. 데이터 유입(배치 관리)"
+                          IsEnabled="False"/>
+
+                <MenuItem Header="Import Batch..."
+                          Click="ImportBatch_Click"/>
+
+                <MenuItem Header="Create Batch from Folder..."
+                          Click="CreateBatchFromFolder_Click"/>
+
+                <MenuItem Header="Open training_inbox"
+                          Click="OpenTrainingInbox_Click"/>
+
+                <Separator/>
+
+                <MenuItem Header="B. 학습/패키징"
+                          IsEnabled="False"/>
+
+                <MenuItem Header="Train All (YOLO + Anomalib)" 
+                          Click="TrainAll_Click"/>
+
+                <MenuItem Header="Build Package Only" 
+                          Click="BuildPackageOnly_Click"/>
+
             </MenuItem>
 
             <MenuItem Header="Model">
@@ -32,45 +106,183 @@
 
         </Menu>
 
-
-        <!-- 하단 로그 영역 -->
-        <Border DockPanel.Dock="Bottom" Height="150" Background="#111">
-            <TextBox Text="Log Output..."
-                     Foreground="LightGray"
-                     Background="#111"
-                     IsReadOnly="True"
-                     VerticalScrollBarVisibility="Auto"/>
-        </Border>
-
         <!-- 메인 영역 -->
         <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="220"/>
+                <ColumnDefinition Width="360"/>
                 <!-- 좌측 -->
                 <ColumnDefinition Width="*"/>
-                <!-- 중앙 -->
-                <ColumnDefinition Width="260"/>
-                <!-- 우측 -->
             </Grid.ColumnDefinitions>
 
             <!-- 좌측: 데이터 탐색 -->
-            <Border Grid.Column="0" Background="#333" Padding="3">
-                <StackPanel>
+            <Border Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Background="#333" Padding="3">
+                
+                <DockPanel>
 
                     <TextBlock Text="Dataset"
                                Foreground="White"
                                FontWeight="Bold"
-                               Margin="0,0,0,5"/>
+                               Margin="0,0,0,5"
+                               DockPanel.Dock="Top"/>
+
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10" Background="#444">
+                        <TextBlock x:Name="TotalCountText" Text="Total: 0" Foreground="White" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <TextBlock x:Name="VisibleCountText" Text="Visible: 0" Foreground="#D0D0D0" FontSize="12" Margin="0,0,0,2"/>
+                        <TextBlock x:Name="NormalCountText" Text="Normal: 0" Foreground="#A0FFA0" FontSize="12"/>
+                        <TextBlock x:Name="DefectCountText" Text="Defect: 0" Foreground="#FFA0A0" FontSize="12"/>
+                        <Button x:Name="RefreshImageListButton"
+                                Style="{StaticResource SidebarIconButtonStyle}"
+                                HorizontalAlignment="Right"
+                                ToolTip="이미지 목록 새로고침"
+                                Click="RefreshImageList_Click">
+                            <TextBlock FontFamily="Segoe MDL2 Assets"
+                                       FontSize="14"
+                                       Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                                       Text="&#xE72C;"/>
+                        </Button>
+                    </StackPanel>
+
+                    <Expander DockPanel.Dock="Top"
+                              Margin="0,0,0,10"
+                              Background="#444"
+                              Foreground="White"
+                              Header="Filter"
+                              IsExpanded="True">
+                        <StackPanel>
+                            <TextBlock Text="상태" Foreground="#D0D0D0" FontSize="12" Margin="6,6,6,0"/>
+                            <WrapPanel Margin="6,2,6,6">
+                                <CheckBox x:Name="StatusConfirmedNormalCheckBox"
+                                          Content="확정 정상"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="StatusConfirmedDefectCheckBox"
+                                          Content="확정 불량"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="StatusAiNormalCheckBox"
+                                          Content="AI 정상"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="StatusAiDefectCheckBox"
+                                          Content="AI 불량"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="StatusUnclassifiedCheckBox"
+                                          Content="미분류"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                            </WrapPanel>
+
+                            <TextBlock Text="불량 유형" Foreground="#D0D0D0" FontSize="12" Margin="6,0,6,0"/>
+                            <WrapPanel Margin="6,2,6,6">
+                                <CheckBox x:Name="DefectTypeNormalCheckBox"
+                                          Content="정상"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="DefectTypeDentCheckBox"
+                                          Content="찍힘(dent)"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="DefectTypeLooseCheckBox"
+                                          Content="풀림(loose)"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="DefectTypeNoLabelCheckBox"
+                                          Content="라벨없음"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                            </WrapPanel>
+
+                            <TextBlock Text="검수 우선순위" Foreground="#D0D0D0" FontSize="12" Margin="6,0,6,0"/>
+                            <WrapPanel Margin="6,2,6,6">
+                                <CheckBox x:Name="ReviewNeedsCheckBox"
+                                          Content="검수 필요"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="ReviewAutoCandidateCheckBox"
+                                          Content="자동 확정 후보"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="ReviewDoneCheckBox"
+                                          Content="확정 완료"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                            </WrapPanel>
+
+                            <TextBlock Text="데이터 품질" Foreground="#D0D0D0" FontSize="12" Margin="6,0,6,0"/>
+                            <WrapPanel Margin="6,2,6,6">
+                                <CheckBox x:Name="QualityHealthyCheckBox"
+                                          Content="데이터 정상"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="QualityMissingInferCheckBox"
+                                          Content="infer 없음"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="QualityInferParseFailedCheckBox"
+                                          Content="infer 파싱 실패"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="QualityMissingStateCheckBox"
+                                          Content="state 없음"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="QualityMissingRawCheckBox"
+                                          Content="raw 없음"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Expander>
 
                     <ListBox x:Name="ImageListBox"
-                        SelectionChanged="ImageListBox_SelectionChanged">
+                             PreviewMouseWheel="ImageListBox_PreviewMouseWheel"
+                             SelectionChanged="ImageListBox_SelectionChanged">
 
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Border Padding="0"
                                         Margin="0,0,0,1"
                                         CornerRadius="4"
-                                        Background="{Binding ., 
+                                        Background="{Binding .,
                                                      Converter={StaticResource ImageStatusToColorConverter}}">
 
                                     <StackPanel Orientation="Vertical">
@@ -82,35 +294,59 @@
                                                    FontSize="13"
                                                    Margin="0,0,0,2"/>
 
-                                        <!-- 상태 표시 -->
+                                        <!-- 상태 표시 (4개 고정) -->
                                         <StackPanel Orientation="Horizontal">
-
-                                            <!-- YOLO -->
-                                            <TextBlock Text="YOLO:"
+                                            <TextBlock Text="AI YOLO:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding YoloStatusText}"
+                                            <TextBlock Text="{Binding AiYoloStatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding HasLabel,
-                                                                    Converter={StaticResource YoloStatusColorConverter}}"
+                                                       Foreground="{Binding AiYoloStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,12,0"/>
 
-                                            <!-- Anomaly -->
-                                            <TextBlock Text="Anomaly:"
+                                            <TextBlock Text="AI Anoma:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding AnomalyStatusText}"
+                                            <TextBlock Text="{Binding AiAnomaStatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding IsNormal,
-                                                                    Converter={StaticResource AnomalyStatusColorConverter}}"
+                                                       Foreground="{Binding AiAnomaStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,0,0"/>
                                         </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="GT YOLO:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding GtYoloStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding GtYoloStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Margin="4,0,12,0"/>
+
+                                            <TextBlock Text="GT Anoma:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding GtAnomaStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding GtAnomaStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Margin="4,0,0,0"/>
+                                        </StackPanel>
+
+                                        <TextBlock Text="{Binding ReviewStatusText, StringFormat='Review: {0}'}"
+                                                   FontSize="11"
+                                                   Foreground="#505050"
+                                                   Margin="0,2,0,0"/>
 
                                     </StackPanel>
                                 </Border>
@@ -121,20 +357,22 @@
                     </ListBox>
 
 
-                </StackPanel>
+                </DockPanel>
             </Border>
 
             <!-- 중앙: 이미지 뷰어 -->
-            <Border Grid.Column="1" Background="#222">
+            <Border Grid.Row="0" Grid.Column="1" Background="#222">
                 <ScrollViewer x:Name="ImageScrollViewer"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
-                  PreviewMouseWheel="ImageCanvas_MouseWheel">
+                  PreviewMouseWheel="ImageCanvas_MouseWheel"
+                  SizeChanged="ImageScrollViewer_SizeChanged"
+                  ScrollChanged="ImageScrollViewer_ScrollChanged">
 
                     <Grid x:Name="DisplayGrid" RenderTransformOrigin="0,0">
-                        <Grid.RenderTransform>
+                        <Grid.LayoutTransform>
                             <ScaleTransform x:Name="ImageScale" ScaleX="1.0" ScaleY="1.0"/>
-                        </Grid.RenderTransform>
+                        </Grid.LayoutTransform>
 
                         <Image x:Name="MainImage"
                                    Stretch="None"
@@ -160,76 +398,62 @@
                 </ScrollViewer>
             </Border>
 
-            <!-- 우측: 속성 패널 -->
-            <Border Grid.Column="2" Background="#F5F5F5" Padding="10">
-                <StackPanel>
+            <!-- 하단: 속성 패널 -->
+            <Border Grid.Row="1" Grid.Column="1" Background="#F5F5F5" Padding="10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="Properties"
-                   FontWeight="Bold"
-                   Margin="0,0,0,10"/>
-
-                    <!-- 선택된 박스 클래스 -->
-                    <TextBlock Text="Class"
-                   Margin="0,10,0,5"/>
-
-                    <ComboBox x:Name="ClassComboBox"
-                  SelectionChanged="ClassComboBox_SelectionChanged"
-                  IsEnabled="False">
-                        <ComboBoxItem Content="dent"/>
-                        <ComboBoxItem Content="loose"/>
-                    </ComboBox>
-
-                    <!-- 확대/축소 버튼 -->
-                    <TextBlock Text="View"
-                   FontWeight="Bold"
-                   Margin="0,20,0,5"/>
-
-                    <StackPanel Orientation="Horizontal">
-                        <Button Content="＋" Width="40" Click="ZoomIn_Click"/>
-                        <Button Content="－" Width="40" Margin="5,0,0,0" Click="ZoomOut_Click"/>
+                    <StackPanel Grid.Column="0" Margin="0,0,18,0">
+                        <TextBlock Text="Class" Margin="0,0,0,5"/>
+                        <ComboBox x:Name="ClassComboBox"
+                                  SelectionChanged="ClassComboBox_SelectionChanged"
+                                  IsEnabled="False"
+                                  Width="120">
+                            <ComboBoxItem Content="dent"/>
+                            <ComboBoxItem Content="loose"/>
+                        </ComboBox>
                     </StackPanel>
 
-                    <Button Content="Save Label"
-                        Margin="0,20,0,0"
-                        Click="SaveLabel_Click"/>
+                    <StackPanel Grid.Column="1" Margin="0,0,18,0">
+                        <TextBlock Text="View" Margin="0,0,0,5"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="＋" Width="40" Click="ZoomIn_Click"/>
+                            <Button Content="－" Width="40" Margin="5,0,0,0" Click="ZoomOut_Click"/>
+                            <Button Content="Fit" Width="60" Margin="5,0,0,0" Click="ResetZoom_Click"/>
+                        </StackPanel>
+                    </StackPanel>
 
-                    <GroupBox Header="Anomaly Label">
+                    <GroupBox Grid.Column="2" Header="Anomaly Label" Margin="0,0,18,0">
                         <StackPanel>
                             <RadioButton x:Name="NormalRadio"
-                                           Content="Normal"
-                                           Checked="NormalRadio_Checked"/>
+                                         Content="Normal"
+                                         Checked="NormalRadio_Checked"/>
                             <RadioButton x:Name="AbnormalRadio"
-                                           Content="Abnormal"
-                                           Checked="AbnormalRadio_Checked"/>
+                                         Content="Abnormal"
+                                         Checked="AbnormalRadio_Checked"/>
                         </StackPanel>
                     </GroupBox>
 
-                    <GroupBox Header="ROI Type" Margin="0,15,0,0">
-                        <StackPanel>
-                            <RadioButton Content="None"
-                                         Tag="None"
-                                         Checked="RoiTypeRadio_Checked"/>
+                    <StackPanel Grid.Column="3" VerticalAlignment="Center">
+                        <CheckBox x:Name="ShowPredictionCheckBox"
+                                  Content="Show Prediction Overlay"
+                                  IsChecked="False"
+                                  Checked="ShowPredictionCheckBox_Checked"
+                                  Unchecked="ShowPredictionCheckBox_Unchecked"/>
 
-                            <RadioButton Content="Type A"
-                                         Tag="A"
-                                         Checked="RoiTypeRadio_Checked"/>
-
-                            <RadioButton Content="Type B"
-                                         Tag="B"
-                                         Checked="RoiTypeRadio_Checked"/>
-
-                            <RadioButton Content="Type C"
-                                         Tag="C"
-                                         Checked="RoiTypeRadio_Checked"/>
-                        </StackPanel>
-                        
-                    </GroupBox>
-                    <CheckBox x:Name="ShowRoiCheckBox"
-                                Content="Show ROI Mask"
-                                Checked="ShowRoiCheckBox_Checked"
-                                Unchecked="ShowRoiCheckBox_Unchecked"/>
-
-                </StackPanel>
+                        <CheckBox x:Name="ShowRawCheckBox"
+                                  Content="Show RAW"
+                                  Margin="0,6,0,0"
+                                  IsChecked="False"
+                                  Checked="ShowRawCheckBox_Checked"
+                                  Unchecked="ShowRawCheckBox_Unchecked"/>
+                    </StackPanel>
+                </Grid>
             </Border>
 
 

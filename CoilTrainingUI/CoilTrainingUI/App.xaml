@@ -6,6 +6,7 @@
 
     <Application.Resources>
         <conv:ImageStatusToColorConverter x:Key="ImageStatusToColorConverter"/>
+        <conv:SimpleStatusColorConverter x:Key="SimpleStatusColorConverter"/>
         <conv:YoloStatusColorConverter x:Key="YoloStatusColorConverter"/>
         <conv:AnomalyStatusColorConverter x:Key="AnomalyStatusColorConverter"/>
     </Application.Resources>

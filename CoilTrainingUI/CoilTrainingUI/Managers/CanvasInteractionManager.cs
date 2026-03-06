@@ -12,6 +12,9 @@ namespace CoilTrainingUI.Managers
         private readonly ScrollViewer _scrollViewer;
         private readonly ScaleTransform _scale;
         private readonly BoundingBoxManager _bboxManager;
+        private double _contentWidth;
+        private double _contentHeight;
+        private const double MaxZoomScale = 10.0;
 
         public CanvasInteractionManager(
             ScrollViewer scrollViewer,
@@ -30,34 +33,83 @@ namespace CoilTrainingUI.Managers
         {
             double zoomStep = 0.1;
             double delta = e.Delta > 0 ? zoomStep : -zoomStep;
-
-            _scale.ScaleX = Math.Max(0.1, _scale.ScaleX + delta);
-            _scale.ScaleY = Math.Max(0.1, _scale.ScaleY + delta);
+            ApplyScale(_scale.ScaleX + delta);
         }
 
         public void ZoomIn()
         {
-            _scale.ScaleX += 0.1;
-            _scale.ScaleY += 0.1;
+            ApplyScale(_scale.ScaleX + 0.1);
         }
 
         public void ZoomOut()
         {
-            _scale.ScaleX = Math.Max(0.1, _scale.ScaleX - 0.1);
-            _scale.ScaleY = Math.Max(0.1, _scale.ScaleY - 0.1);
+            ApplyScale(_scale.ScaleX - 0.1);
         }
 
         public void FitToView(double imageWidth, double imageHeight)
         {
-            if (_scrollViewer.ViewportWidth <= 0 || _scrollViewer.ViewportHeight <= 0)
+            if (imageWidth <= 0 || imageHeight <= 0)
                 return;
 
-            double scaleX = _scrollViewer.ViewportWidth / imageWidth;
-            double scaleY = _scrollViewer.ViewportHeight / imageHeight;
-            double scale = Math.Min(scaleX, scaleY);
+            _contentWidth = imageWidth;
+            _contentHeight = imageHeight;
+
+            double scale = GetMinFitScale();
+            if (scale <= 0)
+                return;
 
             _scale.ScaleX = scale;
             _scale.ScaleY = scale;
+            ClampScrollOffsets();
+        }
+
+        public void EnsureWithinBounds()
+        {
+            if (_contentWidth <= 0 || _contentHeight <= 0)
+                return;
+
+            ApplyScale(_scale.ScaleX);
+        }
+
+        public void OnScrollChanged()
+        {
+            if (_contentWidth <= 0 || _contentHeight <= 0)
+                return;
+
+            ClampScrollOffsets();
+        }
+
+        private void ApplyScale(double requestedScale)
+        {
+            double minScale = GetMinFitScale();
+            double maxScale = Math.Max(minScale, MaxZoomScale);
+            double scale = Math.Clamp(requestedScale, minScale, maxScale);
+            _scale.ScaleX = scale;
+            _scale.ScaleY = scale;
+            ClampScrollOffsets();
+        }
+
+        private double GetMinFitScale()
+        {
+            if (_contentWidth <= 0 || _contentHeight <= 0)
+                return 0.1;
+
+            if (_scrollViewer.ViewportWidth <= 0 || _scrollViewer.ViewportHeight <= 0)
+                return 0.1;
+
+            double scaleX = _scrollViewer.ViewportWidth / _contentWidth;
+            double scaleY = _scrollViewer.ViewportHeight / _contentHeight;
+            return Math.Max(0.1, Math.Min(scaleX, scaleY));
+        }
+
+        private void ClampScrollOffsets()
+        {
+            _scrollViewer.UpdateLayout();
+
+            double h = Math.Clamp(_scrollViewer.HorizontalOffset, 0, _scrollViewer.ScrollableWidth);
+            double v = Math.Clamp(_scrollViewer.VerticalOffset, 0, _scrollViewer.ScrollableHeight);
+            _scrollViewer.ScrollToHorizontalOffset(h);
+            _scrollViewer.ScrollToVerticalOffset(v);
         }
 
         // =========================
@@ -88,9 +140,9 @@ namespace CoilTrainingUI.Managers
             _bboxManager.Drag(point);
         }
 
-        public void EndDrag(double imgW, double imgH)
+        public bool EndDrag(double imgW, double imgH)
         {
-            _bboxManager.EndDrag(imgW, imgH);
+            return _bboxManager.EndDrag(imgW, imgH);
         }
     }
 }
