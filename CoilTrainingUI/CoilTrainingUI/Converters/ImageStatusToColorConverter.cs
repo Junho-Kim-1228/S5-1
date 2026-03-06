@@ -17,10 +17,6 @@ namespace CoilTrainingUI.Converters
             if (item.HasLabel || !item.IsNormal)
                 return new SolidColorBrush(Color.FromRgb(255, 220, 220));
 
-            // AI 예측 불량은 파란색 계열 (확정 불량과 구분)
-            if (item.HasAiInfer && item.AiIsDefect)
-                return new SolidColorBrush(Color.FromRgb(220, 235, 255));
-
             return Brushes.White;
         }
 

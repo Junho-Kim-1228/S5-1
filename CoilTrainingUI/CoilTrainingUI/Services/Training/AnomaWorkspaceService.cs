@@ -17,7 +17,6 @@ namespace CoilTrainingUI.Services
         /// <summary>
         /// anomalib 학습용 workspace 생성
         /// - 정상(IsNormal=true)만 사용
-        /// - ROI 전처리된 이미지(_roi_processed) 우선 복사
         /// - train/val split만 구성
         /// </summary>
         public AnomaWorkspaceResult BuildWorkspace(
@@ -25,8 +24,7 @@ namespace CoilTrainingUI.Services
             string runRootDir,
             double trainRatio = 0.8,
             double valRatio = 0.2,
-            int seed = 42,
-            bool useRoiProcessedImages = true
+            int seed = 42
         )
         {
             if (imagePaths == null) throw new ArgumentNullException(nameof(imagePaths));
@@ -72,13 +70,13 @@ namespace CoilTrainingUI.Services
 
             foreach (var src in trainSet)
             {
-                CopyImage(src, trainDir, useRoiProcessedImages);
+                CopyImage(src, trainDir);
                 copied++;
             }
 
             foreach (var src in valSet)
             {
-                CopyImage(src, valDir, useRoiProcessedImages);
+                CopyImage(src, valDir);
                 copied++;
             }
 
@@ -92,20 +90,10 @@ namespace CoilTrainingUI.Services
             };
         }
 
-        private void CopyImage(string originalImagePath, string dstDir, bool useRoiProcessedImages)
+        private void CopyImage(string originalImagePath, string dstDir)
         {
-            string src = originalImagePath;
-
-            if (useRoiProcessedImages)
-            {
-                string roiDir = Path.Combine(Path.GetDirectoryName(originalImagePath)!, "_roi_processed");
-                string roiCandidate = Path.Combine(roiDir, Path.GetFileName(originalImagePath));
-                if (File.Exists(roiCandidate))
-                    src = roiCandidate;
-            }
-
-            string dst = Path.Combine(dstDir, Path.GetFileName(src));
-            File.Copy(src, dst, overwrite: true);
+            string dst = Path.Combine(dstDir, Path.GetFileName(originalImagePath));
+            File.Copy(originalImagePath, dst, overwrite: true);
         }
     }
 

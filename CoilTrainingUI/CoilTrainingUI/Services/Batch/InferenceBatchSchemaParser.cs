@@ -103,7 +103,6 @@ public static class InferenceBatchSchemaParser
         _ = GetRequiredProperty(root, "infer", "schema_version", path);
         _ = GetRequiredProperty(root, "infer", "image_id", path);
         _ = GetRequiredProperty(root, "infer", "image_size", path);
-        _ = GetRequiredProperty(root, "infer", "roi_type", path);
         _ = GetRequiredProperty(root, "infer", "yolo", path);
         _ = GetRequiredProperty(root, "infer", "anoma", path);
         _ = GetRequiredProperty(root, "infer", "final", path);

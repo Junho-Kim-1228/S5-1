@@ -28,8 +28,7 @@ namespace CoilTrainingUI.Services
             string runRootDir,
             double trainRatio = 0.8,
             double valRatio = 0.2,
-            int seed = 42,
-            bool useRoiProcessedImages = true
+            int seed = 42
         )
         {
             if (imagePaths == null) throw new ArgumentNullException(nameof(imagePaths));
@@ -75,7 +74,7 @@ namespace CoilTrainingUI.Services
             foreach (var srcImagePath in trainSet)
             {
                 var state = _stateService.Load(srcImagePath);
-                string dstImagePath = CopyImageForWorkspace(srcImagePath, imagesTrainDir, useRoiProcessedImages);
+                string dstImagePath = CopyImageForWorkspace(srcImagePath, imagesTrainDir);
                 copied++;
 
                 string dstLabelPath = Path.Combine(labelsTrainDir, Path.GetFileNameWithoutExtension(dstImagePath) + ".txt");
@@ -88,7 +87,7 @@ namespace CoilTrainingUI.Services
             foreach (var srcImagePath in valSet)
             {
                 var state = _stateService.Load(srcImagePath);
-                string dstImagePath = CopyImageForWorkspace(srcImagePath, imagesValDir, useRoiProcessedImages);
+                string dstImagePath = CopyImageForWorkspace(srcImagePath, imagesValDir);
                 copied++;
 
                 string dstLabelPath = Path.Combine(labelsValDir, Path.GetFileNameWithoutExtension(dstImagePath) + ".txt");
@@ -118,21 +117,10 @@ namespace CoilTrainingUI.Services
 
         // ----------------- 내부 헬퍼 -----------------
 
-        private string CopyImageForWorkspace(string originalImagePath, string dstImagesDir, bool useRoiProcessedImages)
+        private string CopyImageForWorkspace(string originalImagePath, string dstImagesDir)
         {
-            string src = originalImagePath;
-
-            if (useRoiProcessedImages)
-            {
-                // _roi_processed 안의 "동일 파일명"을 우선 사용
-                string roiDir = Path.Combine(Path.GetDirectoryName(originalImagePath)!, "_roi_processed");
-                string roiCandidate = Path.Combine(roiDir, Path.GetFileName(originalImagePath));
-                if (File.Exists(roiCandidate))
-                    src = roiCandidate;
-            }
-
-            string dst = Path.Combine(dstImagesDir, Path.GetFileName(src));
-            File.Copy(src, dst, overwrite: true);
+            string dst = Path.Combine(dstImagesDir, Path.GetFileName(originalImagePath));
+            File.Copy(originalImagePath, dst, overwrite: true);
             return dst;
         }
 

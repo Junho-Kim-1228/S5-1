@@ -24,7 +24,6 @@ namespace CoilTrainingUI.Services
             public double TrainRatio { get; set; } = 0.8;
             public double ValRatio { get; set; } = 0.2;
             public int Seed { get; set; } = 42;
-            public bool UseRoiProcessedImages { get; set; } = true;
         }
 
         public class FusionSection

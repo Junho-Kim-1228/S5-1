@@ -3,10 +3,17 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using CoilTrainingUI.Models;
-using CoilTrainingUI.Services;
 
 namespace CoilTrainingUI.Services
 {
+    public static class ReviewStatus
+    {
+        public const string None = "none";
+        public const string ReviewNeeded = "review_needed";
+        public const string AutoCandidate = "auto_candidate";
+        public const string ReviewDone = "review_done";
+    }
+
     public class ImageStateService
     {
         public ImageStateDto Load(string imagePath)
@@ -50,10 +57,13 @@ namespace CoilTrainingUI.Services
 
     public class ImageStateDto
     {
-        public string RoiType { get; set; } = CoilTrainingUI.Models.RoiType.None.ToString();
         public bool? IsNormal { get; set; } = null;
         public bool HasManualAnomalyDecision { get; set; } = false;
         public bool HasManualYoloDecision { get; set; } = false;
+        public string ReviewStatus { get; set; } = global::CoilTrainingUI.Services.ReviewStatus.None;
+        public List<string> ReviewReasons { get; set; } = new();
+        public DateTime? AutoAppliedAt { get; set; }
+        public DateTime? ReviewedAt { get; set; }
 
         // ✅ 라벨을 클래스 이름으로 저장
         public List<LabelDto> Labels { get; set; } = new();
@@ -68,6 +78,8 @@ namespace CoilTrainingUI.Services
         public double Y { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
+        public string Source { get; set; } = "manual"; // manual / auto_infer
+        public double? InferConf { get; set; }
     }
 
 }

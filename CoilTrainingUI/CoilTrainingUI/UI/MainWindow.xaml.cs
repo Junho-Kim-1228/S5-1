@@ -1,12 +1,16 @@
 ﻿using CoilTrainingUI.Managers;
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Services;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Data;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
@@ -25,6 +29,8 @@ namespace CoilTrainingUI
         private ImageStateManager _imageStateManager;
         private AnomalyStateService _anomalyService;
         private readonly ImageStateService _stateService = new();
+        private readonly TrainingDatasetValidator _datasetValidator;
+        private readonly BatchPredictionReviewService _predictionReviewService;
 
         private readonly string _defaultInputFolder = @"C:\Users\wnsgh\Desktop\input";
         private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
@@ -43,6 +49,8 @@ namespace CoilTrainingUI
         private BitmapSource? _rawViewBitmap;
         private string? _rawViewBitmapPath;
         private bool _suppressRawToggleEvent;
+        private int _imageListWheelDeltaAccumulator;
+        private const int ImageListWheelDeltaStep = 240;
 
         private string _currentImagePath;
 
@@ -55,6 +63,282 @@ namespace CoilTrainingUI
 
         private ObservableCollection<ImageItem> _images
             = new ObservableCollection<ImageItem>();
+        private ICollectionView? _imageCollectionView;
+        private bool _suppressFilterRefresh;
+
+        private void InitializeImageCollectionView()
+        {
+            _imageCollectionView = CollectionViewSource.GetDefaultView(_images);
+            _imageCollectionView.Filter = FilterImageItem;
+            ImageListBox.ItemsSource = _imageCollectionView;
+        }
+
+        private void ImageFilterCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!IsLoaded)
+                return;
+            if (_suppressFilterRefresh)
+                return;
+
+            ApplyImageFilters();
+        }
+
+        private void Images_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (e.OldItems != null)
+            {
+                foreach (var oldItem in e.OldItems.OfType<ImageItem>())
+                    oldItem.PropertyChanged -= ImageItem_PropertyChanged;
+            }
+
+            if (e.NewItems != null)
+            {
+                foreach (var newItem in e.NewItems.OfType<ImageItem>())
+                    newItem.PropertyChanged += ImageItem_PropertyChanged;
+            }
+
+            if (!_suppressFilterRefresh)
+                ApplyImageFilters();
+        }
+
+        private void ImageItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_suppressFilterRefresh)
+                return;
+
+            ApplyImageFilters();
+        }
+
+        private void ApplyImageFilters()
+        {
+            _imageCollectionView?.Refresh();
+            RefreshSummaryCounts();
+        }
+
+        private bool IsVisibleInCurrentFilter(ImageItem item)
+        {
+            if (_imageCollectionView == null)
+                return true;
+
+            return _imageCollectionView.Cast<object>()
+                .OfType<ImageItem>()
+                .Any(candidate => ReferenceEquals(candidate, item));
+        }
+
+        private bool FilterImageItem(object itemObj)
+        {
+            if (itemObj is not ImageItem item)
+                return false;
+
+            return PassStatusFilter(item)
+                && PassDefectTypeFilter(item)
+                && PassReviewPriorityFilter(item)
+                && PassDataQualityFilter(item);
+        }
+
+        private bool PassStatusFilter(ImageItem item)
+        {
+            bool includeConfirmedNormal = IsChecked(StatusConfirmedNormalCheckBox);
+            bool includeConfirmedDefect = IsChecked(StatusConfirmedDefectCheckBox);
+            bool includeAiNormal = IsChecked(StatusAiNormalCheckBox);
+            bool includeAiDefect = IsChecked(StatusAiDefectCheckBox);
+            bool includeUnclassified = IsChecked(StatusUnclassifiedCheckBox);
+
+            bool hasAnyFilter = includeConfirmedNormal || includeConfirmedDefect || includeAiNormal || includeAiDefect || includeUnclassified;
+            if (!hasAnyFilter)
+                return true;
+
+            if (includeConfirmedNormal && item.IsConfirmedNormal)
+                return true;
+            if (includeConfirmedDefect && item.IsConfirmedDefect)
+                return true;
+            if (includeAiNormal && !item.IsConfirmedDefect && item.HasAiInfer && !item.AiIsDefect)
+                return true;
+            if (includeAiDefect && !item.IsConfirmedDefect && item.HasAiInfer && item.AiIsDefect)
+                return true;
+            if (includeUnclassified && !item.IsConfirmedDefect && !item.HasAiInfer)
+                return true;
+
+            return false;
+        }
+
+        private bool PassDefectTypeFilter(ImageItem item)
+        {
+            bool includeNormal = IsChecked(DefectTypeNormalCheckBox);
+            bool includeDent = IsChecked(DefectTypeDentCheckBox);
+            bool includeLoose = IsChecked(DefectTypeLooseCheckBox);
+            bool includeNoLabel = IsChecked(DefectTypeNoLabelCheckBox);
+
+            bool hasAnyFilter = includeNormal || includeDent || includeLoose || includeNoLabel;
+            if (!hasAnyFilter)
+                return true;
+
+            var counts = GetEffectiveDefectCounts(item);
+            int total = counts.Dent + counts.Loose + counts.Other;
+
+            if (includeNormal && total == 0)
+                return true;
+            if (includeDent && counts.Dent > 0 && counts.Loose == 0 && counts.Other == 0)
+                return true;
+            if (includeLoose && counts.Loose > 0 && counts.Dent == 0 && counts.Other == 0)
+                return true;
+            if (includeNoLabel && item.GtDentCount + item.GtLooseCount + item.GtOtherCount == 0)
+                return true;
+
+            return false;
+        }
+
+        private bool PassReviewPriorityFilter(ImageItem item)
+        {
+            bool includeNeedsReview = IsChecked(ReviewNeedsCheckBox);
+            bool includeAutoCandidate = IsChecked(ReviewAutoCandidateCheckBox);
+            bool includeDone = IsChecked(ReviewDoneCheckBox);
+
+            bool hasAnyFilter = includeNeedsReview || includeAutoCandidate || includeDone;
+            if (!hasAnyFilter)
+                return true;
+
+            if (includeNeedsReview && item.NeedsReview)
+                return true;
+            if (includeAutoCandidate && item.AutoApproveCandidate)
+                return true;
+            if (includeDone && item.ReviewDone)
+                return true;
+
+            return false;
+        }
+
+        private bool PassDataQualityFilter(ImageItem item)
+        {
+            bool includeHealthy = IsChecked(QualityHealthyCheckBox);
+            bool includeMissingInfer = IsChecked(QualityMissingInferCheckBox);
+            bool includeInferParseFailed = IsChecked(QualityInferParseFailedCheckBox);
+            bool includeMissingState = IsChecked(QualityMissingStateCheckBox);
+            bool includeMissingRaw = IsChecked(QualityMissingRawCheckBox);
+
+            bool hasAnyFilter = includeHealthy || includeMissingInfer || includeInferParseFailed || includeMissingState || includeMissingRaw;
+            if (!hasAnyFilter)
+                return true;
+
+            if (includeHealthy && IsDataQualityHealthy(item))
+                return true;
+            if (includeMissingInfer && item.RequiresInfer && !item.HasInferFile)
+                return true;
+            if (includeInferParseFailed && item.InferParseFailed)
+                return true;
+            if (includeMissingState && !item.HasStateFile)
+                return true;
+            if (includeMissingRaw && !item.HasRawFile)
+                return true;
+
+            return false;
+        }
+
+        private static bool IsDataQualityHealthy(ImageItem item)
+        {
+            if (!item.HasStateFile)
+                return false;
+            if (item.RequiresInfer && !item.HasInferFile)
+                return false;
+            if (item.InferParseFailed)
+                return false;
+            return true;
+        }
+
+        private static bool IsChecked(CheckBox checkBox)
+            => checkBox.IsChecked == true;
+
+        private static (int Dent, int Loose, int Other) GetEffectiveDefectCounts(ImageItem item)
+        {
+            if (item.HasLabel)
+                return (item.GtDentCount, item.GtLooseCount, item.GtOtherCount);
+
+            if (item.HasAiInfer)
+                return (item.AiDentCount, item.AiLooseCount, item.AiOtherCount);
+
+            return (0, 0, 0);
+        }
+
+        private static (int Dent, int Loose, int Other) CountDefectClasses(IEnumerable<string?> classNames)
+        {
+            int dent = 0;
+            int loose = 0;
+            int other = 0;
+
+            foreach (var className in classNames)
+            {
+                string normalized = (className ?? "").Trim().ToLowerInvariant();
+                if (normalized == "dent")
+                {
+                    dent++;
+                    continue;
+                }
+
+                if (normalized == "loose")
+                {
+                    loose++;
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(normalized))
+                    other++;
+            }
+
+            return (dent, loose, other);
+        }
+
+        private void UpdateGtSummaryForImageItem(ImageItem item, string imagePath)
+        {
+            var boxes = _imageStateManager.GetLabels(imagePath);
+            var counts = CountDefectClasses(boxes.Select(b => b.ClassName));
+            var state = _stateService.Load(imagePath);
+            item.GtDentCount = counts.Dent;
+            item.GtLooseCount = counts.Loose;
+            item.GtOtherCount = counts.Other;
+            item.HasLabel = state.HasManualYoloDecision && boxes.Count > 0;
+            item.HasStateFile = _stateService.HasState(imagePath);
+            item.ReviewStatus = DeriveReviewStatusForItem(item, state);
+            item.ReviewReasonText = state.ReviewReasons.Count > 0
+                ? string.Join(", ", state.ReviewReasons.Take(3))
+                : "";
+        }
+
+        private void SyncGtSummaryForImage(string imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath))
+                return;
+
+            var item = _images.FirstOrDefault(i => i.ProcessedPath == imagePath);
+            if (item == null)
+                return;
+
+            UpdateGtSummaryForImageItem(item, imagePath);
+        }
+
+        private static string DeriveReviewStatusForItem(ImageItem item, ImageStateDto state)
+        {
+            if (state.HasManualYoloDecision || state.HasManualAnomalyDecision)
+                return ReviewStatus.ReviewDone;
+
+            string normalized = (state.ReviewStatus ?? "").Trim().ToLowerInvariant();
+            if (normalized == ReviewStatus.ReviewNeeded ||
+                normalized == ReviewStatus.AutoCandidate ||
+                normalized == ReviewStatus.ReviewDone)
+            {
+                return normalized;
+            }
+
+            if (item.InferParseFailed)
+                return ReviewStatus.ReviewNeeded;
+
+            if (item.RequiresInfer && !item.HasInferFile)
+                return ReviewStatus.ReviewNeeded;
+
+            if (item.HasAiInfer)
+                return item.AiConsensusHighConfidence ? ReviewStatus.AutoCandidate : ReviewStatus.ReviewNeeded;
+
+            return ReviewStatus.None;
+        }
 
         private void ImageCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -103,13 +387,8 @@ namespace CoilTrainingUI
             RequestSaveLabelsDebounced(_currentImagePath);
 
 
-            SaveLabelsToStateJson(_currentImagePath);
-            var selectedItem = _images.FirstOrDefault(i => i.FullPath == _currentImagePath);
-            if (selectedItem != null)
-            {
-                selectedItem.HasLabel = true;
-                ImageListBox.Items.Refresh();
-            }
+            SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
+            SyncGtSummaryForImage(_currentImagePath);
             RefreshSummaryCounts();
         }
 
@@ -147,21 +426,20 @@ namespace CoilTrainingUI
 
         private void ImageCanvas_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            _bboxManager.EndDrag(
+            bool moved = _bboxManager.EndDrag(
                 ImageCanvas.Width,
                 ImageCanvas.Height
             );
 
-            // ✅ 드래그가 끝난 좌표를 state.json에 저장
+            if (!moved)
+                return;
+
+            // ✅ 드래그가 실제로 발생한 경우에만 state.json 저장
             if (!string.IsNullOrEmpty(_currentImagePath))
             {
-                _bboxManager.ForceUpdateAll(ImageCanvas.Width, ImageCanvas.Height);
-                SaveLabelsToStateJson(_currentImagePath);
-            }
-
-            // 드래그 끝난 결과 저장(디바운스)
-            if (!string.IsNullOrEmpty(_currentImagePath))
+                SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
                 RequestSaveLabelsDebounced(_currentImagePath);
+            }
         }
 
         private void ImageCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
@@ -178,6 +456,17 @@ namespace CoilTrainingUI
         private void ZoomOut_Click(object sender, RoutedEventArgs e)
         {
             _canvasInteractionManager.ZoomOut();
+        }
+
+        private void ResetZoom_Click(object sender, RoutedEventArgs e)
+        {
+            if (ImageCanvas.Width <= 0 || ImageCanvas.Height <= 0)
+                return;
+
+            _canvasInteractionManager.FitToView(
+                ImageCanvas.Width,
+                ImageCanvas.Height
+            );
         }
 
         private void ImageScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -206,15 +495,10 @@ namespace CoilTrainingUI
             _imageStateManager.RemoveLabel(_currentImagePath, removedBBox);
 
             // 2️⃣ UI 모델 상태 갱신
-            var item = _images.FirstOrDefault(i => i.FullPath == _currentImagePath);
-            if (item != null)
-            {
-                item.HasLabel = _imageStateManager.HasLabel(_currentImagePath);
-                ImageListBox.Items.Refresh();
-            }
+            SyncGtSummaryForImage(_currentImagePath);
 
             // ✅ 삭제 반영 저장
-            SaveLabelsToStateJson(_currentImagePath);
+            SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
 
             RequestSaveLabelsDebounced(_currentImagePath);
             RefreshSummaryCounts();
@@ -235,20 +519,16 @@ namespace CoilTrainingUI
             _bboxManager.SetSelectedClass(className);
 
             // ✅ 상태는 ImageStateManager 기준으로 갱신
-            var imageItem = _images.FirstOrDefault(i => i.FullPath == _currentImagePath);
-            if (imageItem != null)
-            {
-                imageItem.HasLabel = _imageStateManager.HasLabel(_currentImagePath);
-                ImageListBox.Items.Refresh();
-            }
+            SyncGtSummaryForImage(_currentImagePath);
+
             RequestSaveLabelsDebounced(_currentImagePath);
 
             // ✅ 클래스 변경 반영 저장
-            SaveLabelsToStateJson(_currentImagePath);
+            SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
 
         }
 
-        private void SaveLabelsToStateJson(string imagePath)
+        private void SaveLabelsToStateJson(string imagePath, bool markManualYoloDecision = false)
         {
             // 혹시 캔버스 변경이 남아있다면 확정(드래그 종료 등에서 호출하므로 안전)
             _bboxManager.ForceUpdateAll(ImageCanvas.Width, ImageCanvas.Height);
@@ -266,14 +546,23 @@ namespace CoilTrainingUI
                     X = b.X,
                     Y = b.Y,
                     Width = b.Width,
-                    Height = b.Height
+                    Height = b.Height,
+                    Source = "manual",
+                    InferConf = null
                 });
             }
 
-            // 라벨 편집(추가/삭제/수정)이 발생했다는 뜻이므로, 이후에는 infer 대신 GT를 우선한다.
-            state.HasManualYoloDecision = true;
+            if (markManualYoloDecision)
+            {
+                // 라벨 편집(추가/삭제/수정)이 발생한 경우에만 수동 확정으로 본다.
+                state.HasManualYoloDecision = true;
+                state.ReviewStatus = ReviewStatus.ReviewDone;
+                state.ReviewReasons.Clear();
+                state.ReviewedAt = DateTime.UtcNow;
+            }
 
             _stateService.Save(imagePath, state);
+            SyncGtSummaryForImage(imagePath);
         }
 
 
@@ -340,7 +629,6 @@ namespace CoilTrainingUI
                     _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
                 }
 
-                bool hasGtLabel = _imageStateManager.HasLabel(imagePath);
                 UpdatePredictionOverlayVisibility(imagePath);
 
                 // 5️⃣ Anomaly 상태
@@ -355,13 +643,11 @@ namespace CoilTrainingUI
                 if (ImageListBox.SelectedItem is ImageItem item)
                 {
                     item.IsNormal = isNormal;
-                    item.HasLabel = hasGtLabel;
+                    UpdateGtSummaryForImageItem(item, imagePath);
 
                     NormalRadio.IsChecked = isNormal;
                     AbnormalRadio.IsChecked = !isNormal;
                 }
-
-                ImageListBox.Items.Refresh();
 
                 // 7️⃣ 표시 모드(raw/processed) 체크 상태에 따라 화면 갱신
                 UpdateMainImageDisplayFromToggle();
@@ -451,8 +737,55 @@ namespace CoilTrainingUI
                 );
             }
         }
+
+        private void ImageListBox_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (sender is not DependencyObject source)
+                return;
+
+            var scrollViewer = FindVisualChild<ScrollViewer>(source);
+            if (scrollViewer == null)
+                return;
+
+            // 터치패드 두 손가락 스크롤이 너무 빠른 환경을 위해 감속 처리
+            _imageListWheelDeltaAccumulator += e.Delta;
+
+            while (_imageListWheelDeltaAccumulator >= ImageListWheelDeltaStep)
+            {
+                scrollViewer.LineUp();
+                _imageListWheelDeltaAccumulator -= ImageListWheelDeltaStep;
+            }
+
+            while (_imageListWheelDeltaAccumulator <= -ImageListWheelDeltaStep)
+            {
+                scrollViewer.LineDown();
+                _imageListWheelDeltaAccumulator += ImageListWheelDeltaStep;
+            }
+
+            e.Handled = true;
+        }
+
+        private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        {
+            int count = VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T target)
+                    return target;
+
+                var descendant = FindVisualChild<T>(child);
+                if (descendant != null)
+                    return descendant;
+            }
+
+            return null;
+        }
         private void NormalRadio_Checked(object sender, RoutedEventArgs e)
         {
+            if (_isLoadingImage)
+                return;
+
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
 
@@ -464,13 +797,17 @@ namespace CoilTrainingUI
 
             // 3️⃣ UI 모델 반영
             item.IsNormal = true;
+            item.HasStateFile = true;
+            item.ReviewStatus = ReviewStatus.ReviewDone;
 
-            ImageListBox.Items.Refresh();
             RefreshSummaryCounts();
         }
 
         private void AbnormalRadio_Checked(object sender, RoutedEventArgs e)
         {
+            if (_isLoadingImage)
+                return;
+
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
 
@@ -478,8 +815,9 @@ namespace CoilTrainingUI
             _anomalyService.Save(item.ProcessedPath, false);
 
             item.IsNormal = false;
+            item.HasStateFile = true;
+            item.ReviewStatus = ReviewStatus.ReviewDone;
 
-            ImageListBox.Items.Refresh();
             RefreshSummaryCounts();
         }
 
@@ -523,6 +861,8 @@ namespace CoilTrainingUI
             );
             _imageStateManager = new ImageStateManager();
             _anomalyService = new AnomalyStateService();
+            _datasetValidator = new TrainingDatasetValidator(_stateService);
+            _predictionReviewService = new BatchPredictionReviewService(_stateService);
             UpdateDataSourceUiState();
 
             //타이머 초기화   
@@ -539,7 +879,8 @@ namespace CoilTrainingUI
 
                 SaveLabelsToStateJson(_pendingSaveImagePath);
             };
-            ImageListBox.ItemsSource = _images;
+            _images.CollectionChanged += Images_CollectionChanged;
+            InitializeImageCollectionView();
             RefreshSummaryCounts();
             ResetImageDisplay();
 

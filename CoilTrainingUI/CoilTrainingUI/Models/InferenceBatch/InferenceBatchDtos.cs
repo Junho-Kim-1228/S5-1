@@ -34,9 +34,6 @@ public class ManifestItemDto
 
     [JsonPropertyName("raw_image")]
     public string RawImage { get; set; } = "";
-
-    [JsonPropertyName("roi_type")]
-    public string RoiType { get; set; } = "";
 }
 
 public class InferResultDto
@@ -48,10 +45,7 @@ public class InferResultDto
     public string ImageId { get; set; } = "";
 
     [JsonPropertyName("image_size")]
-    public RoiImageSizeDto ImageSize { get; set; } = new();
-
-    [JsonPropertyName("roi_type")]
-    public string RoiType { get; set; } = "";
+    public ImageSizeDto ImageSize { get; set; } = new();
 
     [JsonPropertyName("yolo")]
     public InferYoloDto Yolo { get; set; } = new();
@@ -63,7 +57,7 @@ public class InferResultDto
     public InferFinalDto Final { get; set; } = new();
 }
 
-public class RoiImageSizeDto
+public class ImageSizeDto
 {
     [JsonPropertyName("w")]
     public int W { get; set; }

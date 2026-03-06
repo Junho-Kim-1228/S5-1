@@ -1,29 +1,230 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace CoilTrainingUI.Models
 {
-    public class ImageItem
+    public class ImageItem : INotifyPropertyChanged
     {
-        public string FileName { get; set; }
-        public string ProcessedPath { get; set; } = "";
-        public string? RawPath { get; set; }
+        private string _fileName = "";
+        private string _processedPath = "";
+        private string? _rawPath;
+        private bool _hasLabel;
+        private bool _isNormal = true;
+        private bool _hasAiInfer;
+        private bool _aiYoloDefect;
+        private bool _aiAnomaDefect;
+        private bool _aiConsensusHighConfidence;
+        private double _aiYoloMaxConf;
+        private double _aiAnomaScore;
+        private bool _requiresInfer;
+        private bool _hasInferFile;
+        private bool _inferParseFailed;
+        private bool _hasStateFile;
+        private int _gtDentCount;
+        private int _gtLooseCount;
+        private int _gtOtherCount;
+        private int _aiDentCount;
+        private int _aiLooseCount;
+        private int _aiOtherCount;
+        private string _reviewStatus = "none";
+        private string _reviewReasonText = "";
 
-        // Legacy compatibility: 기존 코드가 FullPath를 참조해도 processed 경로를 반환.
-        public string FullPath
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public string FileName
         {
-            get => ProcessedPath;
-            set => ProcessedPath = value;
+            get => _fileName;
+            set => SetField(ref _fileName, value);
         }
-        public bool HasLabel { get; set; }           // YOLO 박스 존재 여부
-        public bool IsNormal { get; set; } = true;  // Anomaly 기준 정상 여부
-        public bool HasAiInfer { get; set; }        // infer.json 존재/파싱 성공 여부
-        public bool AiIsDefect { get; set; }        // AI 기준 불량 여부
-        public bool AiYoloDefect { get; set; }      // AI YOLO 기준 불량 여부
-        public bool AiAnomaDefect { get; set; }     // AI Anoma 기준 불량 여부
+
+        public string ProcessedPath
+        {
+            get => _processedPath;
+            set => SetField(ref _processedPath, value);
+        }
+
+        public string? RawPath
+        {
+            get => _rawPath;
+            set => SetField(ref _rawPath, value);
+        }
+
+        public bool HasLabel
+        {
+            get => _hasLabel;
+            set
+            {
+                if (!SetField(ref _hasLabel, value))
+                    return;
+                OnStatusPropertiesChanged();
+            }
+        }
+
+        public bool IsNormal
+        {
+            get => _isNormal;
+            set
+            {
+                if (!SetField(ref _isNormal, value))
+                    return;
+                OnStatusPropertiesChanged();
+            }
+        }
+
+        public bool HasAiInfer
+        {
+            get => _hasAiInfer;
+            set
+            {
+                if (!SetField(ref _hasAiInfer, value))
+                    return;
+                OnStatusPropertiesChanged();
+            }
+        }
+
+        public bool AiYoloDefect
+        {
+            get => _aiYoloDefect;
+            set
+            {
+                if (!SetField(ref _aiYoloDefect, value))
+                    return;
+                OnStatusPropertiesChanged();
+            }
+        }
+
+        public bool AiAnomaDefect
+        {
+            get => _aiAnomaDefect;
+            set
+            {
+                if (!SetField(ref _aiAnomaDefect, value))
+                    return;
+                OnStatusPropertiesChanged();
+            }
+        }
+
+        public bool AiConsensusHighConfidence
+        {
+            get => _aiConsensusHighConfidence;
+            set => SetField(ref _aiConsensusHighConfidence, value);
+        }
+
+        public double AiYoloMaxConf
+        {
+            get => _aiYoloMaxConf;
+            set => SetField(ref _aiYoloMaxConf, value);
+        }
+
+        public double AiAnomaScore
+        {
+            get => _aiAnomaScore;
+            set => SetField(ref _aiAnomaScore, value);
+        }
+
+        public bool RequiresInfer
+        {
+            get => _requiresInfer;
+            set => SetField(ref _requiresInfer, value);
+        }
+
+        public bool HasInferFile
+        {
+            get => _hasInferFile;
+            set => SetField(ref _hasInferFile, value);
+        }
+
+        public bool InferParseFailed
+        {
+            get => _inferParseFailed;
+            set
+            {
+                if (!SetField(ref _inferParseFailed, value))
+                    return;
+                OnPropertyChanged(nameof(AutoApproveCandidate));
+                OnPropertyChanged(nameof(NeedsReview));
+            }
+        }
+
+        public bool HasStateFile
+        {
+            get => _hasStateFile;
+            set => SetField(ref _hasStateFile, value);
+        }
+
+        public int GtDentCount
+        {
+            get => _gtDentCount;
+            set => SetField(ref _gtDentCount, value);
+        }
+
+        public int GtLooseCount
+        {
+            get => _gtLooseCount;
+            set => SetField(ref _gtLooseCount, value);
+        }
+
+        public int GtOtherCount
+        {
+            get => _gtOtherCount;
+            set => SetField(ref _gtOtherCount, value);
+        }
+
+        public int AiDentCount
+        {
+            get => _aiDentCount;
+            set => SetField(ref _aiDentCount, value);
+        }
+
+        public int AiLooseCount
+        {
+            get => _aiLooseCount;
+            set => SetField(ref _aiLooseCount, value);
+        }
+
+        public int AiOtherCount
+        {
+            get => _aiOtherCount;
+            set => SetField(ref _aiOtherCount, value);
+        }
+
+        public string ReviewStatus
+        {
+            get => _reviewStatus;
+            set
+            {
+                if (!SetField(ref _reviewStatus, value))
+                    return;
+                OnPropertyChanged(nameof(ReviewDone));
+                OnPropertyChanged(nameof(AutoApproveCandidate));
+                OnPropertyChanged(nameof(NeedsReview));
+                OnPropertyChanged(nameof(ReviewStatusText));
+            }
+        }
+
+        public string ReviewReasonText
+        {
+            get => _reviewReasonText;
+            set => SetField(ref _reviewReasonText, value);
+        }
+
+        public bool HasRawFile => !string.IsNullOrWhiteSpace(RawPath);
+        public bool IsConfirmedDefect => HasLabel || !IsNormal;
+        public bool IsConfirmedNormal => !HasLabel && IsNormal;
+        public bool ReviewDone => string.Equals(ReviewStatus, "review_done", System.StringComparison.OrdinalIgnoreCase);
+        public bool AutoApproveCandidate => string.Equals(ReviewStatus, "auto_candidate", System.StringComparison.OrdinalIgnoreCase);
+        public bool NeedsReview => string.Equals(ReviewStatus, "review_needed", System.StringComparison.OrdinalIgnoreCase);
+        public string ReviewStatusText => ReviewStatus switch
+        {
+            "review_needed" => "검수 필요",
+            "auto_candidate" => "자동 확정 후보",
+            "review_done" => "확정 완료",
+            _ => "-"
+        };
+
+        // AI 기준 불량 여부 (YOLO/Anoma 둘 중 하나라도 불량이면 true)
+        public bool AiIsDefect => AiYoloDefect || AiAnomaDefect;
 
         // UI 표시용
         public string AiYoloStatusText => !HasAiInfer ? "미분류" : (AiYoloDefect ? "불량" : "정상");
@@ -45,6 +246,40 @@ namespace CoilTrainingUI.Models
             }
         }
 
-        public RoiType RoiType { get; set; } = RoiType.None;
+        private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value))
+                return false;
+
+            field = value;
+            OnPropertyChanged(propertyName);
+
+            if (propertyName == nameof(RawPath))
+                OnPropertyChanged(nameof(HasRawFile));
+
+            return true;
+        }
+
+        private void OnStatusPropertiesChanged()
+        {
+            OnPropertyChanged(nameof(AiIsDefect));
+            OnPropertyChanged(nameof(AiYoloStatusText));
+            OnPropertyChanged(nameof(AiAnomaStatusText));
+            OnPropertyChanged(nameof(GtYoloStatusText));
+            OnPropertyChanged(nameof(GtAnomaStatusText));
+            OnPropertyChanged(nameof(IsConfirmedDefect));
+            OnPropertyChanged(nameof(IsConfirmedNormal));
+            OnPropertyChanged(nameof(ReviewDone));
+            OnPropertyChanged(nameof(AutoApproveCandidate));
+            OnPropertyChanged(nameof(NeedsReview));
+            OnPropertyChanged(nameof(StatusText));
+            OnPropertyChanged(string.Empty);
+        }
+
+        private void OnPropertyChanged(string? propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
     }
+
 }
