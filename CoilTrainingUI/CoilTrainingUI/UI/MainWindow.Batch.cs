@@ -21,12 +21,14 @@ namespace CoilTrainingUI
         private void ImportBatch_Click(object sender, RoutedEventArgs e)
         {
             string projectRoot = FindProjectRoot("capstone_design");
-            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
-            Directory.CreateDirectory(inboxRoot);
+            string inboxRoot = GetTrainingInboxRoot();
 
-            var selectedBatchFolder = TrySelectFolder("Import batch folder", inboxRoot);
+            string initialPath = GetInitialImportBatchFolder(inboxRoot, projectRoot);
+            var selectedBatchFolder = TrySelectFolder("Import batch folder", initialPath);
             if (string.IsNullOrWhiteSpace(selectedBatchFolder))
                 return;
+
+            RememberImportBatchFolder(selectedBatchFolder);
 
             try
             {
@@ -61,7 +63,10 @@ namespace CoilTrainingUI
                         return;
                     }
 
-                    var imported = _inferenceBatchImportService.Import(selectedBatchFolder, projectRoot);
+                    var imported = _inferenceBatchImportService.Import(
+                        selectedBatchFolder,
+                        projectRoot,
+                        inboxRoot);
                     batchToLoad = imported.ImportedPath;
                 }
 
@@ -91,21 +96,23 @@ namespace CoilTrainingUI
         private void CreateBatchFromFolder_Click(object sender, RoutedEventArgs e)
         {
             string projectRoot = FindProjectRoot("capstone_design");
-            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
-            Directory.CreateDirectory(inboxRoot);
+            string inboxRoot = GetTrainingInboxRoot();
             string? previousImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
 
-            string initialPath = Directory.Exists(_defaultInputFolder)
-                ? _defaultInputFolder
-                : projectRoot;
+            string initialPath = GetInitialProcessedFolder(inboxRoot, projectRoot);
 
             var srcFolder = TrySelectFolder("Select processed image folder (*.bmp)", initialPath);
             if (string.IsNullOrWhiteSpace(srcFolder))
                 return;
 
-            var rawFolder = TrySelectFolder("Select RAW image folder (*.bmp)", srcFolder);
+            RememberProcessedFolder(srcFolder);
+
+            string rawInitialPath = GetInitialRawFolder(srcFolder, inboxRoot, projectRoot);
+            var rawFolder = TrySelectFolder("Select RAW image folder (*.bmp)", rawInitialPath);
             if (string.IsNullOrWhiteSpace(rawFolder))
                 return;
+
+            RememberRawFolder(rawFolder);
 
             try
             {
@@ -448,7 +455,7 @@ namespace CoilTrainingUI
             {
                 var preview = string.Join(", ", skipped.Take(5));
                 Trace.WriteLine(
-                    $"training_inbox scan skipped {skipped.Count} folders. " +
+                    $"batch library scan skipped {skipped.Count} folders. " +
                     (string.IsNullOrWhiteSpace(preview) ? "" : $"Sample: {preview}")
                 );
             }

@@ -72,6 +72,8 @@
                 <MenuItem x:Name="ShowReviewQueueMenuItem"
                           Header="Show Review Queue"
                           Click="ShowReviewQueue_Click"/>
+                <MenuItem Header="Mark Filtered Images Abnormal"
+                          Click="MarkFilteredAbnormal_Click"/>
             </MenuItem>
 
             <MenuItem Header="Training">
@@ -179,12 +181,6 @@
                                           Margin="0,0,8,4"
                                           Checked="ImageFilterCheckBox_Changed"
                                           Unchecked="ImageFilterCheckBox_Changed"/>
-                                <CheckBox x:Name="StatusUnclassifiedCheckBox"
-                                          Content="미분류"
-                                          Foreground="White"
-                                          Margin="0,0,8,4"
-                                          Checked="ImageFilterCheckBox_Changed"
-                                          Unchecked="ImageFilterCheckBox_Changed"/>
                             </WrapPanel>
 
                             <TextBlock Text="불량 유형" Foreground="#D0D0D0" FontSize="12" Margin="6,0,6,0"/>
@@ -275,6 +271,7 @@
 
                     <ListBox x:Name="ImageListBox"
                              PreviewMouseWheel="ImageListBox_PreviewMouseWheel"
+                             HorizontalContentAlignment="Stretch"
                              SelectionChanged="ImageListBox_SelectionChanged">
 
                         <ListBox.ItemTemplate>
@@ -282,8 +279,21 @@
                                 <Border Padding="0"
                                         Margin="0,0,0,1"
                                         CornerRadius="4"
-                                        Background="{Binding .,
-                                                     Converter={StaticResource ImageStatusToColorConverter}}">
+                                        HorizontalAlignment="Stretch">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background"
+                                                    Value="{Binding ., Converter={StaticResource ImageStatusToColorConverter}}"/>
+                                            <Setter Property="BorderBrush" Value="Transparent"/>
+                                            <Setter Property="BorderThickness" Value="2"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}"
+                                                             Value="True">
+                                                    <Setter Property="BorderBrush" Value="#3B82F6"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
 
                                     <StackPanel Orientation="Vertical">
 

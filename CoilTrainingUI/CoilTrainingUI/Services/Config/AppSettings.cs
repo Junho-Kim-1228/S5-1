@@ -7,6 +7,7 @@ namespace CoilTrainingUI.Services
     public class AppSettings
     {
         public string PythonExe { get; set; } = "";
+        public string BatchLibraryRoot { get; set; } = "";
         public ScriptsSection Scripts { get; set; } = new();
         public WorkspaceSection Workspace { get; set; } = new();
         public FusionSection Fusion { get; set; } = new();
@@ -55,6 +56,9 @@ namespace CoilTrainingUI.Services
                     // 필요한 필드만 덮어쓰기 (특히 PythonExe)
                     if (!string.IsNullOrWhiteSpace(local.PythonExe))
                         baseSettings.PythonExe = local.PythonExe;
+
+                    if (!string.IsNullOrWhiteSpace(local.BatchLibraryRoot))
+                        baseSettings.BatchLibraryRoot = local.BatchLibraryRoot;
                 }
             }
 

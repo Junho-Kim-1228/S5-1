@@ -32,7 +32,6 @@ namespace CoilTrainingUI
         private readonly TrainingDatasetValidator _datasetValidator;
         private readonly BatchPredictionReviewService _predictionReviewService;
 
-        private readonly string _defaultInputFolder = @"C:\Users\wnsgh\Desktop\input";
         private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private const string PredictionOverlayTag = "__prediction_overlay";
         private string? _currentBatchRoot;
@@ -53,6 +52,8 @@ namespace CoilTrainingUI
         private const int ImageListWheelDeltaStep = 240;
 
         private string _currentImagePath;
+        private string _activeDrawClass = "dent";
+        private bool _suppressClassComboBoxChange;
 
 
         private readonly Dictionary<string, int> _classToId = new()
@@ -142,9 +143,8 @@ namespace CoilTrainingUI
             bool includeConfirmedDefect = IsChecked(StatusConfirmedDefectCheckBox);
             bool includeAiNormal = IsChecked(StatusAiNormalCheckBox);
             bool includeAiDefect = IsChecked(StatusAiDefectCheckBox);
-            bool includeUnclassified = IsChecked(StatusUnclassifiedCheckBox);
 
-            bool hasAnyFilter = includeConfirmedNormal || includeConfirmedDefect || includeAiNormal || includeAiDefect || includeUnclassified;
+            bool hasAnyFilter = includeConfirmedNormal || includeConfirmedDefect || includeAiNormal || includeAiDefect;
             if (!hasAnyFilter)
                 return true;
 
@@ -155,8 +155,6 @@ namespace CoilTrainingUI
             if (includeAiNormal && !item.IsConfirmedDefect && item.HasAiInfer && !item.AiIsDefect)
                 return true;
             if (includeAiDefect && !item.IsConfirmedDefect && item.HasAiInfer && item.AiIsDefect)
-                return true;
-            if (includeUnclassified && !item.IsConfirmedDefect && !item.HasAiInfer)
                 return true;
 
             return false;
@@ -340,16 +338,104 @@ namespace CoilTrainingUI
             return ReviewStatus.None;
         }
 
+        private void ApplyAnomalyDecisionToItem(ImageItem item, bool isNormal, bool refreshSummary = true)
+        {
+            if (item == null || string.IsNullOrWhiteSpace(item.ProcessedPath))
+                return;
+
+            _imageStateManager.SetNormal(item.ProcessedPath, isNormal);
+            _anomalyService.Save(item.ProcessedPath, isNormal);
+
+            item.IsNormal = isNormal;
+            item.HasStateFile = true;
+            item.ReviewStatus = ReviewStatus.ReviewDone;
+            item.ReviewReasonText = "";
+
+            if (refreshSummary)
+                RefreshSummaryCounts();
+        }
+
+        private void EnsureSelectedImageVisible()
+        {
+            if (ImageListBox.SelectedItem is ImageItem selectedItem && IsVisibleInCurrentFilter(selectedItem))
+                return;
+
+            var firstVisible = _imageCollectionView?.Cast<object>()
+                .OfType<ImageItem>()
+                .FirstOrDefault();
+
+            if (firstVisible != null)
+            {
+                ImageListBox.SelectedItem = firstVisible;
+                ImageListBox.ScrollIntoView(firstVisible);
+                return;
+            }
+
+            ImageListBox.SelectedItem = null;
+            ResetImageDisplay();
+        }
+
+        private void SyncAnomalyRadioFromSelectedItem()
+        {
+            _isLoadingImage = true;
+            try
+            {
+                if (ImageListBox.SelectedItem is not ImageItem item)
+                {
+                    NormalRadio.IsChecked = false;
+                    AbnormalRadio.IsChecked = false;
+                    return;
+                }
+
+                NormalRadio.IsChecked = item.IsNormal;
+                AbnormalRadio.IsChecked = !item.IsNormal;
+            }
+            finally
+            {
+                _isLoadingImage = false;
+            }
+        }
+
+        private void SetActiveDrawClass(string? className)
+        {
+            string normalized = NormalizeDrawClassName(className);
+            _activeDrawClass = normalized;
+            _bboxManager.DefaultClassName = normalized;
+        }
+
+        private string NormalizeDrawClassName(string? className)
+        {
+            string normalized = (className ?? "").Trim().ToLowerInvariant();
+            return _classToId.ContainsKey(normalized) ? normalized : "dent";
+        }
+
+        private void SetClassComboBoxSelection(string? className)
+        {
+            string normalized = NormalizeDrawClassName(className);
+            var comboItem = ClassComboBox.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(i => string.Equals(i.Content?.ToString(), normalized, StringComparison.OrdinalIgnoreCase));
+
+            _suppressClassComboBoxChange = true;
+            try
+            {
+                ClassComboBox.SelectedItem = comboItem;
+            }
+            finally
+            {
+                _suppressClassComboBoxChange = false;
+            }
+        }
+
         private void ImageCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.Source is Rectangle)
                 return;
 
             // 🔥 이전 선택 완전 해제
-            ClassComboBox.SelectedIndex = -1;
-            ClassComboBox.IsEnabled = false;
-
             _bboxManager.ClearSelection();
+            ClassComboBox.IsEnabled = !string.IsNullOrEmpty(_currentImagePath);
+            SetClassComboBoxSelection(_activeDrawClass);
 
             _canvasInteractionManager.StartDraw(
                 e.GetPosition(ImageCanvas)
@@ -380,9 +466,7 @@ namespace CoilTrainingUI
 
             // 3️⃣ 클래스 UI 활성화 + 기본값 반영
             ClassComboBox.IsEnabled = true;
-            ClassComboBox.SelectedItem = ClassComboBox.Items
-                .OfType<ComboBoxItem>()
-                .First(i => i.Content.ToString() == bbox.ClassName);
+            SetClassComboBoxSelection(bbox.ClassName);
             
             RequestSaveLabelsDebounced(_currentImagePath);
 
@@ -406,11 +490,7 @@ namespace CoilTrainingUI
                     ClassComboBox.IsEnabled = true;
 
                     // 🔥 핵심: 선택된 박스의 클래스 → ComboBox 반영
-                    ClassComboBox.SelectedItem = ClassComboBox.Items
-                        .OfType<ComboBoxItem>()
-                        .FirstOrDefault(i =>
-                            i.Content?.ToString() == bbox.ClassName
-                        );
+                    SetClassComboBoxSelection(bbox.ClassName);
                 }
 
                 e.Handled = true;
@@ -508,13 +588,19 @@ namespace CoilTrainingUI
 
         private void ClassComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_suppressClassComboBoxChange)
+                return;
+
             if (ClassComboBox.SelectedItem is not ComboBoxItem item)
                 return;
 
+            string className = NormalizeDrawClassName(item.Content?.ToString());
+            SetActiveDrawClass(className);
+
             if (string.IsNullOrEmpty(_currentImagePath))
                 return;
-
-            string className = item.Content.ToString();
+            if (_bboxManager.SelectedBBox == null)
+                return;
 
             _bboxManager.SetSelectedClass(className);
 
@@ -574,7 +660,8 @@ namespace CoilTrainingUI
             try
             {
                 _currentImagePath = imagePath;
-                ClassComboBox.IsEnabled = false;
+                ClassComboBox.IsEnabled = true;
+                SetClassComboBoxSelection(_activeDrawClass);
 
                 // 1️⃣ ImageStateManager 보장
                 _imageStateManager.EnsureImage(imagePath);
@@ -789,18 +876,7 @@ namespace CoilTrainingUI
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
 
-            // 1️⃣ 메모리 상태 변경
-            _imageStateManager.SetNormal(item.ProcessedPath, true);
-
-            // 2️⃣ 파일 저장
-            _anomalyService.Save(item.ProcessedPath, true);
-
-            // 3️⃣ UI 모델 반영
-            item.IsNormal = true;
-            item.HasStateFile = true;
-            item.ReviewStatus = ReviewStatus.ReviewDone;
-
-            RefreshSummaryCounts();
+            ApplyAnomalyDecisionToItem(item, isNormal: true);
         }
 
         private void AbnormalRadio_Checked(object sender, RoutedEventArgs e)
@@ -811,14 +887,55 @@ namespace CoilTrainingUI
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
 
-            _imageStateManager.SetNormal(item.ProcessedPath, false);
-            _anomalyService.Save(item.ProcessedPath, false);
+            ApplyAnomalyDecisionToItem(item, isNormal: false);
+        }
 
-            item.IsNormal = false;
-            item.HasStateFile = true;
-            item.ReviewStatus = ReviewStatus.ReviewDone;
+        private void MarkFilteredAbnormal_Click(object sender, RoutedEventArgs e)
+        {
+            var visibleItems = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
+                .OfType<ImageItem>()
+                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .ToList();
 
-            RefreshSummaryCounts();
+            if (visibleItems.Count == 0)
+            {
+                MessageBox.Show(
+                    "현재 필터 결과에 해당하는 이미지가 없습니다.",
+                    "Filtered -> Abnormal",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                $"현재 필터 결과 {visibleItems.Count}개 이미지를 모두 Abnormal로 확정할까요?",
+                "Filtered -> Abnormal",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes)
+                return;
+
+            _suppressFilterRefresh = true;
+            try
+            {
+                foreach (var item in visibleItems)
+                    ApplyAnomalyDecisionToItem(item, isNormal: false, refreshSummary: false);
+            }
+            finally
+            {
+                _suppressFilterRefresh = false;
+            }
+
+            ApplyImageFilters();
+            EnsureSelectedImageVisible();
+            SyncAnomalyRadioFromSelectedItem();
+
+            MessageBox.Show(
+                $"{visibleItems.Count}개 이미지를 Abnormal로 확정했습니다.",
+                "Filtered -> Abnormal",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
 
@@ -854,6 +971,9 @@ namespace CoilTrainingUI
             InitializeComponent();
             _yoloService = new YoloLabelService(_classToId);
             _bboxManager = new BoundingBoxManager(ImageCanvas);
+            SetActiveDrawClass(_activeDrawClass);
+            SetClassComboBoxSelection(_activeDrawClass);
+            ClassComboBox.IsEnabled = false;
             _canvasInteractionManager = new CanvasInteractionManager(
                 ImageScrollViewer,
                 ImageScale,

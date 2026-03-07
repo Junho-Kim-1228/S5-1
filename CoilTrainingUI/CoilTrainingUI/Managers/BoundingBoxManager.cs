@@ -24,6 +24,7 @@ namespace CoilTrainingUI.Managers
         private bool _isDragging;
         private bool _hasDragged;
         private bool _dragMoved;
+        private string _defaultClassName = "dent";
 
         public BoundingBoxManager(Canvas canvas)
         {
@@ -59,7 +60,7 @@ namespace CoilTrainingUI.Managers
 
                 _currentRect = new Rectangle
                 {
-                    Stroke = Brushes.Red,
+                    Stroke = GetStrokeBrush(_defaultClassName),
                     StrokeThickness = 2,
                     Fill = Brushes.Transparent
                 };
@@ -71,7 +72,7 @@ namespace CoilTrainingUI.Managers
 
                 _bboxMap[_currentRect] = new BoundingBox
                 {
-                    ClassName = "dent" // ✅ 항상 기본값
+                    ClassName = _defaultClassName
                 };
             }
 
@@ -202,6 +203,7 @@ namespace CoilTrainingUI.Managers
             var bbox = _bboxMap[_selectedRect];
             RemoveRect(_selectedRect);
             _selectedRect = null;
+            SelectedBBox = null;
 
             return bbox;
         }
@@ -228,9 +230,7 @@ namespace CoilTrainingUI.Managers
                 return;
 
             var bbox = _bboxMap[_selectedRect];
-            _selectedRect.Stroke = bbox.ClassName == "dent"
-                ? Brushes.Red
-                : Brushes.Blue;
+            _selectedRect.Stroke = GetStrokeBrush(bbox.ClassName);
         }
 
         private void RemoveRect(Rectangle rect)
@@ -250,22 +250,28 @@ namespace CoilTrainingUI.Managers
                 _canvas.Children.Clear();
                 _bboxMap.Clear();
                 _selectedRect = null;
+                SelectedBBox = null;
             }
         }
 
         public BoundingBox? SelectedBBox { get; private set; }
+
+        public string DefaultClassName
+        {
+            get => _defaultClassName;
+            set => _defaultClassName = NormalizeClassName(value);
+        }
 
         public void SetSelectedClass(string className)
         {
             if (_selectedRect == null)
                 return;
 
+            string normalizedClassName = NormalizeClassName(className);
             var bbox = _bboxMap[_selectedRect];
-            bbox.ClassName = className;
+            bbox.ClassName = normalizedClassName;
 
-            _selectedRect.Stroke = className == "dent"
-                ? Brushes.Red
-                : Brushes.Blue;
+            _selectedRect.Stroke = GetStrokeBrush(normalizedClassName);
 
             SelectedBBox = bbox;
         }
@@ -279,7 +285,7 @@ namespace CoilTrainingUI.Managers
                 Width = bbox.Width * imgW,
                 Height = bbox.Height * imgH,
                 StrokeThickness = 2,
-                Stroke = bbox.ClassName == "dent" ? Brushes.Red : Brushes.Blue,
+                Stroke = GetStrokeBrush(bbox.ClassName),
                 Fill = Brushes.Transparent
             };
 
@@ -312,6 +318,19 @@ namespace CoilTrainingUI.Managers
             _selectedRect.Stroke = Brushes.LimeGreen;
 
             SelectedBBox = last.Value;
+        }
+
+        private static string NormalizeClassName(string? className)
+        {
+            string normalized = (className ?? "").Trim().ToLowerInvariant();
+            return normalized == "loose" ? "loose" : "dent";
+        }
+
+        private static Brush GetStrokeBrush(string? className)
+        {
+            return NormalizeClassName(className) == "dent"
+                ? Brushes.Red
+                : Brushes.Blue;
         }
 
 

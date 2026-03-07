@@ -12,7 +12,7 @@ public class InferenceBatchImportService
 {
     private static readonly string DefaultInboxFolder = "training_inbox";
 
-    public InferenceBatchImportResult Import(string sourceBatchFolder, string projectRoot)
+    public InferenceBatchImportResult Import(string sourceBatchFolder, string projectRoot, string? inboxRoot = null)
     {
         if (string.IsNullOrWhiteSpace(sourceBatchFolder))
             throw new ArgumentException("sourceBatchFolder is empty.", nameof(sourceBatchFolder));
@@ -28,10 +28,10 @@ public class InferenceBatchImportService
         if (string.IsNullOrWhiteSpace(batchId))
             throw new InvalidOperationException("batchId is empty.");
 
-        var inboxRoot = IOPath.Combine(projectRoot, DefaultInboxFolder);
-        Directory.CreateDirectory(inboxRoot);
+        var resolvedInboxRoot = ResolveInboxRoot(projectRoot, inboxRoot);
+        Directory.CreateDirectory(resolvedInboxRoot);
 
-        var destinationFolder = GetUniqueImportFolder(inboxRoot, batchId);
+        var destinationFolder = GetUniqueImportFolder(resolvedInboxRoot, batchId);
         CopyDirectoryRecursively(sourceBatchFolder, destinationFolder);
 
         var validation = ValidateImportedBatch(destinationFolder);
@@ -46,6 +46,14 @@ public class InferenceBatchImportService
             ItemCount = validation.TotalItemCount,
             BatchId = batchId
         };
+    }
+
+    private static string ResolveInboxRoot(string projectRoot, string? inboxRoot)
+    {
+        if (!string.IsNullOrWhiteSpace(inboxRoot))
+            return IOPath.GetFullPath(inboxRoot);
+
+        return IOPath.Combine(projectRoot, DefaultInboxFolder);
     }
 
     private static string GetUniqueImportFolder(string inboxRoot, string batchId)

@@ -93,7 +93,6 @@ namespace CoilTrainingUI
                 StatusConfirmedDefectCheckBox.IsChecked = false;
                 StatusAiNormalCheckBox.IsChecked = false;
                 StatusAiDefectCheckBox.IsChecked = false;
-                StatusUnclassifiedCheckBox.IsChecked = false;
 
                 DefectTypeNormalCheckBox.IsChecked = false;
                 DefectTypeDentCheckBox.IsChecked = false;
@@ -808,6 +807,8 @@ namespace CoilTrainingUI
             _currentImagePath = null;
             MainImage.Source = null;
             _bboxManager.ClearAll();
+            ClassComboBox.IsEnabled = false;
+            SetClassComboBoxSelection(_activeDrawClass);
             UpdatePredictionFeatureUiState();
         }
 
