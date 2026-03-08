@@ -1,13 +1,12 @@
 ﻿using System;
 using System.IO;
+using System.Threading;
 
 namespace CoilInspectionApp.Watcher
 {
     public class DirectoryWatcher
     {
         private FileSystemWatcher _watcher;
-
-        // 파일이 생성되었을 때 외부(Form1)로 알려주기 위한 이벤트
         public event Action<string> OnFileCreated;
 
         public void StartWatch(string path)
@@ -19,18 +18,39 @@ namespace CoilInspectionApp.Watcher
 
             _watcher = new FileSystemWatcher();
             _watcher.Path = path;
+            _watcher.Filter = "*.*"; // JPG, PNG 모두 감시 가능하도록 확장 
 
-            // 어떤 파일을 감시할지 설정 (이미지 파일만)
-            _watcher.Filter = "*.jpg";
-
-            // 파일 생성 이벤트 연결
             _watcher.Created += (s, e) => {
-                // 이벤트 발생 시 등록된 함수(OnFileCreated)를 실행
-                OnFileCreated?.Invoke(e.FullPath);
+                // [안정성 보완] 파일 쓰기가 완료될 때까지 최대 3초간 대기 (요구사항 8)
+                if (WaitForFile(e.FullPath))
+                {
+                    OnFileCreated?.Invoke(e.FullPath);
+                }
             };
 
-            // 감시 시작
             _watcher.EnableRaisingEvents = true;
+        }
+
+        // 파일 접근이 가능할 때까지 기다리는 함수
+        private bool WaitForFile(string filePath)
+        {
+            int attempts = 0;
+            while (attempts < 10) // 0.3초씩 10번, 총 3초 시도
+            {
+                try
+                {
+                    using (FileStream fs = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+                    {
+                        return true; // 파일 열기 성공
+                    }
+                }
+                catch (IOException)
+                {
+                    attempts++;
+                    Thread.Sleep(300); // 0.3초 대기
+                }
+            }
+            return false;
         }
     }
 }
