@@ -35,7 +35,7 @@ namespace CoilTrainingUI
                 string batchToLoad;
                 if (IsPathUnderRoot(selectedBatchFolder, inboxRoot))
                 {
-                    var validation = ValidateBatchFolder(selectedBatchFolder);
+                    var validation = BatchFolderValidationService.Validate(selectedBatchFolder);
                     if (!validation.IsValid)
                     {
                         MessageBox.Show(
@@ -51,7 +51,7 @@ namespace CoilTrainingUI
                 }
                 else
                 {
-                    var validation = ValidateBatchFolder(selectedBatchFolder);
+                    var validation = BatchFolderValidationService.Validate(selectedBatchFolder);
                     if (!validation.IsValid)
                     {
                         MessageBox.Show(
@@ -426,7 +426,7 @@ namespace CoilTrainingUI
                 foreach (var candidateFolder in Directory.GetDirectories(inboxRoot)
                              .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 {
-                    var validation = ValidateBatchFolder(candidateFolder);
+                    var validation = BatchFolderValidationService.Validate(candidateFolder);
                     if (!validation.IsValid)
                     {
                         skipped.Add($"{IOPath.GetFileName(candidateFolder)}: {GetFirstLine(validation.Message)}");
@@ -437,7 +437,7 @@ namespace CoilTrainingUI
                     {
                         string manifestPath = IOPath.Combine(candidateFolder, "meta", "manifest.json");
                         var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
-                        bool requiresInfer = DetermineBatchRequiresInfer(candidateFolder, manifest);
+                        bool requiresInfer = InferenceBatchPathResolver.DetermineBatchRequiresInfer(candidateFolder, manifest);
                         AppendImagesFromBatch(candidateFolder, manifest, loadedImagePaths, requiresInfer);
                     }
                     catch (Exception ex)
@@ -460,6 +460,7 @@ namespace CoilTrainingUI
                 );
             }
 
+            RefreshBatchFilterOptions();
             ApplyImageFilters();
             RefreshSummaryCounts();
             UpdateDataSourceUiState();
@@ -510,6 +511,10 @@ namespace CoilTrainingUI
             HashSet<string> loadedImagePaths,
             bool requiresInfer)
         {
+            string batchName = !string.IsNullOrWhiteSpace(manifest.BatchId)
+                ? manifest.BatchId.Trim()
+                : IOPath.GetFileName(batchFolder.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar));
+
             foreach (var item in manifest.Items)
             {
                 string imagePath;
@@ -527,9 +532,9 @@ namespace CoilTrainingUI
                 if (!loadedImagePaths.Add(imagePath))
                     continue;
 
-                string? rawImagePath = ResolveBatchRawImagePath(batchFolder, item);
-                string inferJsonPath = ResolveBatchInferJsonPath(batchFolder, item);
-                var aiMeta = EvaluateInferMetaFromInfer(inferJsonPath);
+                string? rawImagePath = InferenceBatchPathResolver.ResolveBatchRawImagePath(batchFolder, item);
+                string inferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batchFolder, item);
+                var aiMeta = InferMetaEvaluator.Evaluate(inferJsonPath);
 
                 bool hadStateFile = _stateService.HasState(imagePath);
                 var state = _stateService.Load(imagePath);
@@ -551,6 +556,7 @@ namespace CoilTrainingUI
                 _images.Add(new ImageItem
                 {
                     FileName = IOPath.GetFileName(imagePath),
+                    BatchName = batchName,
                     ProcessedPath = imagePath,
                     RawPath = rawImagePath,
                     RequiresInfer = requiresInfer,

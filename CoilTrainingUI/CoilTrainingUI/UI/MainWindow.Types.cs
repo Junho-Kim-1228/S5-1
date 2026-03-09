@@ -9,15 +9,6 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
-        private sealed class InferenceBatchValidationResult
-        {
-            public bool IsValid { get; set; }
-            public string Message { get; set; } = "";
-
-            public static InferenceBatchValidationResult Fail(string message)
-                => new() { IsValid = false, Message = message };
-        }
-
         private sealed class CreatedBatchInfo
         {
             public string BatchPath { get; set; } = "";
