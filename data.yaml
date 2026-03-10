@@ -1,0 +1,9 @@
+# 파일 경로 (AWS 현재 경로 기준)
+path: /home/ec2-user/coil-ai/datasets
+train: normal      # 학습용 (정상 데이터 활용)
+val: normal        # 검증용 (일단 동일하게 지정)
+test: abnormal_dent # 테스트용
+
+# 클래스 정보 (강의자료 분류 체계 반영)
+nc: 2
+names: ['normal', 'abnormal']
