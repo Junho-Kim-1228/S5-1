@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -39,6 +40,7 @@ namespace CoilTrainingUI.Services
     {
         public static AppSettings LoadOrThrow(string projectRoot)
         {
+            string appBaseDir = AppDomain.CurrentDomain.BaseDirectory;
             string basePath = Path.Combine(projectRoot, "config", "appsettings.json");
             if (!File.Exists(basePath))
                 throw new FileNotFoundException($"Missing appsettings.json: {basePath}");
@@ -62,10 +64,77 @@ namespace CoilTrainingUI.Services
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(baseSettings.PythonExe))
-                throw new InvalidOperationException("PythonExe is empty. Set it in config/appsettings.local.json");
+            string? resolvedPythonExe = ResolvePythonExePath(baseSettings.PythonExe, projectRoot, appBaseDir);
+            if (string.IsNullOrWhiteSpace(resolvedPythonExe))
+            {
+                throw new InvalidOperationException(
+                    "Python 실행 파일을 찾을 수 없습니다. " +
+                    "config/appsettings.local.json의 PythonExe를 설정하거나, " +
+                    "앱 폴더 아래 python_env 폴더를 함께 배포하세요.");
+            }
+
+            baseSettings.PythonExe = resolvedPythonExe;
 
             return baseSettings;
+        }
+
+        private static string? ResolvePythonExePath(string configuredPythonExe, string projectRoot, string appBaseDir)
+        {
+            if (!string.IsNullOrWhiteSpace(configuredPythonExe))
+            {
+                string trimmed = configuredPythonExe.Trim();
+                if (Path.IsPathRooted(trimmed))
+                    return File.Exists(trimmed) ? trimmed : null;
+
+                foreach (string baseDir in GetCandidateBaseDirs(projectRoot, appBaseDir))
+                {
+                    string candidate = Path.GetFullPath(Path.Combine(baseDir, trimmed));
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+
+                return null;
+            }
+
+            foreach (string candidate in GetBundledPythonCandidates(projectRoot, appBaseDir))
+            {
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<string> GetCandidateBaseDirs(string projectRoot, string appBaseDir)
+        {
+            yield return appBaseDir;
+
+            if (!string.IsNullOrWhiteSpace(projectRoot) &&
+                !string.Equals(projectRoot, appBaseDir, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return projectRoot;
+            }
+        }
+
+        private static IEnumerable<string> GetBundledPythonCandidates(string projectRoot, string appBaseDir)
+        {
+            string[] relativeCandidates =
+            {
+                @"python_env\Scripts\python.exe",
+                @"python_env\python.exe",
+                @"python\python.exe",
+                @".venv\Scripts\python.exe",
+                @"venv\Scripts\python.exe",
+                "python_env/bin/python",
+                ".venv/bin/python",
+                "venv/bin/python"
+            };
+
+            foreach (string baseDir in GetCandidateBaseDirs(projectRoot, appBaseDir))
+            {
+                foreach (string relativePath in relativeCandidates)
+                    yield return Path.GetFullPath(Path.Combine(baseDir, relativePath));
+            }
         }
 
     }
