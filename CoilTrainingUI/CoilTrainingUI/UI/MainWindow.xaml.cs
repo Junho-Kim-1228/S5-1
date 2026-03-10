@@ -25,6 +25,8 @@ namespace CoilTrainingUI
         private YoloLabelService _yoloService;
         private BoundingBoxManager _bboxManager;
         private readonly InferenceBatchImportService _inferenceBatchImportService = new();
+        private readonly BatchLibraryService _batchLibraryService = new();
+        private readonly BatchMergeService _batchMergeService = new();
         private CanvasInteractionManager _canvasInteractionManager;
         private ImageStateManager _imageStateManager;
         private AnomalyStateService _anomalyService;

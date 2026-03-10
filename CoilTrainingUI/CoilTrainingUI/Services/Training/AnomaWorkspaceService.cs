@@ -93,7 +93,19 @@ namespace CoilTrainingUI.Services
         private void CopyImage(string originalImagePath, string dstDir)
         {
             string dst = Path.Combine(dstDir, Path.GetFileName(originalImagePath));
-            File.Copy(originalImagePath, dst, overwrite: true);
+            try
+            {
+                File.Copy(originalImagePath, dst, overwrite: true);
+            }
+            catch (IOException ex)
+            {
+                throw new InvalidOperationException(
+                    "Anoma workspace 이미지 복사 실패\n" +
+                    $"원본: {originalImagePath}\n" +
+                    $"대상: {dst}\n" +
+                    "디스크 여유 공간 또는 파일 접근 상태를 확인하세요.",
+                    ex);
+            }
         }
     }
 

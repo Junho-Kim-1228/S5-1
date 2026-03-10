@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 
 namespace CoilTrainingUI.Services
 {
@@ -15,7 +16,8 @@ namespace CoilTrainingUI.Services
             string args,
             string workingDir,
             string logPath,
-            CancellationToken ct
+            CancellationToken ct,
+            Action<string>? onOutputLine = null
         )
         {
             Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
@@ -39,6 +41,7 @@ namespace CoilTrainingUI.Services
                 var msg = $"[{DateTime.Now:HH:mm:ss}] {line}";
                 sb.AppendLine(msg);
                 File.AppendAllText(logPath, msg + Environment.NewLine, Encoding.UTF8);
+                onOutputLine?.Invoke(line);
             }
 
             proc.OutputDataReceived += (s, e) => { if (e.Data != null) Append(e.Data); };

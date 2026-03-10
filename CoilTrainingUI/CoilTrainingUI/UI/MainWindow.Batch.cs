@@ -423,26 +423,20 @@ namespace CoilTrainingUI
                 _images.Clear();
                 _inferJsonByImagePath.Clear();
 
-                foreach (var candidateFolder in Directory.GetDirectories(inboxRoot)
-                             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
-                {
-                    var validation = BatchFolderValidationService.Validate(candidateFolder);
-                    if (!validation.IsValid)
-                    {
-                        skipped.Add($"{IOPath.GetFileName(candidateFolder)}: {GetFirstLine(validation.Message)}");
-                        continue;
-                    }
+                var scanResult = _batchLibraryService.Scan(inboxRoot, includeHidden: false);
+                skipped.AddRange(scanResult.Skipped);
 
+                foreach (var batch in scanResult.Batches)
+                {
                     try
                     {
-                        string manifestPath = IOPath.Combine(candidateFolder, "meta", "manifest.json");
+                        string manifestPath = IOPath.Combine(batch.BatchRoot, "meta", "manifest.json");
                         var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
-                        bool requiresInfer = InferenceBatchPathResolver.DetermineBatchRequiresInfer(candidateFolder, manifest);
-                        AppendImagesFromBatch(candidateFolder, manifest, loadedImagePaths, requiresInfer);
+                        AppendImagesFromBatch(batch.BatchRoot, manifest, loadedImagePaths);
                     }
                     catch (Exception ex)
                     {
-                        skipped.Add($"{IOPath.GetFileName(candidateFolder)}: manifest 로드 실패 ({ex.Message})");
+                        skipped.Add($"{batch.BatchId}: manifest 로드 실패 ({ex.Message})");
                     }
                 }
             }
@@ -508,8 +502,7 @@ namespace CoilTrainingUI
         private void AppendImagesFromBatch(
             string batchFolder,
             ManifestDto manifest,
-            HashSet<string> loadedImagePaths,
-            bool requiresInfer)
+            HashSet<string> loadedImagePaths)
         {
             string batchName = !string.IsNullOrWhiteSpace(manifest.BatchId)
                 ? manifest.BatchId.Trim()
@@ -520,7 +513,7 @@ namespace CoilTrainingUI
                 string imagePath;
                 try
                 {
-                    imagePath = ResolveBatchImagePath(batchFolder, item);
+                    imagePath = InferenceBatchPathResolver.ResolveBatchProcessedImagePath(batchFolder, item);
                 }
                 catch (Exception ex)
                 {
@@ -534,6 +527,7 @@ namespace CoilTrainingUI
 
                 string? rawImagePath = InferenceBatchPathResolver.ResolveBatchRawImagePath(batchFolder, item);
                 string inferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batchFolder, item);
+                bool itemRequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batchFolder, manifest, item);
                 var aiMeta = InferMetaEvaluator.Evaluate(inferJsonPath);
 
                 bool hadStateFile = _stateService.HasState(imagePath);
@@ -549,7 +543,7 @@ namespace CoilTrainingUI
                     ? state.IsNormal.Value
                     : true;
                 var gtCounts = CountDefectClasses(state.Labels.Select(l => l.ClassName));
-                string reviewStatus = DetermineReviewStatus(state, aiMeta, requiresInfer);
+                string reviewStatus = DetermineReviewStatus(state, aiMeta, itemRequiresInfer);
 
                 _imageStateManager.EnsureImage(imagePath);
 
@@ -559,7 +553,7 @@ namespace CoilTrainingUI
                     BatchName = batchName,
                     ProcessedPath = imagePath,
                     RawPath = rawImagePath,
-                    RequiresInfer = requiresInfer,
+                    RequiresInfer = itemRequiresInfer,
                     HasInferFile = aiMeta.HasInferFile,
                     InferParseFailed = aiMeta.InferParseFailed,
                     HasStateFile = _stateService.HasState(imagePath),
@@ -582,6 +576,8 @@ namespace CoilTrainingUI
                 });
 
                 _inferJsonByImagePath[imagePath] = inferJsonPath;
+                if (itemRequiresInfer)
+                    _currentBatchRequiresInfer = true;
                 if (aiMeta.HasInferFile)
                     _currentBatchHasAnyInfer = true;
             }
@@ -601,15 +597,6 @@ namespace CoilTrainingUI
             {
                 return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
             }
-        }
-
-        private static string GetFirstLine(string message)
-        {
-            if (string.IsNullOrWhiteSpace(message))
-                return "(no details)";
-
-            var lines = message.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            return lines.Length > 0 ? lines[0] : message;
         }
 
         private static string DetermineReviewStatus(ImageStateDto state, InferMetaSummary aiMeta, bool requiresInfer)

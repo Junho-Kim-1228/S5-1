@@ -120,7 +120,19 @@ namespace CoilTrainingUI.Services
         private string CopyImageForWorkspace(string originalImagePath, string dstImagesDir)
         {
             string dst = Path.Combine(dstImagesDir, Path.GetFileName(originalImagePath));
-            File.Copy(originalImagePath, dst, overwrite: true);
+            try
+            {
+                File.Copy(originalImagePath, dst, overwrite: true);
+            }
+            catch (IOException ex)
+            {
+                throw new InvalidOperationException(
+                    "YOLO workspace 이미지 복사 실패\n" +
+                    $"원본: {originalImagePath}\n" +
+                    $"대상: {dst}\n" +
+                    "디스크 여유 공간 또는 파일 접근 상태를 확인하세요.",
+                    ex);
+            }
             return dst;
         }
 

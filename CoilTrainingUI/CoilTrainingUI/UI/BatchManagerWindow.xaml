@@ -1,0 +1,103 @@
+<Window x:Class="CoilTrainingUI.BatchManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Batch Management"
+        Width="980"
+        Height="620"
+        MinWidth="840"
+        MinHeight="520"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+            <TextBlock Text="training_inbox 배치를 선택해서 학습/병합/숨김 처리합니다."
+                       FontWeight="SemiBold"
+                       FontSize="14"/>
+            <TextBlock x:Name="SummaryTextBlock"
+                       Margin="0,4,0,0"
+                       Foreground="#606060"
+                       Text="배치 목록 로딩 중..."/>
+        </StackPanel>
+
+        <DataGrid x:Name="BatchGrid"
+                  Grid.Row="1"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  HeadersVisibility="Column"
+                  IsReadOnly="False"
+                  SelectionMode="Extended"
+                  SelectionUnit="FullRow">
+            <DataGrid.Columns>
+                <DataGridCheckBoxColumn Header="선택"
+                                        Width="60"
+                                        Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                <DataGridTextColumn Header="배치명"
+                                    Width="260"
+                                    IsReadOnly="True"
+                                    Binding="{Binding BatchId}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="FontSize" Value="11"/>
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="이미지 수"
+                                    Width="90"
+                                    IsReadOnly="True"
+                                    Binding="{Binding ItemCount}"/>
+                <DataGridTextColumn Header="생성일"
+                                    Width="170"
+                                    IsReadOnly="True"
+                                    Binding="{Binding CreatedAtText}"/>
+                <DataGridTemplateColumn Header="숨김"
+                                        Width="60">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      IsChecked="{Binding IsHidden, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Click="HiddenCheckBox_Click"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="상태"
+                                    Width="220"
+                                    IsReadOnly="True"
+                                    Binding="{Binding HiddenReasonText}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <WrapPanel Grid.Row="2"
+                   Margin="0,10,0,0"
+                   ItemHeight="34"
+                   ItemWidth="160">
+            <Button Content="선택 해제"
+                    Margin="0,0,8,8"
+                    Click="ClearSelection_Click"/>
+            <Button Content="선택 배치 학습"
+                    Margin="0,0,8,8"
+                    Click="TrainSelected_Click"/>
+            <Button Content="병합 배치 생성"
+                    Margin="0,0,8,8"
+                    Click="MergeSelected_Click"/>
+            <Button Content="선택 숨김"
+                    Margin="0,0,8,8"
+                    Click="HideSelected_Click"/>
+        </WrapPanel>
+    </Grid>
+</Window>
