@@ -38,8 +38,6 @@ namespace CoilTrainingUI
         private const string PredictionOverlayTag = "__prediction_overlay";
         private const string AllBatchFilterLabel = "(전체 배치)";
         private string? _currentBatchRoot;
-        private string _currentBatchType = "";
-        private bool _currentBatchRequiresInfer;
         private bool _currentBatchHasAnyInfer;
 
         private DispatcherTimer _labelSaveDebounceTimer;
@@ -47,14 +45,14 @@ namespace CoilTrainingUI
         private const int LabelSaveDebounceMs = 300;
 
         // 항상 원본은 유지
-        private BitmapSource _rawBitmap;
+        private BitmapSource? _rawBitmap;
         private BitmapSource? _rawViewBitmap;
         private string? _rawViewBitmapPath;
         private bool _suppressRawToggleEvent;
         private int _imageListWheelDeltaAccumulator;
         private const int ImageListWheelDeltaStep = 240;
 
-        private string _currentImagePath;
+        private string? _currentImagePath;
         private string _activeDrawClass = "dent";
         private bool _suppressClassComboBoxChange;
 
@@ -133,8 +131,12 @@ namespace CoilTrainingUI
             if (bbox == null)
                 return;
 
+            string? currentImagePath = _currentImagePath;
+            if (string.IsNullOrEmpty(currentImagePath))
+                return;
+
             // 1️⃣ 상태 저장
-            _imageStateManager.AddLabel(_currentImagePath, bbox);
+            _imageStateManager.AddLabel(currentImagePath, bbox);
 
             // 2️⃣ 🔥 방금 만든 박스를 자동 선택 상태로 만들기
             _bboxManager.SelectLastCreated();
@@ -143,11 +145,11 @@ namespace CoilTrainingUI
             ClassComboBox.IsEnabled = true;
             SetClassComboBoxSelection(bbox.ClassName);
             
-            RequestSaveLabelsDebounced(_currentImagePath);
+            RequestSaveLabelsDebounced(currentImagePath);
 
 
-            SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
-            SyncGtSummaryForImage(_currentImagePath);
+            SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
+            SyncGtSummaryForImage(currentImagePath);
             RefreshSummaryCounts();
         }
 
@@ -190,10 +192,11 @@ namespace CoilTrainingUI
                 return;
 
             // ✅ 드래그가 실제로 발생한 경우에만 state.json 저장
-            if (!string.IsNullOrEmpty(_currentImagePath))
+            string? currentImagePath = _currentImagePath;
+            if (!string.IsNullOrEmpty(currentImagePath))
             {
-                SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
-                RequestSaveLabelsDebounced(_currentImagePath);
+                SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
+                RequestSaveLabelsDebounced(currentImagePath);
             }
         }
 
@@ -242,20 +245,22 @@ namespace CoilTrainingUI
             if (string.IsNullOrEmpty(_currentImagePath))
                 return;
 
+            string currentImagePath = _currentImagePath;
+
             var removedBBox = _bboxManager.DeleteSelected();
             if (removedBBox == null)
                 return;
 
             // 1️⃣ 메모리 상태에서 제거
-            _imageStateManager.RemoveLabel(_currentImagePath, removedBBox);
+            _imageStateManager.RemoveLabel(currentImagePath, removedBBox);
 
             // 2️⃣ UI 모델 상태 갱신
-            SyncGtSummaryForImage(_currentImagePath);
+            SyncGtSummaryForImage(currentImagePath);
 
             // ✅ 삭제 반영 저장
-            SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
+            SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
 
-            RequestSaveLabelsDebounced(_currentImagePath);
+            RequestSaveLabelsDebounced(currentImagePath);
             RefreshSummaryCounts();
 
         }
@@ -277,15 +282,17 @@ namespace CoilTrainingUI
             if (_bboxManager.SelectedBBox == null)
                 return;
 
+            string currentImagePath = _currentImagePath;
+
             _bboxManager.SetSelectedClass(className);
 
             // ✅ 상태는 ImageStateManager 기준으로 갱신
-            SyncGtSummaryForImage(_currentImagePath);
+            SyncGtSummaryForImage(currentImagePath);
 
-            RequestSaveLabelsDebounced(_currentImagePath);
+            RequestSaveLabelsDebounced(currentImagePath);
 
             // ✅ 클래스 변경 반영 저장
-            SaveLabelsToStateJson(_currentImagePath, markManualYoloDecision: true);
+            SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
 
         }
 

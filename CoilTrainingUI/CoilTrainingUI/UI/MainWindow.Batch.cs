@@ -405,8 +405,6 @@ namespace CoilTrainingUI
         private void RefreshAllImagesFromTrainingInbox(string? preferredImagePath, string? preferredBatchRoot)
         {
             _currentBatchRoot = null;
-            _currentBatchType = "library";
-            _currentBatchRequiresInfer = false;
             _currentBatchHasAnyInfer = false;
             UpdateDataSourceUiState();
 
@@ -576,8 +574,6 @@ namespace CoilTrainingUI
                 });
 
                 _inferJsonByImagePath[imagePath] = inferJsonPath;
-                if (itemRequiresInfer)
-                    _currentBatchRequiresInfer = true;
                 if (aiMeta.HasInferFile)
                     _currentBatchHasAnyInfer = true;
             }
