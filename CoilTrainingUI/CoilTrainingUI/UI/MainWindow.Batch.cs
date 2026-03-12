@@ -21,19 +21,21 @@ namespace CoilTrainingUI
         private void ImportBatch_Click(object sender, RoutedEventArgs e)
         {
             string projectRoot = FindProjectRoot("capstone_design");
-            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
-            Directory.CreateDirectory(inboxRoot);
+            string inboxRoot = GetTrainingInboxRoot();
 
-            var selectedBatchFolder = TrySelectFolder("Import batch folder", inboxRoot);
+            string initialPath = GetInitialImportBatchFolder(inboxRoot, projectRoot);
+            var selectedBatchFolder = TrySelectFolder("Import batch folder", initialPath);
             if (string.IsNullOrWhiteSpace(selectedBatchFolder))
                 return;
+
+            RememberImportBatchFolder(selectedBatchFolder);
 
             try
             {
                 string batchToLoad;
                 if (IsPathUnderRoot(selectedBatchFolder, inboxRoot))
                 {
-                    var validation = ValidateBatchFolder(selectedBatchFolder);
+                    var validation = BatchFolderValidationService.Validate(selectedBatchFolder);
                     if (!validation.IsValid)
                     {
                         MessageBox.Show(
@@ -49,7 +51,7 @@ namespace CoilTrainingUI
                 }
                 else
                 {
-                    var validation = ValidateBatchFolder(selectedBatchFolder);
+                    var validation = BatchFolderValidationService.Validate(selectedBatchFolder);
                     if (!validation.IsValid)
                     {
                         MessageBox.Show(
@@ -61,7 +63,10 @@ namespace CoilTrainingUI
                         return;
                     }
 
-                    var imported = _inferenceBatchImportService.Import(selectedBatchFolder, projectRoot);
+                    var imported = _inferenceBatchImportService.Import(
+                        selectedBatchFolder,
+                        projectRoot,
+                        inboxRoot);
                     batchToLoad = imported.ImportedPath;
                 }
 
@@ -91,21 +96,23 @@ namespace CoilTrainingUI
         private void CreateBatchFromFolder_Click(object sender, RoutedEventArgs e)
         {
             string projectRoot = FindProjectRoot("capstone_design");
-            string inboxRoot = IOPath.Combine(projectRoot, "training_inbox");
-            Directory.CreateDirectory(inboxRoot);
+            string inboxRoot = GetTrainingInboxRoot();
             string? previousImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
 
-            string initialPath = Directory.Exists(_defaultInputFolder)
-                ? _defaultInputFolder
-                : projectRoot;
+            string initialPath = GetInitialProcessedFolder(inboxRoot, projectRoot);
 
             var srcFolder = TrySelectFolder("Select processed image folder (*.bmp)", initialPath);
             if (string.IsNullOrWhiteSpace(srcFolder))
                 return;
 
-            var rawFolder = TrySelectFolder("Select RAW image folder (*.bmp)", srcFolder);
+            RememberProcessedFolder(srcFolder);
+
+            string rawInitialPath = GetInitialRawFolder(srcFolder, inboxRoot, projectRoot);
+            var rawFolder = TrySelectFolder("Select RAW image folder (*.bmp)", rawInitialPath);
             if (string.IsNullOrWhiteSpace(rawFolder))
                 return;
+
+            RememberRawFolder(rawFolder);
 
             try
             {
@@ -419,7 +426,7 @@ namespace CoilTrainingUI
                 foreach (var candidateFolder in Directory.GetDirectories(inboxRoot)
                              .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 {
-                    var validation = ValidateBatchFolder(candidateFolder);
+                    var validation = BatchFolderValidationService.Validate(candidateFolder);
                     if (!validation.IsValid)
                     {
                         skipped.Add($"{IOPath.GetFileName(candidateFolder)}: {GetFirstLine(validation.Message)}");
@@ -430,7 +437,7 @@ namespace CoilTrainingUI
                     {
                         string manifestPath = IOPath.Combine(candidateFolder, "meta", "manifest.json");
                         var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
-                        bool requiresInfer = DetermineBatchRequiresInfer(candidateFolder, manifest);
+                        bool requiresInfer = InferenceBatchPathResolver.DetermineBatchRequiresInfer(candidateFolder, manifest);
                         AppendImagesFromBatch(candidateFolder, manifest, loadedImagePaths, requiresInfer);
                     }
                     catch (Exception ex)
@@ -448,11 +455,12 @@ namespace CoilTrainingUI
             {
                 var preview = string.Join(", ", skipped.Take(5));
                 Trace.WriteLine(
-                    $"training_inbox scan skipped {skipped.Count} folders. " +
+                    $"batch library scan skipped {skipped.Count} folders. " +
                     (string.IsNullOrWhiteSpace(preview) ? "" : $"Sample: {preview}")
                 );
             }
 
+            RefreshBatchFilterOptions();
             ApplyImageFilters();
             RefreshSummaryCounts();
             UpdateDataSourceUiState();
@@ -503,6 +511,10 @@ namespace CoilTrainingUI
             HashSet<string> loadedImagePaths,
             bool requiresInfer)
         {
+            string batchName = !string.IsNullOrWhiteSpace(manifest.BatchId)
+                ? manifest.BatchId.Trim()
+                : IOPath.GetFileName(batchFolder.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar));
+
             foreach (var item in manifest.Items)
             {
                 string imagePath;
@@ -520,9 +532,9 @@ namespace CoilTrainingUI
                 if (!loadedImagePaths.Add(imagePath))
                     continue;
 
-                string? rawImagePath = ResolveBatchRawImagePath(batchFolder, item);
-                string inferJsonPath = ResolveBatchInferJsonPath(batchFolder, item);
-                var aiMeta = EvaluateInferMetaFromInfer(inferJsonPath);
+                string? rawImagePath = InferenceBatchPathResolver.ResolveBatchRawImagePath(batchFolder, item);
+                string inferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batchFolder, item);
+                var aiMeta = InferMetaEvaluator.Evaluate(inferJsonPath);
 
                 bool hadStateFile = _stateService.HasState(imagePath);
                 var state = _stateService.Load(imagePath);
@@ -544,6 +556,7 @@ namespace CoilTrainingUI
                 _images.Add(new ImageItem
                 {
                     FileName = IOPath.GetFileName(imagePath),
+                    BatchName = batchName,
                     ProcessedPath = imagePath,
                     RawPath = rawImagePath,
                     RequiresInfer = requiresInfer,

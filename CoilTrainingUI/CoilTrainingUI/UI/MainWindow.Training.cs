@@ -505,19 +505,5 @@ namespace CoilTrainingUI
             }
         }
 
-        private void RefreshSummaryCounts()
-        {
-            int total = _images.Count;
-            int visible = _imageCollectionView?.Cast<object>().OfType<ImageItem>().Count() ?? total;
-
-            int defect = _images.Count(i => i.HasLabel || !i.IsNormal);
-            int normal = total - defect;
-
-            TotalCountText.Text = $"총 {total}개";
-            VisibleCountText.Text = $"필터 후 {visible}개";
-            NormalCountText.Text = $"정상 {normal}개";
-            DefectCountText.Text = $"불량 {defect}개 (YOLO 또는 Anoma)";
-        }
-
     }
 }

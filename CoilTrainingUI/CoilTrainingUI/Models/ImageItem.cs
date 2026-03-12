@@ -7,6 +7,7 @@ namespace CoilTrainingUI.Models
     public class ImageItem : INotifyPropertyChanged
     {
         private string _fileName = "";
+        private string _batchName = "";
         private string _processedPath = "";
         private string? _rawPath;
         private bool _hasLabel;
@@ -36,6 +37,12 @@ namespace CoilTrainingUI.Models
         {
             get => _fileName;
             set => SetField(ref _fileName, value);
+        }
+
+        public string BatchName
+        {
+            get => _batchName;
+            set => SetField(ref _batchName, value);
         }
 
         public string ProcessedPath
