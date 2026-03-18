@@ -9,10 +9,11 @@ namespace CoilTrainingUI
     {
         private async void BatchManagement_Click(object sender, RoutedEventArgs e)
         {
+            string projectRoot = FindProjectRoot("capstone_design");
             string inboxRoot = GetTrainingInboxRoot();
             string? preferredImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
 
-            var window = new BatchManagerWindow(inboxRoot, _batchMergeService)
+            var window = new BatchManagerWindow(inboxRoot, projectRoot, _batchMergeService)
             {
                 Owner = this
             };

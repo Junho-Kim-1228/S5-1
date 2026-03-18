@@ -87,6 +87,71 @@ public static class BatchRegistryService
         Save(inboxRoot, registry);
     }
 
+    public static void DeleteBatches(string inboxRoot, IEnumerable<string> batchKeys)
+    {
+        var normalizedKeys = DistinctBatchKeys(batchKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (normalizedKeys.Count == 0)
+            return;
+
+        var registry = Load(inboxRoot);
+        bool changed = false;
+
+        foreach (string batchKey in normalizedKeys)
+        {
+            if (registry.Batches.Remove(batchKey))
+                changed = true;
+        }
+
+        foreach (var entry in registry.Batches.Values)
+        {
+            bool entryChanged = false;
+
+            int sourceCountBefore = entry.SourceBatches.Count;
+            entry.SourceBatches = entry.SourceBatches
+                .Where(source => !normalizedKeys.Contains(source))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            entryChanged |= sourceCountBefore != entry.SourceBatches.Count;
+
+            int mergedIntoBefore = entry.MergedInto.Count;
+            entry.MergedInto = entry.MergedInto
+                .Where(target => !normalizedKeys.Contains(target))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            entryChanged |= mergedIntoBefore != entry.MergedInto.Count;
+
+            string normalizedReason = (entry.HiddenReason ?? string.Empty).Trim();
+            if (normalizedReason.StartsWith("merged:", StringComparison.OrdinalIgnoreCase))
+            {
+                string mergedBatchKey = normalizedReason["merged:".Length..].Trim();
+                if (normalizedKeys.Contains(mergedBatchKey))
+                {
+                    if (entry.MergedInto.Count > 0)
+                    {
+                        entry.Hidden = true;
+                        entry.HiddenReason = $"merged:{entry.MergedInto[0]}";
+                    }
+                    else
+                    {
+                        entry.Hidden = false;
+                        entry.HiddenReason = "";
+                    }
+
+                    entryChanged = true;
+                }
+            }
+
+            if (entryChanged)
+            {
+                entry.UpdatedAt = DateTime.UtcNow;
+                changed = true;
+            }
+        }
+
+        if (changed)
+            Save(inboxRoot, registry);
+    }
+
     private static BatchRegistryEntryDto GetOrCreateEntry(BatchLibraryRegistryDto registry, string batchKey)
     {
         if (!registry.Batches.TryGetValue(batchKey, out var entry))

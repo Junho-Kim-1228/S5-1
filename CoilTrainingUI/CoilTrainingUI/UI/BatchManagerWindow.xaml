@@ -15,7 +15,7 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Margin="0,0,0,8">
-            <TextBlock Text="training_inbox 배치를 선택해서 학습/병합/숨김 처리합니다."
+            <TextBlock Text="training_inbox 배치를 선택해서 가져오기/이름 변경/학습/병합/숨김/삭제 처리합니다."
                        FontWeight="SemiBold"
                        FontSize="14"/>
             <TextBlock x:Name="SummaryTextBlock"
@@ -38,7 +38,7 @@
                                         Width="60"
                                         Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                 <DataGridTextColumn Header="배치명"
-                                    Width="260"
+                                    Width="220"
                                     IsReadOnly="True"
                                     Binding="{Binding BatchId}">
                     <DataGridTextColumn.ElementStyle>
@@ -46,11 +46,25 @@
                             <Setter Property="FontSize" Value="11"/>
                             <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
                             <Setter Property="VerticalAlignment" Value="Center"/>
+                            <Setter Property="ToolTip" Value="{Binding BatchId}"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="폴더명"
+                                    Width="180"
+                                    IsReadOnly="True"
+                                    Binding="{Binding BatchKey}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="FontSize" Value="11"/>
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                            <Setter Property="ToolTip" Value="{Binding BatchKey}"/>
                         </Style>
                     </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
                 <DataGridTextColumn Header="이미지 수"
-                                    Width="90"
+                                    Width="80"
                                     IsReadOnly="True"
                                     Binding="{Binding ItemCount}"/>
                 <DataGridTextColumn Header="생성일"
@@ -86,6 +100,12 @@
                    Margin="0,10,0,0"
                    ItemHeight="34"
                    ItemWidth="160">
+            <Button Content="배치 불러오기..."
+                    Margin="0,0,8,8"
+                    Click="ImportBatch_Click"/>
+            <Button Content="배치명 변경"
+                    Margin="0,0,8,8"
+                    Click="RenameSelected_Click"/>
             <Button Content="선택 해제"
                     Margin="0,0,8,8"
                     Click="ClearSelection_Click"/>
@@ -98,6 +118,9 @@
             <Button Content="선택 숨김"
                     Margin="0,0,8,8"
                     Click="HideSelected_Click"/>
+            <Button Content="선택 삭제"
+                    Margin="0,0,8,8"
+                    Click="DeleteSelected_Click"/>
         </WrapPanel>
     </Grid>
 </Window>
