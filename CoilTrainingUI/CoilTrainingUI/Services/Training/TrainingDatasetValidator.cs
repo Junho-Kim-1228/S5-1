@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using CoilTrainingUI.Models;
 
 namespace CoilTrainingUI.Services
 {
@@ -48,12 +49,29 @@ namespace CoilTrainingUI.Services
             bool requiresInfer,
             IReadOnlyDictionary<string, string> inferJsonByImagePath)
         {
+            var inputs = (imagePaths ?? Array.Empty<string>())
+                .Select(imagePath => new TrainingImageInput
+                {
+                    ImagePath = imagePath,
+                    InferJsonPath = inferJsonByImagePath != null &&
+                                    inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath)
+                        ? inferJsonPath
+                        : "",
+                    RequiresInfer = requiresInfer
+                })
+                .ToList();
+
+            return Validate(inputs);
+        }
+
+        public DatasetValidationResult Validate(IReadOnlyList<TrainingImageInput> inputs)
+        {
             var result = new DatasetValidationResult
             {
-                TotalImages = imagePaths?.Count ?? 0
+                TotalImages = inputs?.Count ?? 0
             };
 
-            if (imagePaths == null || imagePaths.Count == 0)
+            if (inputs == null || inputs.Count == 0)
             {
                 result.Errors.Add("검증할 이미지 경로가 없습니다.");
                 return result;
@@ -61,8 +79,9 @@ namespace CoilTrainingUI.Services
 
             var normalCandidates = new List<string>();
 
-            foreach (var imagePath in imagePaths)
+            foreach (var input in inputs)
             {
+                string imagePath = input?.ImagePath ?? "";
                 if (string.IsNullOrWhiteSpace(imagePath))
                 {
                     result.Errors.Add("빈 이미지 경로가 포함되어 있습니다.");
@@ -75,16 +94,15 @@ namespace CoilTrainingUI.Services
                     continue;
                 }
 
-                if (requiresInfer)
+                if (input.RequiresInfer)
                 {
-                    if (!inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath) ||
-                        string.IsNullOrWhiteSpace(inferJsonPath))
+                    if (string.IsNullOrWhiteSpace(input.InferJsonPath))
                     {
                         result.Errors.Add($"infer.json 경로 매핑이 없습니다: {imagePath}");
                     }
-                    else if (!File.Exists(inferJsonPath))
+                    else if (!File.Exists(input.InferJsonPath))
                     {
-                        result.Errors.Add($"infer.json 없음: {inferJsonPath}");
+                        result.Errors.Add($"infer.json 없음: {input.InferJsonPath}");
                     }
                 }
 

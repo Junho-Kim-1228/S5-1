@@ -49,6 +49,10 @@ public static class BatchFolderValidationService
         }
 
         bool requiresInfer = InferenceBatchPathResolver.DetermineBatchRequiresInfer(batchFolder, manifest);
+        bool batchRequiresAllInfer = string.Equals(
+            manifest.BatchType,
+            "inference",
+            StringComparison.OrdinalIgnoreCase);
         var missingFiles = new List<string>();
 
         foreach (var item in manifest.Items)
@@ -70,17 +74,19 @@ public static class BatchFolderValidationService
                     missingFiles.Add(item.RawImage);
             }
 
-            if (requiresInfer)
-            {
-                if (string.IsNullOrWhiteSpace(item.InferJson))
-                {
-                    missingFiles.Add($"[{item.Id}] infer_json가 비어 있음");
-                    continue;
-                }
+            bool itemRequiresInfer = batchRequiresAllInfer ||
+                                     InferenceBatchPathResolver.DetermineItemRequiresInfer(batchFolder, manifest, item);
 
-                string inferPath = InferenceBatchPathResolver.ResolveBatchRelativePath(batchFolder, item.InferJson);
+            if (itemRequiresInfer)
+            {
+                string inferPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batchFolder, item);
                 if (!File.Exists(inferPath))
-                    missingFiles.Add(item.InferJson);
+                {
+                    string missingInfer = string.IsNullOrWhiteSpace(item.InferJson)
+                        ? $"inference/{item.Id}.infer.json"
+                        : item.InferJson;
+                    missingFiles.Add(missingInfer);
+                }
             }
         }
 

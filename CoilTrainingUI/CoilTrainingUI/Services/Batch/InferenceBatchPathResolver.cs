@@ -30,6 +30,22 @@ public static class InferenceBatchPathResolver
         return false;
     }
 
+    public static bool DetermineItemRequiresInfer(string batchFolder, ManifestDto manifest, ManifestItemDto item)
+    {
+        string batchType = (manifest.BatchType ?? "").Trim().ToLowerInvariant();
+        if (batchType == "no_infer")
+            return false;
+
+        if (batchType == "inference")
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(item.InferJson))
+            return true;
+
+        string fallbackPath = Path.Combine(batchFolder, "inference", $"{item.Id}.infer.json");
+        return File.Exists(fallbackPath);
+    }
+
     public static string ResolveBatchRelativePath(string batchFolder, string candidatePath)
     {
         if (string.IsNullOrWhiteSpace(candidatePath))
@@ -49,6 +65,25 @@ public static class InferenceBatchPathResolver
         return Path.IsPathRooted(item.InferJson)
             ? item.InferJson
             : Path.Combine(batchFolder, item.InferJson);
+    }
+
+    public static string ResolveBatchProcessedImagePath(string batchFolder, ManifestItemDto item)
+    {
+        string byIdPath = Path.Combine(batchFolder, "images", $"{item.Id}.bmp");
+        if (File.Exists(byIdPath))
+            return byIdPath;
+
+        if (!string.IsNullOrWhiteSpace(item.ProcessedImage))
+        {
+            string fromManifest = Path.IsPathRooted(item.ProcessedImage)
+                ? item.ProcessedImage
+                : Path.Combine(batchFolder, item.ProcessedImage);
+
+            if (File.Exists(fromManifest))
+                return fromManifest;
+        }
+
+        throw new FileNotFoundException($"processed image를 찾을 수 없습니다. id={item.Id}", byIdPath);
     }
 
     public static string? ResolveBatchRawImagePath(string batchFolder, ManifestItemDto item)

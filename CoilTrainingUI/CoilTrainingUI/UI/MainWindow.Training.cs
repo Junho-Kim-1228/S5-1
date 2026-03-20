@@ -1,11 +1,14 @@
-using CoilTrainingUI.Services;
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Services;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using IOPath = System.IO.Path;
 
@@ -13,7 +16,7 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
-        private void RequestSaveLabelsDebounced(string imagePath) //디바운스 트리거
+        private void RequestSaveLabelsDebounced(string imagePath)
         {
             if (_isLoadingImage) return;
             if (string.IsNullOrEmpty(imagePath)) return;
@@ -26,30 +29,48 @@ namespace CoilTrainingUI
 
         private async void TrainAll_Click(object sender, RoutedEventArgs e)
         {
-            // 학습은 오래 걸리니 UI 멈춤 방지
+            await TrainImageInputsAsync(
+                BuildTrainingInputsFromCurrentImageScope(),
+                "Train All");
+        }
+
+        private async Task TrainSelectedBatchesAsync(IReadOnlyList<BatchLibraryItem> selectedBatches)
+        {
+            await TrainImageInputsAsync(
+                BuildTrainingInputsFromBatchSelection(selectedBatches),
+                "Selected Batch Train");
+        }
+
+        private async Task TrainImageInputsAsync(IReadOnlyList<TrainingImageInput> trainingInputs, string operationName)
+        {
+            var progressWindow = new OperationProgressWindow($"{operationName} 진행")
+            {
+                Owner = this
+            };
+            progressWindow.UpdateProgress(0, "작업 준비 중...");
+            progressWindow.Show();
+
             try
             {
-                if (_images.Count == 0)
+                await Task.Delay(50);
+
+                if (trainingInputs == null || trainingInputs.Count == 0)
                 {
                     MessageBox.Show("이미지가 없습니다.");
                     return;
                 }
 
-
                 string projectRoot = FindProjectRoot("capstone_design");
                 var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
 
-
-                // 1) runRoot
-                string inputDir = IOPath.GetDirectoryName(_images[0].ProcessedPath)!;
-                string runRoot = IOPath.Combine(inputDir, "_train_runs");
+                string runRoot = ResolveRunRoot(trainingInputs);
                 Directory.CreateDirectory(runRoot);
 
-                // 2) 현재 이미지 경로
-                var imagePaths = _images.Select(x => x.ProcessedPath)
-                                        .Where(p => !string.IsNullOrWhiteSpace(p))
-                                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                                        .ToList();
+                var imagePaths = trainingInputs
+                    .Select(input => input.ImagePath)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
                 if (imagePaths.Count == 0)
                 {
@@ -57,10 +78,8 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                var validation = _datasetValidator.Validate(
-                    imagePaths,
-                    _currentBatchRequiresInfer,
-                    _inferJsonByImagePath);
+                progressWindow.UpdateProgress(5, "학습 데이터 검증 중...");
+                var validation = await Task.Run(() => _datasetValidator.Validate(trainingInputs));
                 if (!validation.IsValid)
                 {
                     MessageBox.Show(
@@ -73,29 +92,33 @@ namespace CoilTrainingUI
                 }
 
                 int totalImages = imagePaths.Count;
-                int normalImages = imagePaths.Count(p => (_stateService.Load(p).IsNormal ?? true) == true);
+                var normalImagePaths = imagePaths
+                    .Where(path => (_stateService.Load(path).IsNormal ?? true) == true)
+                    .ToList();
+                int normalImages = normalImagePaths.Count;
 
-                // 3) YOLO workspace 생성 (라벨 txt는 여기서 workspace에만 생성됨)
+                EnsureEnoughWorkspaceDiskSpace(runRoot, imagePaths, normalImagePaths);
+
+                progressWindow.UpdateProgress(15, "YOLO workspace 생성 중...");
                 var yoloWsSvc = new YoloWorkspaceService(_stateService);
-                var yoloWs = yoloWsSvc.BuildYoloWorkspace(
+                var yoloWs = await Task.Run(() => yoloWsSvc.BuildYoloWorkspace(
                     imagePaths,
                     runRootDir: runRoot,
                     trainRatio: settings.Workspace.TrainRatio,
                     valRatio: settings.Workspace.ValRatio,
                     seed: settings.Workspace.Seed
-                );
+                ));
 
-                // 4) Anoma workspace 생성 (정상만)
+                progressWindow.UpdateProgress(30, "Anoma workspace 생성 중...");
                 var anomaWsSvc = new AnomaWorkspaceService(_stateService);
-                var anomaWs = anomaWsSvc.BuildWorkspace(
+                var anomaWs = await Task.Run(() => anomaWsSvc.BuildWorkspace(
                     imagePaths,
                     runRootDir: runRoot,
                     trainRatio: settings.Workspace.TrainRatio,
                     valRatio: settings.Workspace.ValRatio,
                     seed: settings.Workspace.Seed
-                );
+                ));
 
-                // 5) 이번 실행 결과 폴더(로그/산출물)
                 string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 string runDir = IOPath.Combine(runRoot, $"run_{stamp}_all");
                 string logsDir = IOPath.Combine(runDir, "logs");
@@ -106,11 +129,9 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(yoloOut);
                 Directory.CreateDirectory(anomaOut);
 
-                // 6) 파이썬 스크립트 실행(순차)
                 string pythonExe = settings.PythonExe;
                 string yoloScript = IOPath.Combine(projectRoot, settings.Scripts.YoloTrain);
                 string anomaScript = IOPath.Combine(projectRoot, settings.Scripts.AnomaTrain);
-
 
                 if (!File.Exists(yoloScript) || !File.Exists(anomaScript))
                 {
@@ -119,16 +140,27 @@ namespace CoilTrainingUI
                 }
 
                 var runner = new PythonRunner();
-                using var cts = new CancellationTokenSource(); // 추후 Cancel 메뉴 추가 가능
+                using var cts = new CancellationTokenSource();
 
-                // (1) YOLO
+                progressWindow.UpdateProgress(45, "YOLO 학습 중...");
+                progressWindow.AppendLog("[YOLO] START");
                 int yoloCode = await runner.RunAsync(
                     pythonExe: pythonExe,
                     scriptPath: yoloScript,
                     args: $"--workspace \"{yoloWs.WorkspaceRoot}\" --out \"{yoloOut}\"",
                     workingDir: projectRoot,
                     logPath: IOPath.Combine(logsDir, "yolo.log"),
-                    ct: cts.Token
+                    ct: cts.Token,
+                    onOutputLine: line =>
+                    {
+                        progressWindow.AppendLog("[YOLO] " + line);
+                        int? logPercent = TryParseTrainingPercentFromLog(line);
+                        if (logPercent.HasValue)
+                        {
+                            int mapped = MapStagePercent(logPercent.Value, 45, 20);
+                            progressWindow.UpdateProgress(mapped, $"YOLO 학습 중... ({logPercent.Value}%)");
+                        }
+                    }
                 );
 
                 if (yoloCode != 0)
@@ -138,14 +170,26 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                // (2) Anomalib
+                progressWindow.UpdateProgress(68, "YOLO 학습 완료");
+                progressWindow.UpdateProgress(72, "Anoma 학습 중...");
+                progressWindow.AppendLog("[ANOMA] START");
                 int anomaCode = await runner.RunAsync(
                     pythonExe: pythonExe,
                     scriptPath: anomaScript,
                     args: $"--workspace \"{anomaWs.WorkspaceRoot}\" --out \"{anomaOut}\"",
                     workingDir: projectRoot,
                     logPath: IOPath.Combine(logsDir, "anoma.log"),
-                    ct: cts.Token
+                    ct: cts.Token,
+                    onOutputLine: line =>
+                    {
+                        progressWindow.AppendLog("[ANOMA] " + line);
+                        int? logPercent = TryParseTrainingPercentFromLog(line);
+                        if (logPercent.HasValue)
+                        {
+                            int mapped = MapStagePercent(logPercent.Value, 72, 18);
+                            progressWindow.UpdateProgress(mapped, $"Anoma 학습 중... ({logPercent.Value}%)");
+                        }
+                    }
                 );
 
                 if (anomaCode != 0)
@@ -155,7 +199,7 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                // 7) inference package 생성
+                progressWindow.UpdateProgress(92, "패키지 생성 중...");
                 string pkgDir = IOPath.Combine(runDir, "inference_package");
                 string modelsDir = IOPath.Combine(pkgDir, "models");
                 string cfgDir = IOPath.Combine(pkgDir, "config");
@@ -163,7 +207,6 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(cfgDir);
                 Directory.CreateDirectory(IOPath.Combine(pkgDir, "run"));
 
-                // ✅ 스크립트가 아래 파일명을 생성한다는 계약이 필요
                 string yoloOnnx = IOPath.Combine(yoloOut, "yolo.onnx");
                 string anomaOnnx = IOPath.Combine(anomaOut, "anoma.onnx");
 
@@ -218,19 +261,16 @@ namespace CoilTrainingUI
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
                 File.WriteAllText(
                     pipelinePath,
-                    System.Text.Json.JsonSerializer.Serialize(
+                    JsonSerializer.Serialize(
                         pipelineObj,
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
+                        new JsonSerializerOptions { WriteIndented = true }
                     ),
                     System.Text.Encoding.UTF8
                 );
 
-
-
-                // ✅ 패키지 검증 (없으면 성공 처리 금지)
                 VerifyInferencePackageOrThrow(pkgDir);
+                progressWindow.UpdateProgress(100, "학습 및 패키지 생성 완료");
 
-                // ✅ manifest 기록 (재현성/디버깅용)
                 WriteRunManifest(
                     runDir: runDir,
                     projectRoot: projectRoot,
@@ -244,22 +284,116 @@ namespace CoilTrainingUI
                     inferencePackageDir: pkgDir,
                     settings: settings,
                     totalImages: totalImages,
-                    normalImages: normalImages
+                    normalImages: normalImages,
+                    sourceBatches: trainingInputs
+                        .Select(input => input.BatchKey)
+                        .Where(batchKey => !string.IsNullOrWhiteSpace(batchKey))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(batchKey => batchKey, StringComparer.OrdinalIgnoreCase)
+                        .ToList()
                 );
 
-
-
-                MessageBox.Show($"Train All 완료\n\n{pkgDir}");
+                MessageBox.Show($"{operationName} 완료\n\n{pkgDir}");
                 OpenFolder(pkgDir);
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Train All 중 예외 발생:\n" + ex.Message);
+                MessageBox.Show($"{operationName} 중 예외 발생:\n" + ex.Message);
+            }
+            finally
+            {
+                progressWindow.Close();
+            }
+        }
 
-                // runDir 변수가 스코프 밖이면, 최소 logs 위치라도 열게 구조를 잡으세요.
-                // (가장 쉬운 방법: runDir을 함수 시작에서 string? runDir = null;로 선언하고 나중에 채우기)
+        private List<TrainingImageInput> BuildTrainingInputsFromCurrentImageScope()
+        {
+            return _images
+                .Where(item => !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .GroupBy(item => item.ProcessedPath, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var item = group.First();
+                    _inferJsonByImagePath.TryGetValue(item.ProcessedPath, out var inferJsonPath);
+
+                    string batchRoot = GetBatchRootFromImagePath(item.ProcessedPath);
+                    return new TrainingImageInput
+                    {
+                        ImagePath = item.ProcessedPath,
+                        InferJsonPath = inferJsonPath ?? "",
+                        RequiresInfer = item.RequiresInfer,
+                        BatchRoot = batchRoot,
+                        BatchKey = BatchLibraryService.GetBatchKey(batchRoot)
+                    };
+                })
+                .ToList();
+        }
+
+        private List<TrainingImageInput> BuildTrainingInputsFromBatchSelection(IReadOnlyList<BatchLibraryItem> selectedBatches)
+        {
+            var inputsByImagePath = new Dictionary<string, TrainingImageInput>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var batch in selectedBatches ?? Array.Empty<BatchLibraryItem>())
+            {
+                if (batch == null || string.IsNullOrWhiteSpace(batch.BatchRoot) || !Directory.Exists(batch.BatchRoot))
+                    continue;
+
+                string manifestPath = IOPath.Combine(batch.BatchRoot, "meta", "manifest.json");
+                var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+
+                foreach (var item in manifest.Items)
+                {
+                    string imagePath = InferenceBatchPathResolver.ResolveBatchProcessedImagePath(batch.BatchRoot, item);
+                    if (inputsByImagePath.ContainsKey(imagePath))
+                        continue;
+
+                    inputsByImagePath[imagePath] = new TrainingImageInput
+                    {
+                        ImagePath = imagePath,
+                        InferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batch.BatchRoot, item),
+                        RequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batch.BatchRoot, manifest, item),
+                        BatchRoot = batch.BatchRoot,
+                        BatchKey = batch.BatchKey
+                    };
+                }
             }
 
+            return inputsByImagePath.Values
+                .OrderBy(input => input.BatchKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(input => input.ImagePath, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private string ResolveRunRoot(IReadOnlyList<TrainingImageInput> trainingInputs)
+        {
+            var batchRoots = (trainingInputs ?? Array.Empty<TrainingImageInput>())
+                .Select(input => input.BatchRoot)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (batchRoots.Count == 1)
+            {
+                string imagesDir = IOPath.Combine(batchRoots[0], "images");
+                return Directory.Exists(imagesDir)
+                    ? IOPath.Combine(imagesDir, "_train_runs")
+                    : IOPath.Combine(batchRoots[0], "_train_runs");
+            }
+
+            return IOPath.Combine(GetTrainingInboxRoot(), "_train_runs");
+        }
+
+        private static string GetBatchRootFromImagePath(string imagePath)
+        {
+            string? imageDir = IOPath.GetDirectoryName(imagePath);
+            if (string.IsNullOrWhiteSpace(imageDir))
+                return "";
+
+            string dirName = IOPath.GetFileName(imageDir.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar));
+            if (string.Equals(dirName, "images", StringComparison.OrdinalIgnoreCase))
+                return Directory.GetParent(imageDir)?.FullName ?? imageDir;
+
+            return imageDir;
         }
 
         private void OpenFolder(string path)
@@ -275,33 +409,32 @@ namespace CoilTrainingUI
             catch { }
         }
 
-    private void VerifyInferencePackageOrThrow(string pkgDir)
-    {
-        string modelsDir = IOPath.Combine(pkgDir, "models");
-        string cfgDir = IOPath.Combine(pkgDir, "config");
+        private void VerifyInferencePackageOrThrow(string pkgDir)
+        {
+            string modelsDir = IOPath.Combine(pkgDir, "models");
+            string cfgDir = IOPath.Combine(pkgDir, "config");
 
-        string yoloOnnx = IOPath.Combine(modelsDir, "yolo.onnx");
-        string anomaOnnx = IOPath.Combine(modelsDir, "anoma.onnx");
-        string pipeline = IOPath.Combine(cfgDir, "pipeline.json");
+            string yoloOnnx = IOPath.Combine(modelsDir, "yolo.onnx");
+            string anomaOnnx = IOPath.Combine(modelsDir, "anoma.onnx");
+            string pipeline = IOPath.Combine(cfgDir, "pipeline.json");
 
-        if (!File.Exists(yoloOnnx))
-            throw new FileNotFoundException("Missing yolo.onnx in inference_package/models", yoloOnnx);
+            if (!File.Exists(yoloOnnx))
+                throw new FileNotFoundException("Missing yolo.onnx in inference_package/models", yoloOnnx);
 
-        if (!File.Exists(anomaOnnx))
-            throw new FileNotFoundException("Missing anoma.onnx in inference_package/models", anomaOnnx);
+            if (!File.Exists(anomaOnnx))
+                throw new FileNotFoundException("Missing anoma.onnx in inference_package/models", anomaOnnx);
 
-        if (!File.Exists(pipeline))
-            throw new FileNotFoundException("Missing pipeline.json in inference_package/config", pipeline);
+            if (!File.Exists(pipeline))
+                throw new FileNotFoundException("Missing pipeline.json in inference_package/config", pipeline);
 
-        // 0바이트 방지
-        var yoloSize = new FileInfo(yoloOnnx).Length;
-        var anomaSize = new FileInfo(anomaOnnx).Length;
+            var yoloSize = new FileInfo(yoloOnnx).Length;
+            var anomaSize = new FileInfo(anomaOnnx).Length;
 
-        if (yoloSize <= 0)
-            throw new InvalidOperationException("yolo.onnx is empty (0 bytes).");
+            if (yoloSize <= 0)
+                throw new InvalidOperationException("yolo.onnx is empty (0 bytes).");
 
-        if (anomaSize <= 0)
-            throw new InvalidOperationException("anoma.onnx is empty (0 bytes).");
+            if (anomaSize <= 0)
+                throw new InvalidOperationException("anoma.onnx is empty (0 bytes).");
 
             using var doc = JsonDocument.Parse(File.ReadAllText(pipeline));
             var root = doc.RootElement;
@@ -329,7 +462,6 @@ namespace CoilTrainingUI
             Require(fusion, "rule");
             Require(fusion, "yolo_conf_thres");
             Require(fusion, "anoma_score_thres");
-
         }
 
         private void Require(JsonElement obj, string prop)
@@ -338,6 +470,100 @@ namespace CoilTrainingUI
                 throw new InvalidOperationException($"pipeline.json missing required field: {prop}");
         }
 
+        private static int? TryParseTrainingPercentFromLog(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return null;
+
+            var progressMatch = Regex.Match(line, @"PROGRESS\s*:\s*(\d{1,3})", RegexOptions.IgnoreCase);
+            if (progressMatch.Success && int.TryParse(progressMatch.Groups[1].Value, out int progressPercent))
+                return Math.Clamp(progressPercent, 0, 100);
+
+            var epochMatch = Regex.Match(line, @"(?:epoch|Epoch)\s+(\d+)\s*/\s*(\d+)");
+            if (epochMatch.Success &&
+                int.TryParse(epochMatch.Groups[1].Value, out int currentEpoch) &&
+                int.TryParse(epochMatch.Groups[2].Value, out int totalEpoch) &&
+                totalEpoch > 0)
+            {
+                return Math.Clamp((int)Math.Round((currentEpoch * 100.0) / totalEpoch), 0, 100);
+            }
+
+            var ratioMatch = Regex.Match(line, @"\b(\d+)\s*/\s*(\d+)\b");
+            if (ratioMatch.Success &&
+                int.TryParse(ratioMatch.Groups[1].Value, out int current) &&
+                int.TryParse(ratioMatch.Groups[2].Value, out int total) &&
+                total > 0 &&
+                current <= total)
+            {
+                return Math.Clamp((int)Math.Round((current * 100.0) / total), 0, 100);
+            }
+
+            return null;
+        }
+
+        private static int MapStagePercent(int stagePercent, int stageStart, int stageSpan)
+        {
+            return stageStart + (int)Math.Round(Math.Clamp(stagePercent, 0, 100) * stageSpan / 100.0);
+        }
+
+        private static void EnsureEnoughWorkspaceDiskSpace(
+            string runRoot,
+            IReadOnlyList<string> allImagePaths,
+            IReadOnlyList<string> normalImagePaths)
+        {
+            string fullRunRoot = IOPath.GetFullPath(runRoot);
+            string? driveRoot = IOPath.GetPathRoot(fullRunRoot);
+            if (string.IsNullOrWhiteSpace(driveRoot))
+                return;
+
+            var drive = new DriveInfo(driveRoot);
+            long totalCopyBytes = SumFileSizes(allImagePaths) + SumFileSizes(normalImagePaths);
+
+            long requiredBytes = (long)Math.Ceiling(totalCopyBytes * 1.15) + (256L * 1024L * 1024L);
+            long freeBytes = drive.AvailableFreeSpace;
+
+            if (freeBytes >= requiredBytes)
+                return;
+
+            throw new InvalidOperationException(
+                "학습용 workspace를 만들 디스크 여유 공간이 부족합니다.\n" +
+                $"대상 드라이브: {drive.Name}\n" +
+                $"예상 필요 공간: {FormatBytes(requiredBytes)}\n" +
+                $"현재 여유 공간: {FormatBytes(freeBytes)}\n\n" +
+                "_train_runs 폴더를 정리하거나 여유 공간이 더 큰 드라이브를 사용하세요.");
+        }
+
+        private static long SumFileSizes(IEnumerable<string> paths)
+        {
+            long total = 0;
+            foreach (var path in paths ?? Array.Empty<string>())
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        total += new FileInfo(path).Length;
+                }
+                catch
+                {
+                }
+            }
+
+            return total;
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            string[] units = { "B", "KB", "MB", "GB", "TB" };
+            double size = Math.Max(bytes, 0);
+            int unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.Length - 1)
+            {
+                size /= 1024;
+                unitIndex++;
+            }
+
+            return $"{size:0.##} {units[unitIndex]}";
+        }
 
         private void WriteRunManifest(
             string runDir,
@@ -352,7 +578,8 @@ namespace CoilTrainingUI
             string inferencePackageDir,
             AppSettings settings,
             int totalImages,
-            int normalImages
+            int normalImages,
+            IReadOnlyList<string>? sourceBatches = null
         )
         {
             var manifest = new
@@ -364,6 +591,7 @@ namespace CoilTrainingUI
                 Workspaces = new { Yolo = yoloWorkspaceRoot, Anoma = anomaWorkspaceRoot },
                 Outputs = new { YoloOut = yoloOutDir, AnomaOut = anomaOutDir, InferencePackage = inferencePackageDir },
                 Dataset = new { TotalImages = totalImages, NormalImages = normalImages },
+                SourceBatches = sourceBatches ?? Array.Empty<string>(),
                 Settings = settings
             };
 
@@ -380,7 +608,8 @@ namespace CoilTrainingUI
         {
             try
             {
-                if (_images.Count == 0)
+                var currentInputs = BuildTrainingInputsFromCurrentImageScope();
+                if (currentInputs.Count == 0)
                 {
                     MessageBox.Show("이미지가 없습니다.");
                     return;
@@ -389,18 +618,16 @@ namespace CoilTrainingUI
                 string projectRoot = FindProjectRoot("capstone_design");
                 var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
 
-                string inputDir = IOPath.GetDirectoryName(_images[0].ProcessedPath)!;
-                string runRoot = IOPath.Combine(inputDir, "_train_runs");
+                string runRoot = ResolveRunRoot(currentInputs);
                 if (!Directory.Exists(runRoot))
                 {
                     MessageBox.Show("_train_runs 폴더가 없습니다.");
                     return;
                 }
 
-                // ✅ 가장 최근 run_..._all 찾기
                 var latestRunDir = Directory.GetDirectories(runRoot, "run_*_all")
-                                            .Select(d => new DirectoryInfo(d))
-                                            .OrderByDescending(d => d.CreationTimeUtc)
+                                            .Select(dir => new DirectoryInfo(dir))
+                                            .OrderByDescending(dir => dir.CreationTimeUtc)
                                             .FirstOrDefault();
 
                 if (latestRunDir == null)
@@ -417,7 +644,6 @@ namespace CoilTrainingUI
                 string yoloOnnx = IOPath.Combine(yoloOut, "yolo.onnx");
                 string anomaOnnx = IOPath.Combine(anomaOut, "anoma.onnx");
 
-                // ✅ 여기서부터는 학습 재실행 없음. 없으면 그냥 실패해야 정상.
                 if (!File.Exists(yoloOnnx) || !File.Exists(anomaOnnx))
                 {
                     MessageBox.Show(
@@ -430,7 +656,6 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                // 패키지 재생성
                 string pkgDir = IOPath.Combine(runDir, "inference_package");
                 string modelsDir = IOPath.Combine(pkgDir, "models");
                 string cfgDir = IOPath.Combine(pkgDir, "config");
@@ -442,10 +667,8 @@ namespace CoilTrainingUI
                 File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
                 File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
-                // pipeline.json은 기존이 있으면 그대로 두고, 없으면 최소 생성
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
 
-                // ✅ appsettings 기반 pipeline 객체 생성
                 var pipelineObj = new
                 {
                     schema_version = 1,
@@ -484,16 +707,14 @@ namespace CoilTrainingUI
                     }
                 };
 
-                // ✅ 항상 덮어쓰기 (조건문 제거)
                 File.WriteAllText(
                     pipelinePath,
-                    System.Text.Json.JsonSerializer.Serialize(pipelineObj,
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }),
+                    JsonSerializer.Serialize(
+                        pipelineObj,
+                        new JsonSerializerOptions { WriteIndented = true }),
                     System.Text.Encoding.UTF8
                 );
 
-
-                // ✅ 검증
                 VerifyInferencePackageOrThrow(pkgDir);
 
                 MessageBox.Show($"Package Only 완료\n\n{pkgDir}");
@@ -504,6 +725,5 @@ namespace CoilTrainingUI
                 MessageBox.Show("Build Package Only 실패:\n" + ex.Message);
             }
         }
-
     }
 }

@@ -389,22 +389,6 @@ namespace CoilTrainingUI
             RefreshAllImagesFromTrainingInbox(preferredImagePath: null, preferredBatchRoot: null);
         }
 
-        private string ResolveBatchImagePath(string batchFolder, ManifestItemDto item)
-        {
-            string byIdPath = IOPath.Combine(batchFolder, "images", $"{item.Id}.bmp");
-            if (File.Exists(byIdPath))
-                return byIdPath;
-
-            string fromManifest = IOPath.IsPathRooted(item.ProcessedImage)
-                ? item.ProcessedImage
-                : IOPath.Combine(batchFolder, item.ProcessedImage);
-
-            if (File.Exists(fromManifest))
-                return fromManifest;
-
-            throw new FileNotFoundException($"processed image를 찾을 수 없습니다. id={item.Id}", byIdPath);
-        }
-
         private static bool IsPathUnderRoot(string path, string rootPath)
         {
             var fullPath = IOPath.GetFullPath(path)

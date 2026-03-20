@@ -1,0 +1,14 @@
+.venv/
+.venv_train/
+__pycache__/
+*.py[cod]
+*.cache
+
+runs/
+datasets/
+runtime/
+yolo11n.pt
+yolov8n.pt
+
+assets/weights/*
+!assets/weights/.gitkeep

@@ -54,56 +54,41 @@
 
         <Menu DockPanel.Dock="Top">
 
-            <MenuItem Header="Dataset">
-                <!-- 나중에 Open Folder 같은 거 들어갈 자리 -->
+            <MenuItem Header="Batch">
+                <MenuItem Header="배치 가져오기..."
+                          Click="ImportBatch_Click"/>
+                <MenuItem Header="폴더에서 배치 생성..."
+                          Click="CreateBatchFromFolder_Click"/>
+                <MenuItem Header="배치 관리..."
+                          Click="BatchManagement_Click"/>
+                <MenuItem Header="training_inbox 열기"
+                          Click="OpenTrainingInbox_Click"/>
             </MenuItem>
 
-            <MenuItem Header="Labeling">
+            <MenuItem Header="Review">
                 <MenuItem x:Name="ApplyPredictionsMenuItem"
-                          Header="Apply Predictions to Labels (Current Image)"
+                          Header="현재 이미지 예측 박스 적용"
                           Click="ApplyPredictionsToLabelsCurrentImage_Click"/>
                 <Separator/>
                 <MenuItem x:Name="PreLabelBatchMenuItem"
-                          Header="Pre-label Batch from Predictions"
+                          Header="배치 예측값으로 사전 라벨링"
                           Click="PreLabelBatchFromPredictions_Click"/>
                 <MenuItem x:Name="AutoApproveSafeMenuItem"
-                          Header="Auto-Approve Safe Normals"
+                          Header="안전 정상 자동 확정"
                           Click="AutoApproveSafeNormals_Click"/>
                 <MenuItem x:Name="ShowReviewQueueMenuItem"
-                          Header="Show Review Queue"
+                          Header="검수 필요 목록 보기"
                           Click="ShowReviewQueue_Click"/>
-                <MenuItem Header="Mark Filtered Images Abnormal"
+                <MenuItem Header="필터된 이미지 일괄 불량 처리"
                           Click="MarkFilteredAbnormal_Click"/>
             </MenuItem>
 
-            <MenuItem Header="Training">
-                <MenuItem Header="A. 데이터 유입(배치 관리)"
-                          IsEnabled="False"/>
-
-                <MenuItem Header="Import Batch..."
-                          Click="ImportBatch_Click"/>
-
-                <MenuItem Header="Create Batch from Folder..."
-                          Click="CreateBatchFromFolder_Click"/>
-
-                <MenuItem Header="Open training_inbox"
-                          Click="OpenTrainingInbox_Click"/>
-
-                <Separator/>
-
-                <MenuItem Header="B. 학습/패키징"
-                          IsEnabled="False"/>
-
-                <MenuItem Header="Train All (YOLO + Anomalib)" 
+            <MenuItem Header="Train">
+                <MenuItem Header="전체 학습 실행 (YOLO + Anomalib)" 
                           Click="TrainAll_Click"/>
 
-                <MenuItem Header="Build Package Only" 
+                <MenuItem Header="패키지만 다시 생성" 
                           Click="BuildPackageOnly_Click"/>
-
-            </MenuItem>
-
-            <MenuItem Header="Model">
-                <!-- ONNX 관련 메뉴 예정 -->
             </MenuItem>
 
         </Menu>
@@ -153,7 +138,7 @@
                               Background="#444"
                               Foreground="White"
                               Header="Filter"
-                              IsExpanded="True">
+                              IsExpanded="False">
                         <StackPanel>
                             <TextBlock Text="배치" Foreground="#D0D0D0" FontSize="12" Margin="6,6,6,0"/>
                             <ComboBox x:Name="BatchFilterComboBox"
