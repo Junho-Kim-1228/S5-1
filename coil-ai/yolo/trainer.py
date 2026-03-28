@@ -1,96 +1,192 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
-from common import TrainingError, ensure_directory, log_info, log_progress, log_step, log_warn
-from yolo.metrics import extract_metrics
+from common.exceptions import CoilAIError
+from common.logging_utils import get_logger
+from common.logging_utils import log_info, log_progress, log_step, log_warn
+from common.path_utils import ensure_dir, resolve_path
+from common.seed import set_global_seed
+from common.summary import build_train_summary, save_train_summary, utc_now_iso
+from yolo.config import build_yolo_train_config
+from yolo.exporter import export_yolo_to_onnx
+from yolo.metrics import extract_yolo_metrics
+from yolo.workspace import validate_yolo_workspace
 
-
-def _normalize_device(device: str) -> str:
-    try:
-        import torch
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise TrainingError(
-            "PyTorch is required to train YOLO. Install requirements-train.txt."
-        ) from exc
-
-    requested = device.strip().lower()
-    if requested == "auto":
-        return "0" if torch.cuda.is_available() else "cpu"
-    return device
+logger = get_logger(__name__)
 
 
-def train_model(
+def _resolve_best_weights(train_results, artifacts_dir: Path) -> Path | None:
+    save_dir = getattr(train_results, "save_dir", None)
+    if save_dir:
+        weights_dir = Path(str(save_dir)) / "weights"
+        for name in ("best.pt", "last.pt"):
+            candidate = weights_dir / name
+            if candidate.exists():
+                return candidate.resolve(strict=False)
+
+    weights_dir = artifacts_dir / "train" / "weights"
+    for name in ("best.pt", "last.pt"):
+        candidate = weights_dir / name
+        if candidate.exists():
+            return candidate.resolve(strict=False)
+
+    return None
+
+
+def run_yolo_training(
     *,
-    args: Any,
-    out_dir: Path,
-    data_yaml: Path,
-    base_model_path: Path,
-) -> dict[str, Any]:
+    workspace: str,
+    out_dir: str,
+    model: str | None = None,
+    epochs: int = 50,
+    imgsz: int = 1024,
+    batch: int = 4,
+    device: str = "auto",
+    seed: int = 42,
+    workers: int | None = None,
+    conf_val: float | None = None,
+) -> None:
+    workspace_path = resolve_path(workspace)
+    out_path = ensure_dir(resolve_path(out_dir))
+    started_at = utc_now_iso()
+    export_path = out_path / "yolo.onnx"
+
+    config = build_yolo_train_config(
+        model=model,
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        device=device,
+        seed=seed,
+        workers=workers,
+        conf_val=conf_val,
+    )
+
     try:
         from ultralytics import YOLO
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise TrainingError(
-            "ultralytics is required to train YOLO. Install requirements-train.txt."
+    except ImportError as exc:
+        raise CoilAIError(
+            "ultralytics is required to run YOLO training. Install requirements-train.txt in your venv."
         ) from exc
 
-    log_step("train model")
-    train_project_dir = out_dir / args.project_name
-    ensure_directory(train_project_dir)
-
-    device = _normalize_device(args.device)
-    log_info(f"base model: {base_model_path}")
-    log_info(f"train project dir: {train_project_dir}")
-    log_info(f"device: {device}")
-    log_info(f"epochs: {args.epochs}")
-    log_progress(0)
-
-    # TODO: dataset transform
-    # TODO: model selection
-    model = YOLO(str(base_model_path))
-    model.train(
-        data=str(data_yaml),
-        epochs=args.epochs,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        workers=args.workers,
-        project=str(train_project_dir),
-        name="run",
-        exist_ok=True,
-        device=device,
-        seed=args.seed,
-        verbose=True,
-    )
-
-    trainer = getattr(model, "trainer", None)
-    if trainer is None:
-        raise TrainingError("Ultralytics trainer state is unavailable after training.")
-
-    save_dir = Path(str(getattr(trainer, "save_dir", train_project_dir / "run"))).resolve(strict=False)
-    best_checkpoint = Path(str(getattr(trainer, "best", save_dir / "weights" / "best.pt"))).resolve(
-        strict=False
-    )
-    if not best_checkpoint.exists():
-        fallback_checkpoint = save_dir / "weights" / "last.pt"
-        if fallback_checkpoint.exists():
-            best_checkpoint = fallback_checkpoint.resolve(strict=False)
-        else:
-            raise TrainingError(f"Trained YOLO checkpoint was not found under {save_dir}")
-
-    log_progress(90)
-    log_info(f"best checkpoint: {best_checkpoint}")
-
-    val_metrics: dict[str, Any] = {}
     try:
-        validation_model = YOLO(str(best_checkpoint))
-        val_result = validation_model.val(data=str(data_yaml), imgsz=args.imgsz, split="val")
-        val_metrics = extract_metrics(val_result)
-    except Exception as exc:
-        log_warn(f"validation metrics could not be collected after training: {exc}")
+        log_step(logger, "validate workspace")
+        workspace_info = validate_yolo_workspace(workspace_path)
+        data_yaml = workspace_path / "data.yaml"
 
-    return {
-        "train_dir": str(save_dir),
-        "best_checkpoint": best_checkpoint,
-        "metrics": val_metrics,
-    }
+        set_global_seed(config.seed)
+
+        log_step(logger, "train model")
+        log_info(logger, "Workspace: %s", workspace_path)
+        log_info(logger, "Output: %s", out_path)
+        log_info(logger, "Weights: %s", config.weights)
+        log_info(logger, "Device: %s", config.device)
+        log_info(logger, "Workers: %s", config.workers)
+        log_info(logger, "Val confidence: %s", config.conf_val)
+        log_info(logger, "Augmentation: %s", config.augmentation)
+        log_info(
+            logger,
+            "Workspace counts: train_images=%s val_images=%s train_labels=%s val_labels=%s",
+            workspace_info["train_images"],
+            workspace_info["val_images"],
+            workspace_info["train_labels"],
+            workspace_info["val_labels"],
+        )
+        log_progress(logger, 0)
+
+        model_obj = YOLO(str(config.weights))
+        artifacts_dir = out_path / "artifacts"
+        train_results = model_obj.train(
+            data=str(data_yaml),
+            epochs=config.epochs,
+            imgsz=config.imgsz,
+            batch=config.batch,
+            device=config.device,
+            workers=config.workers,
+            plots=False,
+            project=str(artifacts_dir),
+            name="train",
+            exist_ok=True,
+            verbose=True,
+            **config.augmentation,
+        )
+
+        best_weights = _resolve_best_weights(train_results, artifacts_dir)
+        eval_model = YOLO(str(best_weights)) if best_weights else model_obj
+        if best_weights:
+            log_info(logger, "Best weights: %s", best_weights)
+        else:
+            log_warn(logger, "Best checkpoint was not found. Using in-memory trained model for val/export.")
+
+        log_progress(logger, 90)
+        val_kwargs = {
+            "data": str(data_yaml),
+            "workers": config.workers,
+            "plots": False,
+        }
+        if config.conf_val is not None:
+            val_kwargs["conf"] = config.conf_val
+        val_results = eval_model.val(**val_kwargs)
+        metrics = extract_yolo_metrics(val_results)
+
+        log_step(logger, "export onnx")
+        export_yolo_to_onnx(eval_model, export_path, imgsz=config.imgsz)
+        log_progress(logger, 100)
+
+        summary = build_train_summary(
+            model_type="yolo",
+            workspace=str(workspace_path),
+            out_dir=str(out_path),
+            started_at=started_at,
+            finished_at=utc_now_iso(),
+            success=True,
+            metrics=metrics,
+            export_path=str(export_path),
+            notes=[],
+            extras={
+                "variant": config.variant,
+                "weights": str(config.weights),
+                "epochs": config.epochs,
+                "imgsz": config.imgsz,
+                "batch": config.batch,
+                "device": config.device,
+                "workers": config.workers,
+                "conf_val": config.conf_val,
+                "augmentation": config.augmentation,
+                "train_save_dir": str(train_results.save_dir) if hasattr(train_results, "save_dir") else None,
+                "best_weights": str(best_weights) if best_weights else None,
+            },
+        )
+        log_step(logger, "save summary")
+        save_train_summary(out_path / "train_summary.json", summary)
+        logger.info("[DONE] YOLO training completed successfully")
+    except Exception as exc:
+        try:
+            summary = build_train_summary(
+                model_type="yolo",
+                workspace=str(workspace_path),
+                out_dir=str(out_path),
+                started_at=started_at,
+                finished_at=utc_now_iso(),
+                success=False,
+                metrics={},
+                export_path=str(export_path) if export_path.exists() else None,
+                notes=[f"error={exc}"],
+                extras={
+                    "variant": config.variant,
+                    "weights": str(config.weights),
+                    "epochs": config.epochs,
+                    "imgsz": config.imgsz,
+                    "batch": config.batch,
+                    "device": config.device,
+                    "workers": config.workers,
+                    "conf_val": config.conf_val,
+                    "augmentation": config.augmentation,
+                },
+            )
+            log_step(logger, "save summary")
+            save_train_summary(out_path / "train_summary.json", summary)
+        except Exception as summary_exc:
+            log_warn(logger, "Failed to save failure summary: %s", summary_exc)
+        raise

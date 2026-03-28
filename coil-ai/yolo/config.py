@@ -1,60 +1,136 @@
-from __future__ import annotations
-
-import argparse
+import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any
 
-from common import TrainingError, add_workspace_out_args, project_root, resolve_path
-
-
-DEFAULT_MODEL_CANDIDATES = (
-    "assets/weights/yolo11n.pt",
-    "assets/weights/yolov8n.pt",
-    "yolo11n.pt",
-    "yolov8n.pt",
-)
+from common.exceptions import CoilAIError
+from common.path_utils import get_project_root, resolve_path
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Train a YOLO detector and export it to ONNX for the WPF training UI."
-    )
-    add_workspace_out_args(parser)
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Base YOLO weight file. Defaults to assets/weights/yolo11n.pt or yolov8n.pt.",
-    )
-    parser.add_argument("--epochs", type=int, default=10, help="Training epochs.")
-    parser.add_argument("--imgsz", type=int, default=640, help="Input image size.")
-    parser.add_argument("--batch", type=int, default=16, help="Training batch size.")
-    parser.add_argument("--workers", type=int, default=4, help="Dataloader worker count.")
-    parser.add_argument(
-        "--device",
-        default="auto",
-        help="Training device. Examples: auto, cpu, 0, 0,1.",
-    )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
-    parser.add_argument(
-        "--project-name",
-        default="yolo_train",
-        help="Directory name used under the output folder for training artifacts.",
-    )
-    return parser.parse_args(argv)
+def _resolve_model_path(model: str | None) -> Path:
+    project_root = get_project_root()
 
+    if model:
+        requested = Path(model)
+        if requested.is_absolute():
+            candidate = requested
+        else:
+            direct = resolve_path(model)
+            candidate = direct if direct.exists() else project_root / model
 
-def resolve_base_model(model_arg: str | None) -> Path:
-    if model_arg:
-        return resolve_path(model_arg)
-
-    root_dir = project_root()
-    for relative_path in DEFAULT_MODEL_CANDIDATES:
-        candidate = (root_dir / relative_path).resolve(strict=False)
-        if candidate.exists():
+        candidate = candidate.resolve(strict=False)
+        if candidate.exists() and candidate.stat().st_size > 0:
             return candidate
+        raise CoilAIError(f"YOLO weights/model not found: {candidate}")
 
-    checked = ", ".join(DEFAULT_MODEL_CANDIDATES)
-    raise TrainingError(
-        "No local YOLO base weights were found. "
-        f"Checked: explicit --model, {checked}."
+    candidates = [
+        project_root / "assets" / "weights" / "yolov8n.pt",
+        project_root / "assets" / "weights" / "yolov8l.pt",
+        project_root / "yolov8n.pt",
+        project_root / "yolov8l.pt",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.stat().st_size > 0:
+            return candidate.resolve(strict=False)
+
+    raise CoilAIError(
+        "No YOLO weights found. Pass --model or place yolov8n.pt / yolov8l.pt under assets/weights."
+    )
+
+
+def _resolve_variant(weights: Path) -> str:
+    stem = weights.stem.lower()
+    if stem == "yolov8n":
+        return "yolov8n_baseline"
+    if stem == "yolov8l":
+        return "yolov8l_baseline"
+    return stem
+
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+
+    return "0" if torch.cuda.is_available() else "cpu"
+
+
+def _resolve_workers(workers: int | None) -> int:
+    if workers is not None:
+        return max(int(workers), 0)
+    return 0 if os.name == "nt" else 8
+
+
+def _resolve_conf_val(conf_val: float | None) -> float | None:
+    if conf_val is None:
+        return None
+    if not (0.0 <= float(conf_val) <= 1.0):
+        raise CoilAIError(f"YOLO validation confidence must be between 0 and 1: {conf_val}")
+    return float(conf_val)
+
+
+def _build_augmentation_config() -> dict[str, Any]:
+    return {
+        # Class-specific augmentation is handled offline in prepare_yolo_workspace.py.
+        # Keep training-time augmentation disabled so only the intended samples are augmented.
+        "fliplr": 0.0,
+        "hsv_h": 0.0,
+        "hsv_s": 0.0,
+        "hsv_v": 0.0,
+        "translate": 0.0,
+        "flipud": 0.0,
+        "degrees": 0.0,
+        "scale": 0.0,
+        "shear": 0.0,
+        "perspective": 0.0,
+        "mosaic": 0.0,
+        "mixup": 0.0,
+        "copy_paste": 0.0,
+        "cutmix": 0.0,
+        "erasing": 0.0,
+        "auto_augment": None,
+    }
+
+
+@dataclass(frozen=True)
+class YoloTrainConfig:
+    weights: Path
+    epochs: int
+    imgsz: int
+    batch: int
+    device: str
+    workers: int
+    variant: str
+    seed: int
+    conf_val: float | None
+    augmentation: dict[str, Any]
+
+
+def build_yolo_train_config(
+    *,
+    model: str | None,
+    epochs: int,
+    imgsz: int,
+    batch: int,
+    device: str,
+    seed: int,
+    workers: int | None,
+    conf_val: float | None,
+) -> YoloTrainConfig:
+    weights = _resolve_model_path(model)
+    return YoloTrainConfig(
+        weights=weights,
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        device=_resolve_device(device),
+        workers=_resolve_workers(workers),
+        variant=_resolve_variant(weights),
+        seed=seed,
+        conf_val=_resolve_conf_val(conf_val),
+        augmentation=_build_augmentation_config(),
     )

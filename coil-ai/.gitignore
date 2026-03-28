@@ -5,10 +5,26 @@ __pycache__/
 *.cache
 
 runs/
-datasets/
 runtime/
+
 yolo11n.pt
 yolov8n.pt
+yolov8l.pt
 
 assets/weights/*
 !assets/weights/.gitkeep
+
+raw_data/*
+!raw_data/.gitkeep
+
+outputs/*
+!outputs/.gitkeep
+!outputs/yolo/
+!outputs/anoma/
+outputs/yolo/*
+!outputs/yolo/.gitkeep
+outputs/anoma/*
+!outputs/anoma/.gitkeep
+
+datasets/*
+!datasets/.gitkeep

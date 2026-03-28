@@ -1,99 +1,52 @@
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Any
-
-from common import TrainingError, count_files, log_info, log_step, log_warn
+from common.exceptions import WorkspaceValidationError
 
 
-LABEL_EXTENSION = ".txt"
+IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 
 
-def _load_yaml(path: Path) -> dict[str, Any]:
-    try:
-        import yaml
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise TrainingError(
-            "PyYAML is required to validate YOLO data.yaml. Install requirements-train.txt."
-        ) from exc
-
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise TrainingError(f"Failed to parse YAML file: {path}") from exc
-
-    if not isinstance(data, dict):
-        raise TrainingError(f"data.yaml must contain a YAML mapping: {path}")
-    return data
+def _count_images(path: Path) -> int:
+    return sum(1 for p in path.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
 
 
-def validate_workspace(workspace: Path) -> dict[str, Any]:
-    log_step("validate workspace")
-    if not workspace.exists():
-        raise TrainingError(f"Workspace does not exist: {workspace}")
-    if not workspace.is_dir():
-        raise TrainingError(f"Workspace is not a directory: {workspace}")
+def _count_labels(path: Path) -> int:
+    return sum(1 for p in path.rglob("*.txt") if p.is_file())
 
-    required_dirs = {
-        "images/train": workspace / "images" / "train",
-        "images/val": workspace / "images" / "val",
-        "labels/train": workspace / "labels" / "train",
-        "labels/val": workspace / "labels" / "val",
-    }
-    for label, path in required_dirs.items():
-        if not path.exists():
-            raise TrainingError(f"Required YOLO directory is missing: {label} ({path})")
-        if not path.is_dir():
-            raise TrainingError(f"Required YOLO path is not a directory: {label} ({path})")
 
-    data_yaml = workspace / "data.yaml"
-    if not data_yaml.exists():
-        raise TrainingError(f"Required YOLO dataset config is missing: {data_yaml}")
+def validate_yolo_workspace(workspace: Path) -> dict:
+    required = [
+        workspace / "data.yaml",
+        workspace / "images" / "train",
+        workspace / "images" / "val",
+        workspace / "labels" / "train",
+        workspace / "labels" / "val",
+    ]
 
-    yaml_data = _load_yaml(data_yaml)
-    image_extensions = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
-    images_train_count = count_files(required_dirs["images/train"], image_extensions)
-    images_val_count = count_files(required_dirs["images/val"], image_extensions)
-    labels_train_count = count_files(required_dirs["labels/train"], {LABEL_EXTENSION})
-    labels_val_count = count_files(required_dirs["labels/val"], {LABEL_EXTENSION})
-
-    if images_train_count == 0:
-        raise TrainingError(f"No training images were found in {required_dirs['images/train']}")
-    if images_val_count == 0:
-        raise TrainingError(f"No validation images were found in {required_dirs['images/val']}")
-    if labels_train_count == 0:
-        raise TrainingError(f"No training labels were found in {required_dirs['labels/train']}")
-    if labels_val_count == 0:
-        raise TrainingError(f"No validation labels were found in {required_dirs['labels/val']}")
-
-    missing_yaml_keys = [key for key in ("train", "val", "names") if key not in yaml_data]
-    if missing_yaml_keys:
-        raise TrainingError(f"data.yaml is missing required keys: {', '.join(missing_yaml_keys)}")
-
-    log_info(f"workspace: {workspace}")
-    log_info(f"data.yaml: {data_yaml}")
-    log_info(
-        f"image counts: train={images_train_count}, val={images_val_count} | "
-        f"label counts: train={labels_train_count}, val={labels_val_count}"
-    )
-
-    if images_train_count != labels_train_count:
-        log_warn(
-            "train image/label count mismatch detected. "
-            "Ultralytics may still run if some images are intentionally unlabeled."
+    missing = [str(p) for p in required if not p.exists()]
+    if missing:
+        raise WorkspaceValidationError(
+            f"Invalid YOLO workspace. Missing paths: {missing}"
         )
-    if images_val_count != labels_val_count:
-        log_warn(
-            "val image/label count mismatch detected. "
-            "Ultralytics may still run if some images are intentionally unlabeled."
+
+    train_images = _count_images(workspace / "images" / "train")
+    val_images = _count_images(workspace / "images" / "val")
+    train_labels = _count_labels(workspace / "labels" / "train")
+    val_labels = _count_labels(workspace / "labels" / "val")
+
+    if train_images == 0 or val_images == 0:
+        raise WorkspaceValidationError("Invalid YOLO workspace. Train/val images must not be empty.")
+    if train_images != train_labels:
+        raise WorkspaceValidationError(
+            f"Train image/label count mismatch: images={train_images}, labels={train_labels}"
+        )
+    if val_images != val_labels:
+        raise WorkspaceValidationError(
+            f"Val image/label count mismatch: images={val_images}, labels={val_labels}"
         )
 
     return {
-        "data_yaml": data_yaml,
-        "counts": {
-            "images_train": images_train_count,
-            "images_val": images_val_count,
-            "labels_train": labels_train_count,
-            "labels_val": labels_val_count,
-        },
+        "train_images": train_images,
+        "val_images": val_images,
+        "train_labels": train_labels,
+        "val_labels": val_labels,
     }

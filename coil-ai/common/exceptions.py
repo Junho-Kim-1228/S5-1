@@ -1,2 +1,14 @@
-class TrainingError(RuntimeError):
-    """Raised when training cannot proceed because inputs, runtime state, or export failed."""
+class CoilAIError(Exception):
+    pass
+
+
+class TrainingError(CoilAIError):
+    pass
+
+
+class WorkspaceValidationError(CoilAIError):
+    pass
+
+
+class ExportError(CoilAIError):
+    pass

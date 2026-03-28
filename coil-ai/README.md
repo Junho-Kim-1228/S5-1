@@ -1,6 +1,6 @@
 # coil-ai
 
-YOLO detector training and anomaly training live in one Python project so the C# WPF Training UI can keep a stable execution contract while the internal code stays modular.
+YOLO detector training and anomaly training live in one Python project. The goal is to keep the C# WPF Training UI contract stable while the Python code stays modular and easy to extend.
 
 ## Project Structure
 
@@ -17,12 +17,12 @@ coil-ai/
   common/
     __init__.py
     cli.py
+    exceptions.py
     io_utils.py
     logging_utils.py
     path_utils.py
     seed.py
     summary.py
-    exceptions.py
 
   yolo/
     __init__.py
@@ -31,6 +31,13 @@ coil-ai/
     trainer.py
     exporter.py
     metrics.py
+    model_factory.py
+    models/
+      README.md
+      yolov8l_c2f_rvb.yaml
+      modules/
+        __init__.py
+        c2f_rvb.py
 
   anoma/
     __init__.py
@@ -44,26 +51,53 @@ coil-ai/
   assets/
     weights/
       .gitkeep
+      yolov8n.pt
+      yolov8l.pt
+
+  experiments/
+    README.md
+    yolo/
+      yolov8n_baseline/
+      yolov8l_baseline/
+      yolov8l_c2f_rvb/
+    anoma/
+
+  outputs/
+    .gitkeep
+    yolo/
+    anoma/
+
+  datasets/
+    .gitkeep
 ```
 
 ## Folder Roles
 
 - `scripts/`
-  - Thin entrypoints used directly by the C# Training UI.
+  - Thin entrypoints called by the C# Training UI.
   - Keep the external CLI contract stable.
 - `common/`
-  - Shared utilities for path handling, summary saving, logging, seed setup, and common exceptions.
+  - Shared utilities for paths, logging, seed setup, output directories, and training summaries.
 - `yolo/`
-  - YOLO-specific argument parsing, workspace validation, training, metric extraction, and ONNX export.
+  - YOLO-specific configuration, workspace validation, training, export, metrics, and model construction.
+- `yolo/models/`
+  - Research-only model YAMLs and custom modules for future experiments.
+  - The default training flow still uses pretrained `.pt` weights unless `--model` points to a custom YAML.
 - `anoma/`
-  - Anomaly-specific argument parsing, workspace validation, training orchestration, adapter-based model construction, and ONNX export.
+  - Anomaly-specific configuration, adapter-based training, workspace validation, metrics, and export.
 - `assets/weights/`
   - Local pretrained weight storage.
-  - Recommended place for `yolo11n.pt`, `yolov8n.pt`, and future local checkpoints that should not live at project root.
+  - Keep `.pt` files here and do not commit real weights.
+- `experiments/`
+  - Human-managed experiment notes, configs, and scratch folders.
+- `outputs/`
+  - Runtime training outputs such as exported ONNX files and summaries.
+- `datasets/`
+  - Local dataset staging area. The C# UI can create workspaces under here if desired.
 
-## External Contract With C# Training UI
+## C# Training UI Contract
 
-The following commands must remain valid:
+These commands must remain valid:
 
 ```bash
 python scripts/train_yolo.py --workspace "<workspace>" --out "<out>"
@@ -76,8 +110,8 @@ Expected behavior:
   - `<out>/yolo.onnx`
   - `<out>/anoma.onnx`
   - `<out>/train_summary.json`
-- Failure exits with non-zero exit code.
-- Logs are written to stdout/stderr.
+- Failure exits with a non-zero exit code.
+- Logs are written to stdout and stderr.
 
 Workspace contract:
 
@@ -91,41 +125,20 @@ Workspace contract:
   - `train`
   - `val`
 
-## Weight File Rules
+## Weight Rules
 
-YOLO base weight lookup order:
+YOLO model resolution order:
 
 1. Explicit `--model`
-2. `assets/weights/yolo11n.pt`
-3. `assets/weights/yolov8n.pt`
-4. Legacy root fallback `yolo11n.pt`, `yolov8n.pt` for compatibility
+2. `assets/weights/yolov8n.pt`
+3. `assets/weights/yolov8l.pt`
+4. Legacy root fallback `yolov8n.pt`, `yolov8l.pt`
 
-Recommended practice:
+Notes:
 
-- Keep local weights in `assets/weights/`
-- Do not commit them to git
-
-## Runtime Artifacts
-
-The project may contain local runtime artifacts during experimentation, but they should be treated as non-source data:
-
-- `.venv_train/`
-- `runs/`
-- `datasets/`
-- `runtime/`
-- `__pycache__/`
-
-These are ignored through `.gitignore`.
-
-If you want a cleaner local layout, prefer:
-
-```text
-runtime/
-  runs/
-  datasets/
-```
-
-The code keeps the CLI contract unchanged, so the C# app can still pass any explicit `--workspace` and `--out` path it already uses.
+- The `.pt` files under `assets/weights/` are intentionally local-only.
+- `yolo/models/` is for custom YAML-based experiments.
+- If you later use a custom model YAML, keep the CLI the same and pass the YAML path via `--model`.
 
 ## Setup
 
@@ -148,5 +161,6 @@ pip install -r requirements-train.txt
 ## Notes
 
 - `scripts/` intentionally contains very little logic.
-- `anoma/` is adapter-based so the final anomaly model choice can change later.
-- TODO markers remain around dataset transforms, model selection, threshold strategy, and export graph verification.
+- `anoma/` is adapter-based so the final anomaly framework can change later.
+- `yolo/models/` is intentionally light. The custom YAML and module are placeholders for future paper-driven experiments.
+- Runtime folders under `outputs/` and `datasets/` are kept separate from source code.
