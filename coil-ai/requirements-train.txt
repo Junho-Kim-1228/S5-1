@@ -7,4 +7,5 @@ ultralytics>=8.3,<9.0
 anomalib>=1.1,<2.0
 lightning>=2.2,<2.6
 onnx>=1.16,<2.0
+onnxscript>=0.1,<1.0
 opencv-python-headless>=4.10,<5.0
