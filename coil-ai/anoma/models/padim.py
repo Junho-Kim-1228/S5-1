@@ -291,20 +291,39 @@ class PadimModel(AnomalyModelBase):
             output_size=image_size,
         ).eval()
         dummy_input = torch.randn(1, 3, image_size, image_size, dtype=torch.float32)
-        torch.onnx.export(
-            export_model,
-            dummy_input,
-            str(path),
-            input_names=["image"],
-            output_names=["anomaly_score", "anomaly_map"],
-            dynamic_axes={
+        export_kwargs = {
+            "input_names": ["image"],
+            "output_names": ["anomaly_score", "anomaly_map"],
+            "dynamic_axes": {
                 "image": {0: "batch"},
                 "anomaly_score": {0: "batch"},
                 "anomaly_map": {0: "batch"},
             },
-            opset_version=17,
-            do_constant_folding=True,
-        )
+            "opset_version": 17,
+            "do_constant_folding": True,
+        }
+
+        try:
+            torch.onnx.export(
+                export_model,
+                dummy_input,
+                str(path),
+                **export_kwargs,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "2GiB limit" not in message:
+                raise
+            torch.onnx.export(
+                export_model,
+                dummy_input,
+                str(path),
+                dynamo=True,
+                external_data=True,
+                optimize=False,
+                artifacts_dir=str(path.parent),
+                **export_kwargs,
+            )
 
     def save_state(self, path: Path) -> None:
         self._ensure_fitted()
