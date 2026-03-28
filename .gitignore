@@ -8,6 +8,8 @@ scripts/
 datasets/
 models/
 training_inbox/
+!coil-ai/anoma/models/
+!coil-ai/anoma/models/**
 
 # NuGet
 packages/
@@ -27,6 +29,8 @@ __pycache__/
 *.onnx
 coil-ai/runs/
 *.cache
+!coil-ai/assets/weights/yolov8n.pt
+!coil-ai/assets/weights/yolov8l.pt
 
 # VSCode
 .vscode/

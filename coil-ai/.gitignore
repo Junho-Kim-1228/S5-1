@@ -13,6 +13,8 @@ yolov8l.pt
 
 assets/weights/*
 !assets/weights/.gitkeep
+!assets/weights/yolov8n.pt
+!assets/weights/yolov8l.pt
 
 raw_data/*
 !raw_data/.gitkeep
