@@ -110,6 +110,31 @@ class PadimModel(AnomalyModelBase):
         self.inv_covariance: torch.Tensor | None = None
         self._warned_cpu_fallback = False
 
+    def _invert_covariance_matrices(
+        self,
+        covariance: torch.Tensor,
+        *,
+        chunk_size: int = 256,
+    ) -> torch.Tensor:
+        inverse_chunks: list[torch.Tensor] = []
+
+        for start in range(0, covariance.shape[0], chunk_size):
+            end = min(start + chunk_size, covariance.shape[0])
+            chunk = covariance[start:end]
+
+            try:
+                chol = torch.linalg.cholesky(chunk)
+                inv_chunk = torch.cholesky_inverse(chol)
+            except RuntimeError:
+                try:
+                    inv_chunk = torch.linalg.inv(chunk)
+                except RuntimeError:
+                    inv_chunk = torch.linalg.pinv(chunk)
+
+            inverse_chunks.append(inv_chunk)
+
+        return torch.cat(inverse_chunks, dim=0)
+
     @staticmethod
     def _score_from_maps_numpy(anomaly_maps: np.ndarray) -> np.ndarray:
         if anomaly_maps.ndim != 3:
@@ -174,10 +199,7 @@ class PadimModel(AnomalyModelBase):
         eye = torch.eye(self.embedding_dim, dtype=torch.float64).unsqueeze(0)
         covariance = covariance + (self.covariance_eps * eye)
 
-        try:
-            inv_covariance = torch.linalg.inv(covariance)
-        except RuntimeError:
-            inv_covariance = torch.linalg.pinv(covariance)
+        inv_covariance = self._invert_covariance_matrices(covariance)
 
         self.mean = mean.reshape(self.embedding_dim, feature_height, feature_width).to(dtype=torch.float32)
         self.inv_covariance = inv_covariance.to(dtype=torch.float32)
