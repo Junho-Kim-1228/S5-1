@@ -22,6 +22,7 @@ class AnomaConfig:
     device: str
     embedding_dim: int
     covariance_eps: float
+    skip_export: bool
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
@@ -49,6 +50,11 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         default=0.01,
         help="Diagonal epsilon added before covariance inversion.",
     )
+    parser.add_argument(
+        "--skip-export",
+        action="store_true",
+        help="Skip ONNX/state export and keep only metrics/debug outputs.",
+    )
     args = parser.parse_args(argv)
 
     if not 0.0 < args.val_ratio < 1.0:
@@ -74,4 +80,5 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         device=args.device,
         embedding_dim=args.embedding_dim,
         covariance_eps=args.covariance_eps,
+        skip_export=args.skip_export,
     )

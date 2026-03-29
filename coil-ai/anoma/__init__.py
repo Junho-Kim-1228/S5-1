@@ -34,7 +34,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "status": "success",
                 "metrics": result["metrics"],
                 "dataset": result["dataset"],
-                "artifacts": {"onnx": result["artifacts"]["onnx"].name},
+                "artifacts": {
+                    "onnx": result["artifacts"]["onnx"].name
+                    if result["artifacts"]["onnx"] is not None
+                    else None
+                },
             },
         )
         log("[DONE] anomaly training finished successfully.")

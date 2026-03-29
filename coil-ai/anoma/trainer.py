@@ -92,7 +92,12 @@ def run_training(config: AnomaConfig) -> dict[str, object]:
     )
     log_progress(85)
 
-    artifacts = export_artifacts(model=model, out_dir=config.out_dir, image_size=config.image_size)
+    if config.skip_export:
+        log_step("skip export")
+        log_info("skip export enabled; metrics and debug outputs only.")
+        artifacts = {"onnx": None, "state": None}
+    else:
+        artifacts = export_artifacts(model=model, out_dir=config.out_dir, image_size=config.image_size)
     log_progress(100)
 
     return {
