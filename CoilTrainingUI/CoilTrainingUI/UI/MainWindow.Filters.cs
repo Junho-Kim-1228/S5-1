@@ -38,6 +38,16 @@ namespace CoilTrainingUI
             ApplyImageFilters();
         }
 
+        private void ImageNameFilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (!IsLoaded)
+                return;
+            if (_suppressFilterRefresh)
+                return;
+
+            ApplyImageFilters();
+        }
+
         private void Images_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
             if (e.OldItems != null)
@@ -85,11 +95,22 @@ namespace CoilTrainingUI
             if (itemObj is not ImageItem item)
                 return false;
 
-            return PassBatchFilter(item)
+            return PassImageNameFilter(item)
+                && PassBatchFilter(item)
                 && PassStatusFilter(item)
                 && PassDefectTypeFilter(item)
                 && PassReviewPriorityFilter(item)
                 && PassDataQualityFilter(item);
+        }
+
+        private bool PassImageNameFilter(ImageItem item)
+        {
+            string keyword = (ImageNameFilterTextBox.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(keyword))
+                return true;
+
+            string fileName = item.FileName ?? "";
+            return fileName.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private bool PassBatchFilter(ImageItem item)
@@ -251,16 +272,22 @@ namespace CoilTrainingUI
 
         private void RefreshSummaryCounts()
         {
-            int total = _images.Count;
+            var uniqueImages = _images
+                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .GroupBy(item => item.ProcessedPath, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+
+            int total = uniqueImages.Count;
             int visible = _imageCollectionView?.Cast<object>().OfType<ImageItem>().Count() ?? total;
 
-            int defect = _images.Count(i => i.HasLabel || !i.IsNormal);
-            int normal = total - defect;
+            int defect = uniqueImages.Count(item => item.IsConfirmedDefect);
+            int normal = uniqueImages.Count(item => item.IsConfirmedNormal);
 
             TotalCountText.Text = $"총 {total}개";
             VisibleCountText.Text = $"필터 후 {visible}개";
             NormalCountText.Text = $"정상 {normal}개";
-            DefectCountText.Text = $"불량 {defect}개 (YOLO 또는 Anoma)";
+            DefectCountText.Text = $"불량 이미지 {defect}개";
         }
 
         private void MarkFilteredAbnormal_Click(object sender, RoutedEventArgs e)

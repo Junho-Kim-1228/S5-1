@@ -9,17 +9,11 @@ namespace CoilTrainingUI.Services
     {
         public string PythonExe { get; set; } = "";
         public string BatchLibraryRoot { get; set; } = "";
-        public ScriptsSection Scripts { get; set; } = new();
+        public string AiProjectRoot { get; set; } = "coil-ai-runtime";
         public WorkspaceSection Workspace { get; set; } = new();
         public FusionSection Fusion { get; set; } = new();
         public YoloInferSection YoloInfer { get; set; } = new();
         public AnomaInferSection AnomaInfer { get; set; } = new();
-
-        public class ScriptsSection
-        {
-            public string YoloTrain { get; set; } = @"scripts\train_yolo.py";
-            public string AnomaTrain { get; set; } = @"scripts\train_anoma.py";
-        }
 
         public class WorkspaceSection
         {
@@ -61,6 +55,9 @@ namespace CoilTrainingUI.Services
 
                     if (!string.IsNullOrWhiteSpace(local.BatchLibraryRoot))
                         baseSettings.BatchLibraryRoot = local.BatchLibraryRoot;
+
+                    if (!string.IsNullOrWhiteSpace(local.AiProjectRoot))
+                        baseSettings.AiProjectRoot = local.AiProjectRoot;
                 }
             }
 
@@ -74,8 +71,37 @@ namespace CoilTrainingUI.Services
             }
 
             baseSettings.PythonExe = resolvedPythonExe;
+            baseSettings.AiProjectRoot = ResolveAiProjectRootOrThrow(baseSettings.AiProjectRoot, projectRoot, appBaseDir);
 
             return baseSettings;
+        }
+
+        private static string ResolveAiProjectRootOrThrow(string configuredAiProjectRoot, string projectRoot, string appBaseDir)
+        {
+            string candidateRoot = string.IsNullOrWhiteSpace(configuredAiProjectRoot)
+                ? "coil-ai-runtime"
+                : configuredAiProjectRoot.Trim();
+
+            if (Path.IsPathRooted(candidateRoot))
+            {
+                if (Directory.Exists(candidateRoot))
+                    return Path.GetFullPath(candidateRoot);
+
+                throw new InvalidOperationException(
+                    $"AI 학습 프로젝트 폴더를 찾을 수 없습니다: {candidateRoot}");
+            }
+
+            foreach (string baseDir in GetCandidateBaseDirs(projectRoot, appBaseDir))
+            {
+                string resolved = Path.GetFullPath(Path.Combine(baseDir, candidateRoot));
+                if (Directory.Exists(resolved))
+                    return resolved;
+            }
+
+            throw new InvalidOperationException(
+                "AI 학습 프로젝트 폴더를 찾을 수 없습니다. " +
+                "config/appsettings.local.json의 AiProjectRoot를 설정하거나, " +
+                "앱 폴더 또는 프로젝트 루트 아래에 coil-ai 폴더를 배치하세요.");
         }
 
         private static string? ResolvePythonExePath(string configuredPythonExe, string projectRoot, string appBaseDir)

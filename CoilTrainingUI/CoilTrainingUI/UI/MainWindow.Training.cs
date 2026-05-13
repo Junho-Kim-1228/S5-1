@@ -130,12 +130,16 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(anomaOut);
 
                 string pythonExe = settings.PythonExe;
-                string yoloScript = IOPath.Combine(projectRoot, settings.Scripts.YoloTrain);
-                string anomaScript = IOPath.Combine(projectRoot, settings.Scripts.AnomaTrain);
+                string aiProjectRoot = settings.AiProjectRoot;
+                string yoloScript = IOPath.Combine(aiProjectRoot, "scripts", "train_yolo.py");
+                string anomaScript = IOPath.Combine(aiProjectRoot, "scripts", "train_anoma.py");
 
                 if (!File.Exists(yoloScript) || !File.Exists(anomaScript))
                 {
-                    MessageBox.Show("scripts/train_yolo.py 또는 scripts/train_anoma.py가 없습니다.");
+                    MessageBox.Show(
+                        $"AI 학습 폴더가 올바르지 않습니다.\n" +
+                        $"폴더: {aiProjectRoot}\n" +
+                        $"필수 파일: scripts/train_yolo.py, scripts/train_anoma.py");
                     return;
                 }
 
@@ -148,7 +152,7 @@ namespace CoilTrainingUI
                     pythonExe: pythonExe,
                     scriptPath: yoloScript,
                     args: $"--workspace \"{yoloWs.WorkspaceRoot}\" --out \"{yoloOut}\"",
-                    workingDir: projectRoot,
+                    workingDir: aiProjectRoot,
                     logPath: IOPath.Combine(logsDir, "yolo.log"),
                     ct: cts.Token,
                     onOutputLine: line =>
@@ -177,7 +181,7 @@ namespace CoilTrainingUI
                     pythonExe: pythonExe,
                     scriptPath: anomaScript,
                     args: $"--workspace \"{anomaWs.WorkspaceRoot}\" --out \"{anomaOut}\"",
-                    workingDir: projectRoot,
+                    workingDir: aiProjectRoot,
                     logPath: IOPath.Combine(logsDir, "anoma.log"),
                     ct: cts.Token,
                     onOutputLine: line =>
@@ -274,6 +278,7 @@ namespace CoilTrainingUI
                 WriteRunManifest(
                     runDir: runDir,
                     projectRoot: projectRoot,
+                    aiProjectRoot: aiProjectRoot,
                     pythonExe: pythonExe,
                     yoloScript: yoloScript,
                     anomaScript: anomaScript,
@@ -568,6 +573,7 @@ namespace CoilTrainingUI
         private void WriteRunManifest(
             string runDir,
             string projectRoot,
+            string aiProjectRoot,
             string pythonExe,
             string yoloScript,
             string anomaScript,
@@ -586,6 +592,7 @@ namespace CoilTrainingUI
             {
                 CreatedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 ProjectRoot = projectRoot,
+                AiProjectRoot = aiProjectRoot,
                 PythonExe = pythonExe,
                 Scripts = new { Yolo = yoloScript, Anoma = anomaScript },
                 Workspaces = new { Yolo = yoloWorkspaceRoot, Anoma = anomaWorkspaceRoot },
