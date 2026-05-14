@@ -104,6 +104,12 @@ class PatchcoreModel(AnomalyModelBase):
         self.memory_bank: torch.Tensor | None = None
         self._warned_cpu_fallback = False
 
+    def _priority_hash(self, start_index: int, count: int) -> torch.Tensor:
+        ids = torch.arange(start_index, start_index + count, dtype=torch.int64)
+        seed_term = torch.full_like(ids, int(self.seed) + 1)
+        hashed = (ids * 6364136223846793005 + seed_term * 1442695040888963407) % 9223372036854775783
+        return hashed
+
     @staticmethod
     def _score_from_maps_numpy(anomaly_maps: np.ndarray) -> np.ndarray:
         if anomaly_maps.ndim != 3:
@@ -134,15 +140,16 @@ class PatchcoreModel(AnomalyModelBase):
             return torch.index_select(embedding, 1, selected)
 
     def fit(self, train_loader) -> None:
-        generator = torch.Generator(device="cpu").manual_seed(self.seed)
         memory_bank: torch.Tensor | None = None
         priorities: torch.Tensor | None = None
+        patch_offset = 0
 
         for batch in train_loader:
             images = batch["image"].to(self.device, non_blocking=True)
             embedding = self._embed(images).cpu().to(dtype=torch.float32)
             patches = embedding.permute(0, 2, 3, 1).reshape(-1, embedding.shape[1])
-            patch_priorities = torch.rand(patches.shape[0], generator=generator)
+            patch_priorities = self._priority_hash(patch_offset, patches.shape[0])
+            patch_offset += patches.shape[0]
 
             if memory_bank is None:
                 memory_bank = patches
@@ -152,7 +159,7 @@ class PatchcoreModel(AnomalyModelBase):
                 priorities = torch.cat([priorities, patch_priorities], dim=0)
 
             if memory_bank.shape[0] > self.memory_bank_size:
-                keep = torch.topk(priorities, k=self.memory_bank_size, largest=True).indices
+                keep = torch.topk(priorities, k=self.memory_bank_size, largest=False).indices
                 memory_bank = memory_bank.index_select(0, keep)
                 priorities = priorities.index_select(0, keep)
 
