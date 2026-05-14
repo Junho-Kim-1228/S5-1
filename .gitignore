@@ -3,6 +3,10 @@ config/appsettings.local.json
 
 #python scripts
 scripts/
+!coil-ai/scripts/
+!coil-ai/scripts/prepare_yolo_workspace.py
+!coil-ai/scripts/tile_yolo_workspace.py
+!coil-ai/scripts/sitecustomize.py
 
 #training data
 datasets/
