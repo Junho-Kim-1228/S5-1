@@ -26,11 +26,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         set_seed(args.seed)
         result = run_training(args)
+        model_name = str(result["model"].model_info().get("model", args.model))
         save_train_summary(
             summary_path,
             {
                 "task": "anomaly_detection",
-                "model": "padim",
+                "model": model_name,
                 "status": "success",
                 "metrics": result["metrics"],
                 "dataset": result["dataset"],
@@ -52,7 +53,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 summary_path,
                 {
                     "task": "anomaly_detection",
-                    "model": "padim",
+                    "model": args.model,
                     "status": "failed",
                     "metrics": {
                         "image_auroc": 0.0,

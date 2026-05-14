@@ -6,6 +6,7 @@ import torch
 from anoma.config import AnomaConfig
 from anoma.exporter import export_artifacts, save_debug_artifacts
 from anoma.metrics import compute_image_metrics, compute_score_distribution
+from anoma.models.patchcore import PatchcoreModel
 from anoma.models.padim import PadimModel
 from anoma.workspace import build_dataloaders, prepare_dataset, validate_workspace
 from common import log_info, log_progress, log_step
@@ -16,6 +17,25 @@ def _resolve_device(device: str) -> str:
     if requested == "auto":
         return "cuda" if torch.cuda.is_available() else "cpu"
     return requested
+
+
+def _build_model(config: AnomaConfig):
+    device = _resolve_device(config.device)
+    if config.model == "patchcore":
+        return PatchcoreModel(
+            image_size=config.image_size,
+            device=device,
+            embedding_dim=config.embedding_dim,
+            memory_bank_size=config.memory_bank_size,
+            seed=config.seed,
+        )
+    return PadimModel(
+        image_size=config.image_size,
+        device=device,
+        embedding_dim=config.embedding_dim,
+        covariance_eps=config.covariance_eps,
+        seed=config.seed,
+    )
 
 
 def run_training(config: AnomaConfig) -> dict[str, object]:
@@ -57,13 +77,7 @@ def run_training(config: AnomaConfig) -> dict[str, object]:
     )
     log_progress(40)
 
-    model = PadimModel(
-        image_size=config.image_size,
-        device=_resolve_device(config.device),
-        embedding_dim=config.embedding_dim,
-        covariance_eps=config.covariance_eps,
-        seed=config.seed,
-    )
+    model = _build_model(config)
     log_info(f"model info: {model.model_info()}")
 
     log_step("fit model")

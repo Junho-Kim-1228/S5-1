@@ -14,6 +14,7 @@ class AnomaConfig:
     workspace: Path
     out_dir: Path
     dataset_name: str
+    model: str
     image_size: int
     batch_size: int
     num_workers: int
@@ -22,16 +23,23 @@ class AnomaConfig:
     device: str
     embedding_dim: int
     covariance_eps: float
+    memory_bank_size: int
     skip_export: bool
 
 
 def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
     parser = argparse.ArgumentParser(
-        description="Train a PaDiM anomaly detector and export it to ONNX."
+        description="Train an anomaly detector and optionally export it to ONNX."
     )
     parser.add_argument("--workspace", required=True, help="Raw anomaly data root.")
     parser.add_argument("--out", required=True, help="Output directory for artifacts.")
     parser.add_argument("--dataset-name", default="pcb_v1", help="Generated dataset name.")
+    parser.add_argument(
+        "--model",
+        default="padim",
+        choices=["padim", "patchcore"],
+        help="Anomaly model to run.",
+    )
     parser.add_argument("--image-size", type=int, default=256, help="Square input size.")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for feature extraction.")
     parser.add_argument(
@@ -51,6 +59,12 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         help="Diagonal epsilon added before covariance inversion.",
     )
     parser.add_argument(
+        "--memory-bank-size",
+        type=int,
+        default=50000,
+        help="PatchCore memory bank cap. Ignored by PaDiM.",
+    )
+    parser.add_argument(
         "--skip-export",
         action="store_true",
         help="Skip ONNX/state export and keep only metrics/debug outputs.",
@@ -67,11 +81,14 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         raise SystemExit("--embedding-dim must be positive.")
     if args.covariance_eps <= 0:
         raise SystemExit("--covariance-eps must be positive.")
+    if args.memory_bank_size <= 0:
+        raise SystemExit("--memory-bank-size must be positive.")
 
     return AnomaConfig(
         workspace=resolve_path(args.workspace),
         out_dir=resolve_path(args.out),
         dataset_name=args.dataset_name,
+        model=args.model,
         image_size=args.image_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -80,5 +97,6 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         device=args.device,
         embedding_dim=args.embedding_dim,
         covariance_eps=args.covariance_eps,
+        memory_bank_size=args.memory_bank_size,
         skip_export=args.skip_export,
     )

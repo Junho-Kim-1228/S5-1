@@ -207,7 +207,7 @@ def save_debug_artifacts(
 def export_artifacts(*, model, out_dir: Path, image_size: int) -> dict[str, Path]:
     ensure_directory(out_dir)
     onnx_path = out_dir / "anoma.onnx"
-    state_path = out_dir / "padim_state.pt"
+    state_path = out_dir / f"{model.model_info().get('model', 'anoma')}_state.pt"
 
     log_step("export onnx")
     try:
