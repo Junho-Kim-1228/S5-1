@@ -58,6 +58,16 @@ namespace CoilTrainingUI
                 dir = dir.Parent;
             }
 
+            DirectoryInfo? configRoot = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+            while (configRoot != null)
+            {
+                string configPath = IOPath.Combine(configRoot.FullName, "config", "appsettings.json");
+                if (File.Exists(configPath))
+                    return configRoot.FullName;
+
+                configRoot = configRoot.Parent;
+            }
+
             return AppDomain.CurrentDomain.BaseDirectory;
         }
 

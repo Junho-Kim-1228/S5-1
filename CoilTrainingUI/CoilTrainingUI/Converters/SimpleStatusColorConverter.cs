@@ -15,7 +15,13 @@ namespace CoilTrainingUI.Converters
             return text switch
             {
                 "불량" => Brushes.IndianRed,
+                "이상" => Brushes.IndianRed,
+                "검출" => Brushes.IndianRed,
+                "있음" => Brushes.IndianRed,
                 "정상" => Brushes.SeaGreen,
+                "없음" => Brushes.SeaGreen,
+                "건너뜀" => Brushes.Gray,
+                "미검출" => Brushes.Gray,
                 _ => Brushes.Gray
             };
         }

@@ -84,7 +84,25 @@
             </MenuItem>
 
             <MenuItem Header="Train">
-                <MenuItem Header="전체 학습 실행 (YOLO + Anomalib)" 
+                <MenuItem Header="학습 파이프라인">
+                    <MenuItem x:Name="TrainPipelineAnomaThenYoloMenuItem"
+                              Header="2단계 (Anoma → YOLO)"
+                              IsCheckable="True"
+                              IsChecked="True"
+                              Click="TrainPipelineAnomaThenYolo_Click"/>
+                    <MenuItem x:Name="TrainPipelineAnomaOnlyMenuItem"
+                              Header="Anoma만"
+                              IsCheckable="True"
+                              Click="TrainPipelineAnomaOnly_Click"/>
+                    <MenuItem x:Name="TrainPipelineYoloOnlyMenuItem"
+                              Header="YOLO만"
+                              IsCheckable="True"
+                              Click="TrainPipelineYoloOnly_Click"/>
+                </MenuItem>
+
+                <Separator/>
+
+                <MenuItem Header="현재 파이프라인 학습 실행" 
                           Click="TrainAll_Click"/>
 
                 <MenuItem Header="패키지만 다시 생성" 
@@ -301,52 +319,65 @@
                                                    FontSize="13"
                                                    Margin="0,0,0,2"/>
 
-                                        <!-- 상태 표시 (4개 고정) -->
+                                        <!-- 상태 표시 (2-stage 기준) -->
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="AI YOLO:"
+                                            <TextBlock Text="AI Stage1:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding AiYoloStatusText}"
+                                            <TextBlock Text="{Binding AiStage1StatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding AiYoloStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Foreground="{Binding AiStage1StatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,12,0"/>
 
-                                            <TextBlock Text="AI Anoma:"
+                                            <TextBlock Text="AI Stage2:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding AiAnomaStatusText}"
+                                            <TextBlock Text="{Binding AiStage2StatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding AiAnomaStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Foreground="{Binding AiStage2StatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,0,0"/>
                                         </StackPanel>
 
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="GT YOLO:"
+                                            <TextBlock Text="AI Final:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding GtYoloStatusText}"
+                                            <TextBlock Text="{Binding AiFinalStatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding GtYoloStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Foreground="{Binding AiFinalStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,12,0"/>
 
-                                            <TextBlock Text="GT Anoma:"
+                                            <TextBlock Text="GT Image:"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        Foreground="#606060"/>
 
-                                            <TextBlock Text="{Binding GtAnomaStatusText}"
+                                            <TextBlock Text="{Binding GtImageStatusText}"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{Binding GtAnomaStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Foreground="{Binding GtImageStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
+                                                       Margin="4,0,0,0"/>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="GT Boxes:"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#606060"/>
+
+                                            <TextBlock Text="{Binding GtBoxesStatusText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding GtBoxesStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
                                                        Margin="4,0,0,0"/>
                                         </StackPanel>
 

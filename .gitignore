@@ -1,5 +1,8 @@
 #congig files
 config/appsettings.local.json
+CoilTrainingUI/config/appsettings.local.json
+CoilTrainingUI/python_env/
+CoilTrainingUI/coil-ai-runtime/
 
 #python scripts
 scripts/
@@ -12,6 +15,8 @@ scripts/
 datasets/
 models/
 training_inbox/
+!CoilTrainingUI/CoilTrainingUI/Models/
+!CoilTrainingUI/CoilTrainingUI/Models/**
 !coil-ai/anoma/models/
 !coil-ai/anoma/models/**
 !coil-ai/yolo/models/

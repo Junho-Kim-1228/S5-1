@@ -233,11 +233,37 @@ namespace CoilTrainingUI.Models
         // AI 기준 불량 여부 (YOLO/Anoma 둘 중 하나라도 불량이면 true)
         public bool AiIsDefect => AiYoloDefect || AiAnomaDefect;
 
-        // UI 표시용
+        public int AiDetectionCount => AiDentCount + AiLooseCount + AiOtherCount;
+
+        // 기존 UI 표시용
         public string AiYoloStatusText => !HasAiInfer ? "미분류" : (AiYoloDefect ? "불량" : "정상");
         public string AiAnomaStatusText => !HasAiInfer ? "미분류" : (AiAnomaDefect ? "불량" : "정상");
         public string GtYoloStatusText => HasLabel ? "불량" : "정상";
         public string GtAnomaStatusText => IsNormal ? "정상" : "불량";
+
+        // 2-stage 파이프라인 표시용
+        public string AiStage1StatusText => !HasAiInfer ? "미분류" : (AiAnomaDefect ? "이상" : "정상");
+
+        public string AiStage2StatusText
+        {
+            get
+            {
+                if (!HasAiInfer)
+                    return "미분류";
+
+                if (!AiAnomaDefect && AiDetectionCount == 0)
+                    return "건너뜀";
+
+                if (AiDetectionCount > 0)
+                    return "검출";
+
+                return "미검출";
+            }
+        }
+
+        public string AiFinalStatusText => !HasAiInfer ? "미분류" : (AiIsDefect ? "불량" : "정상");
+        public string GtImageStatusText => IsNormal ? "정상" : "불량";
+        public string GtBoxesStatusText => HasLabel ? "있음" : "없음";
 
         public string StatusText
         {
@@ -270,10 +296,16 @@ namespace CoilTrainingUI.Models
         private void OnStatusPropertiesChanged()
         {
             OnPropertyChanged(nameof(AiIsDefect));
+            OnPropertyChanged(nameof(AiDetectionCount));
             OnPropertyChanged(nameof(AiYoloStatusText));
             OnPropertyChanged(nameof(AiAnomaStatusText));
             OnPropertyChanged(nameof(GtYoloStatusText));
             OnPropertyChanged(nameof(GtAnomaStatusText));
+            OnPropertyChanged(nameof(AiStage1StatusText));
+            OnPropertyChanged(nameof(AiStage2StatusText));
+            OnPropertyChanged(nameof(AiFinalStatusText));
+            OnPropertyChanged(nameof(GtImageStatusText));
+            OnPropertyChanged(nameof(GtBoxesStatusText));
             OnPropertyChanged(nameof(IsConfirmedDefect));
             OnPropertyChanged(nameof(IsConfirmedNormal));
             OnPropertyChanged(nameof(ReviewDone));

@@ -20,6 +20,7 @@ namespace CoilTrainingUI.Services
             public double TrainRatio { get; set; } = 0.8;
             public double ValRatio { get; set; } = 0.2;
             public int Seed { get; set; } = 42;
+            public int YoloMaxBackground { get; set; } = 250;
         }
 
         public class FusionSection
@@ -35,7 +36,8 @@ namespace CoilTrainingUI.Services
         public static AppSettings LoadOrThrow(string projectRoot)
         {
             string appBaseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string basePath = Path.Combine(projectRoot, "config", "appsettings.json");
+            string settingsRoot = ResolveSettingsRootOrThrow(projectRoot, appBaseDir);
+            string basePath = Path.Combine(settingsRoot, "config", "appsettings.json");
             if (!File.Exists(basePath))
                 throw new FileNotFoundException($"Missing appsettings.json: {basePath}");
 
@@ -43,7 +45,7 @@ namespace CoilTrainingUI.Services
                               ?? new AppSettings();
 
             // local 덮어쓰기
-            string localPath = Path.Combine(projectRoot, "config", "appsettings.local.json");
+            string localPath = Path.Combine(settingsRoot, "config", "appsettings.local.json");
             if (File.Exists(localPath))
             {
                 var local = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(localPath));
@@ -61,7 +63,7 @@ namespace CoilTrainingUI.Services
                 }
             }
 
-            string? resolvedPythonExe = ResolvePythonExePath(baseSettings.PythonExe, projectRoot, appBaseDir);
+            string? resolvedPythonExe = ResolvePythonExePath(baseSettings.PythonExe, settingsRoot, projectRoot, appBaseDir);
             if (string.IsNullOrWhiteSpace(resolvedPythonExe))
             {
                 throw new InvalidOperationException(
@@ -71,12 +73,45 @@ namespace CoilTrainingUI.Services
             }
 
             baseSettings.PythonExe = resolvedPythonExe;
-            baseSettings.AiProjectRoot = ResolveAiProjectRootOrThrow(baseSettings.AiProjectRoot, projectRoot, appBaseDir);
+            baseSettings.AiProjectRoot = ResolveAiProjectRootOrThrow(baseSettings.AiProjectRoot, settingsRoot, projectRoot, appBaseDir);
 
             return baseSettings;
         }
 
-        private static string ResolveAiProjectRootOrThrow(string configuredAiProjectRoot, string projectRoot, string appBaseDir)
+        private static string ResolveSettingsRootOrThrow(string projectRoot, string appBaseDir)
+        {
+            string? foundFromAppBase = FindNearestSettingsRoot(appBaseDir);
+            if (!string.IsNullOrWhiteSpace(foundFromAppBase))
+                return foundFromAppBase;
+
+            string candidateFromProjectRoot = Path.GetFullPath(projectRoot);
+            if (File.Exists(Path.Combine(candidateFromProjectRoot, "config", "appsettings.json")))
+                return candidateFromProjectRoot;
+
+            throw new InvalidOperationException(
+                "appsettings.json을 찾을 수 없습니다. " +
+                "앱 기준 폴더 또는 프로젝트 루트 아래 config/appsettings.json이 필요합니다.");
+        }
+
+        private static string? FindNearestSettingsRoot(string startDir)
+        {
+            if (string.IsNullOrWhiteSpace(startDir))
+                return null;
+
+            DirectoryInfo? current = new DirectoryInfo(startDir);
+            while (current != null)
+            {
+                string configPath = Path.Combine(current.FullName, "config", "appsettings.json");
+                if (File.Exists(configPath))
+                    return current.FullName;
+
+                current = current.Parent;
+            }
+
+            return null;
+        }
+
+        private static string ResolveAiProjectRootOrThrow(string configuredAiProjectRoot, string settingsRoot, string projectRoot, string appBaseDir)
         {
             string candidateRoot = string.IsNullOrWhiteSpace(configuredAiProjectRoot)
                 ? "coil-ai-runtime"
@@ -91,7 +126,7 @@ namespace CoilTrainingUI.Services
                     $"AI 학습 프로젝트 폴더를 찾을 수 없습니다: {candidateRoot}");
             }
 
-            foreach (string baseDir in GetCandidateBaseDirs(projectRoot, appBaseDir))
+            foreach (string baseDir in GetCandidateBaseDirs(settingsRoot, projectRoot, appBaseDir))
             {
                 string resolved = Path.GetFullPath(Path.Combine(baseDir, candidateRoot));
                 if (Directory.Exists(resolved))
@@ -104,7 +139,7 @@ namespace CoilTrainingUI.Services
                 "앱 폴더 또는 프로젝트 루트 아래에 coil-ai 폴더를 배치하세요.");
         }
 
-        private static string? ResolvePythonExePath(string configuredPythonExe, string projectRoot, string appBaseDir)
+        private static string? ResolvePythonExePath(string configuredPythonExe, string settingsRoot, string projectRoot, string appBaseDir)
         {
             if (!string.IsNullOrWhiteSpace(configuredPythonExe))
             {
@@ -112,7 +147,7 @@ namespace CoilTrainingUI.Services
                 if (Path.IsPathRooted(trimmed))
                     return File.Exists(trimmed) ? trimmed : null;
 
-                foreach (string baseDir in GetCandidateBaseDirs(projectRoot, appBaseDir))
+                foreach (string baseDir in GetCandidateBaseDirs(settingsRoot, projectRoot, appBaseDir))
                 {
                     string candidate = Path.GetFullPath(Path.Combine(baseDir, trimmed));
                     if (File.Exists(candidate))
@@ -122,7 +157,7 @@ namespace CoilTrainingUI.Services
                 return null;
             }
 
-            foreach (string candidate in GetBundledPythonCandidates(projectRoot, appBaseDir))
+            foreach (string candidate in GetBundledPythonCandidates(settingsRoot, projectRoot, appBaseDir))
             {
                 if (File.Exists(candidate))
                     return candidate;
@@ -131,18 +166,27 @@ namespace CoilTrainingUI.Services
             return null;
         }
 
-        private static IEnumerable<string> GetCandidateBaseDirs(string projectRoot, string appBaseDir)
+        private static IEnumerable<string> GetCandidateBaseDirs(string settingsRoot, string projectRoot, string appBaseDir)
         {
-            yield return appBaseDir;
+            var yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            if (!string.IsNullOrWhiteSpace(projectRoot) &&
-                !string.Equals(projectRoot, appBaseDir, StringComparison.OrdinalIgnoreCase))
+            foreach (string baseDir in new[]
             {
-                yield return projectRoot;
+                settingsRoot,
+                appBaseDir,
+                projectRoot
+            })
+            {
+                if (string.IsNullOrWhiteSpace(baseDir))
+                    continue;
+
+                string fullPath = Path.GetFullPath(baseDir);
+                if (yielded.Add(fullPath))
+                    yield return fullPath;
             }
         }
 
-        private static IEnumerable<string> GetBundledPythonCandidates(string projectRoot, string appBaseDir)
+        private static IEnumerable<string> GetBundledPythonCandidates(string settingsRoot, string projectRoot, string appBaseDir)
         {
             string[] relativeCandidates =
             {
@@ -156,7 +200,7 @@ namespace CoilTrainingUI.Services
                 "venv/bin/python"
             };
 
-            foreach (string baseDir in GetCandidateBaseDirs(projectRoot, appBaseDir))
+            foreach (string baseDir in GetCandidateBaseDirs(settingsRoot, projectRoot, appBaseDir))
             {
                 foreach (string relativePath in relativeCandidates)
                     yield return Path.GetFullPath(Path.Combine(baseDir, relativePath));

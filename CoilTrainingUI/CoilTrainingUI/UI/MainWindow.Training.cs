@@ -16,6 +16,20 @@ namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
+        private enum TrainingPipelineMode
+        {
+            AnomaThenYolo,
+            AnomaOnly,
+            YoloOnly
+        }
+
+        private sealed class RunManifestMetadata
+        {
+            public TrainingPipelineMode PipelineMode { get; set; } = TrainingPipelineMode.AnomaThenYolo;
+        }
+
+        private TrainingPipelineMode _trainingPipelineMode = TrainingPipelineMode.AnomaThenYolo;
+
         private void RequestSaveLabelsDebounced(string imagePath)
         {
             if (_isLoadingImage) return;
@@ -27,27 +41,92 @@ namespace CoilTrainingUI
             _labelSaveDebounceTimer.Start();
         }
 
+        private void TrainPipelineAnomaThenYolo_Click(object sender, RoutedEventArgs e)
+        {
+            SetTrainingPipelineMode(TrainingPipelineMode.AnomaThenYolo);
+        }
+
+        private void TrainPipelineAnomaOnly_Click(object sender, RoutedEventArgs e)
+        {
+            SetTrainingPipelineMode(TrainingPipelineMode.AnomaOnly);
+        }
+
+        private void TrainPipelineYoloOnly_Click(object sender, RoutedEventArgs e)
+        {
+            SetTrainingPipelineMode(TrainingPipelineMode.YoloOnly);
+        }
+
+        private void SetTrainingPipelineMode(TrainingPipelineMode mode)
+        {
+            _trainingPipelineMode = mode;
+
+            TrainPipelineAnomaThenYoloMenuItem.IsChecked = mode == TrainingPipelineMode.AnomaThenYolo;
+            TrainPipelineAnomaOnlyMenuItem.IsChecked = mode == TrainingPipelineMode.AnomaOnly;
+            TrainPipelineYoloOnlyMenuItem.IsChecked = mode == TrainingPipelineMode.YoloOnly;
+        }
+
+        private static string GetTrainingPipelineModeToken(TrainingPipelineMode mode)
+        {
+            return mode switch
+            {
+                TrainingPipelineMode.AnomaThenYolo => "anoma_then_yolo",
+                TrainingPipelineMode.AnomaOnly => "anoma_only",
+                TrainingPipelineMode.YoloOnly => "yolo_only",
+                _ => "anoma_then_yolo"
+            };
+        }
+
+        private static string GetTrainingPipelineDisplayName(TrainingPipelineMode mode)
+        {
+            return mode switch
+            {
+                TrainingPipelineMode.AnomaThenYolo => "2단계 (Anoma -> YOLO)",
+                TrainingPipelineMode.AnomaOnly => "Anoma만",
+                TrainingPipelineMode.YoloOnly => "YOLO만",
+                _ => "2단계 (Anoma -> YOLO)"
+            };
+        }
+
+        private static bool RequiresYoloTraining(TrainingPipelineMode mode)
+        {
+            return mode is TrainingPipelineMode.AnomaThenYolo or TrainingPipelineMode.YoloOnly;
+        }
+
+        private static bool RequiresAnomaTraining(TrainingPipelineMode mode)
+        {
+            return mode is TrainingPipelineMode.AnomaThenYolo or TrainingPipelineMode.AnomaOnly;
+        }
+
         private async void TrainAll_Click(object sender, RoutedEventArgs e)
         {
             await TrainImageInputsAsync(
                 BuildTrainingInputsFromCurrentImageScope(),
-                "Train All");
+                "Train All",
+                _trainingPipelineMode);
         }
 
         private async Task TrainSelectedBatchesAsync(IReadOnlyList<BatchLibraryItem> selectedBatches)
         {
             await TrainImageInputsAsync(
                 BuildTrainingInputsFromBatchSelection(selectedBatches),
-                "Selected Batch Train");
+                "Selected Batch Train",
+                _trainingPipelineMode);
         }
 
-        private async Task TrainImageInputsAsync(IReadOnlyList<TrainingImageInput> trainingInputs, string operationName)
+        private async Task TrainImageInputsAsync(
+            IReadOnlyList<TrainingImageInput> trainingInputs,
+            string operationName,
+            TrainingPipelineMode pipelineMode)
         {
+            string pipelineDisplayName = GetTrainingPipelineDisplayName(pipelineMode);
+            bool trainYolo = RequiresYoloTraining(pipelineMode);
+            bool trainAnoma = RequiresAnomaTraining(pipelineMode);
+
             var progressWindow = new OperationProgressWindow($"{operationName} 진행")
             {
                 Owner = this
             };
-            progressWindow.UpdateProgress(0, "작업 준비 중...");
+            progressWindow.UpdateProgress(0, $"작업 준비 중... ({pipelineDisplayName})");
             progressWindow.Show();
 
             try
@@ -99,111 +178,151 @@ namespace CoilTrainingUI
 
                 EnsureEnoughWorkspaceDiskSpace(runRoot, imagePaths, normalImagePaths);
 
-                progressWindow.UpdateProgress(15, "YOLO workspace 생성 중...");
-                var yoloWsSvc = new YoloWorkspaceService(_stateService);
-                var yoloWs = await Task.Run(() => yoloWsSvc.BuildYoloWorkspace(
-                    imagePaths,
-                    runRootDir: runRoot,
-                    trainRatio: settings.Workspace.TrainRatio,
-                    valRatio: settings.Workspace.ValRatio,
-                    seed: settings.Workspace.Seed
-                ));
-
-                progressWindow.UpdateProgress(30, "Anoma workspace 생성 중...");
-                var anomaWsSvc = new AnomaWorkspaceService(_stateService);
-                var anomaWs = await Task.Run(() => anomaWsSvc.BuildWorkspace(
-                    imagePaths,
-                    runRootDir: runRoot,
-                    trainRatio: settings.Workspace.TrainRatio,
-                    valRatio: settings.Workspace.ValRatio,
-                    seed: settings.Workspace.Seed
-                ));
-
                 string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string runDir = IOPath.Combine(runRoot, $"run_{stamp}_all");
+                string runDir = IOPath.Combine(runRoot, $"run_{stamp}_{GetTrainingPipelineModeToken(pipelineMode)}");
                 string logsDir = IOPath.Combine(runDir, "logs");
                 Directory.CreateDirectory(logsDir);
 
+                string stagedRawRoot = IOPath.Combine(runDir, "staged_raw");
+                progressWindow.UpdateProgress(15, "학습 raw 입력 staging 중...");
+                int stagedImageCount = await Task.Run(() => StageTrainingInputsForPython(
+                    trainingInputs,
+                    stagedRawRoot
+                ));
+
+                if (stagedImageCount == 0)
+                {
+                    MessageBox.Show("staged raw 입력 생성 결과가 비었습니다.");
+                    return;
+                }
+
+                string yoloWorkspaceRoot = IOPath.Combine(runDir, "yolo_workspace");
                 string yoloOut = IOPath.Combine(runDir, "yolo_out");
                 string anomaOut = IOPath.Combine(runDir, "anoma_out");
+                string yoloPrepLog = IOPath.Combine(logsDir, "yolo_workspace.log");
                 Directory.CreateDirectory(yoloOut);
                 Directory.CreateDirectory(anomaOut);
 
                 string pythonExe = settings.PythonExe;
                 string aiProjectRoot = settings.AiProjectRoot;
+                string yoloPrepScript = IOPath.Combine(aiProjectRoot, "scripts", "prepare_yolo_workspace.py");
                 string yoloScript = IOPath.Combine(aiProjectRoot, "scripts", "train_yolo.py");
                 string anomaScript = IOPath.Combine(aiProjectRoot, "scripts", "train_anoma.py");
 
-                if (!File.Exists(yoloScript) || !File.Exists(anomaScript))
+                if ((trainYolo && (!File.Exists(yoloPrepScript) || !File.Exists(yoloScript))) ||
+                    (trainAnoma && !File.Exists(anomaScript)))
                 {
                     MessageBox.Show(
                         $"AI 학습 폴더가 올바르지 않습니다.\n" +
                         $"폴더: {aiProjectRoot}\n" +
-                        $"필수 파일: scripts/train_yolo.py, scripts/train_anoma.py");
+                        $"필수 파일: {(trainAnoma ? "scripts/train_anoma.py" : "")}" +
+                        $"{(trainAnoma && trainYolo ? ", " : "")}" +
+                        $"{(trainYolo ? "scripts/prepare_yolo_workspace.py, scripts/train_yolo.py" : "")}");
                     return;
                 }
 
                 var runner = new PythonRunner();
                 using var cts = new CancellationTokenSource();
 
-                progressWindow.UpdateProgress(45, "YOLO 학습 중...");
-                progressWindow.AppendLog("[YOLO] START");
-                int yoloCode = await runner.RunAsync(
-                    pythonExe: pythonExe,
-                    scriptPath: yoloScript,
-                    args: $"--workspace \"{yoloWs.WorkspaceRoot}\" --out \"{yoloOut}\"",
-                    workingDir: aiProjectRoot,
-                    logPath: IOPath.Combine(logsDir, "yolo.log"),
-                    ct: cts.Token,
-                    onOutputLine: line =>
-                    {
-                        progressWindow.AppendLog("[YOLO] " + line);
-                        int? logPercent = TryParseTrainingPercentFromLog(line);
-                        if (logPercent.HasValue)
-                        {
-                            int mapped = MapStagePercent(logPercent.Value, 45, 20);
-                            progressWindow.UpdateProgress(mapped, $"YOLO 학습 중... ({logPercent.Value}%)");
-                        }
-                    }
-                );
-
-                if (yoloCode != 0)
+                if (trainYolo)
                 {
-                    MessageBox.Show($"YOLO 학습 실패 (ExitCode={yoloCode})\nlogs/yolo.log 확인");
-                    OpenFolder(logsDir);
-                    return;
+                    progressWindow.UpdateProgress(trainAnoma ? 25 : 30, "YOLO workspace 생성 중...");
+                    progressWindow.AppendLog("[YOLO-WS] START");
+
+                    string yoloPrepArgs =
+                        $"--raw-root \"{stagedRawRoot}\" " +
+                        $"--out-root \"{yoloWorkspaceRoot}\" " +
+                        $"--train-ratio {settings.Workspace.TrainRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
+                        $"--seed {settings.Workspace.Seed} " +
+                        $"--max-background {settings.Workspace.YoloMaxBackground}";
+
+                    int yoloPrepCode = await runner.RunAsync(
+                        pythonExe: pythonExe,
+                        scriptPath: yoloPrepScript,
+                        args: yoloPrepArgs,
+                        workingDir: aiProjectRoot,
+                        logPath: yoloPrepLog,
+                        ct: cts.Token,
+                        onOutputLine: line => progressWindow.AppendLog("[YOLO-WS] " + line)
+                    );
+
+                    if (yoloPrepCode != 0)
+                    {
+                        MessageBox.Show($"YOLO workspace 생성 실패 (ExitCode={yoloPrepCode})\nlogs/yolo_workspace.log 확인");
+                        OpenFolder(logsDir);
+                        return;
+                    }
                 }
 
-                progressWindow.UpdateProgress(68, "YOLO 학습 완료");
-                progressWindow.UpdateProgress(72, "Anoma 학습 중...");
-                progressWindow.AppendLog("[ANOMA] START");
-                int anomaCode = await runner.RunAsync(
-                    pythonExe: pythonExe,
-                    scriptPath: anomaScript,
-                    args: $"--workspace \"{anomaWs.WorkspaceRoot}\" --out \"{anomaOut}\"",
-                    workingDir: aiProjectRoot,
-                    logPath: IOPath.Combine(logsDir, "anoma.log"),
-                    ct: cts.Token,
-                    onOutputLine: line =>
-                    {
-                        progressWindow.AppendLog("[ANOMA] " + line);
-                        int? logPercent = TryParseTrainingPercentFromLog(line);
-                        if (logPercent.HasValue)
-                        {
-                            int mapped = MapStagePercent(logPercent.Value, 72, 18);
-                            progressWindow.UpdateProgress(mapped, $"Anoma 학습 중... ({logPercent.Value}%)");
-                        }
-                    }
-                );
-
-                if (anomaCode != 0)
+                if (trainAnoma)
                 {
-                    MessageBox.Show($"Anomalib 학습 실패 (ExitCode={anomaCode})\nlogs/anoma.log 확인");
-                    OpenFolder(logsDir);
-                    return;
+                    int stageStart = trainYolo ? 40 : 40;
+                    int stageSpan = trainYolo ? 20 : 45;
+
+                    progressWindow.UpdateProgress(stageStart, "Anoma 학습 중...");
+                    progressWindow.AppendLog("[ANOMA] START");
+                    int anomaCode = await runner.RunAsync(
+                        pythonExe: pythonExe,
+                        scriptPath: anomaScript,
+                        args: $"--workspace \"{stagedRawRoot}\" --out \"{anomaOut}\"",
+                        workingDir: aiProjectRoot,
+                        logPath: IOPath.Combine(logsDir, "anoma.log"),
+                        ct: cts.Token,
+                        onOutputLine: line =>
+                        {
+                            progressWindow.AppendLog("[ANOMA] " + line);
+                            int? logPercent = TryParseTrainingPercentFromLog(line);
+                            if (logPercent.HasValue)
+                            {
+                                int mapped = MapStagePercent(logPercent.Value, stageStart, stageSpan);
+                                progressWindow.UpdateProgress(mapped, $"Anoma 학습 중... ({logPercent.Value}%)");
+                            }
+                        }
+                    );
+
+                    if (anomaCode != 0)
+                    {
+                        MessageBox.Show($"Anoma 학습 실패 (ExitCode={anomaCode})\nlogs/anoma.log 확인");
+                        OpenFolder(logsDir);
+                        return;
+                    }
                 }
 
-                progressWindow.UpdateProgress(92, "패키지 생성 중...");
+                if (trainYolo)
+                {
+                    int stageStart = trainAnoma ? 65 : 40;
+                    int stageSpan = trainAnoma ? 20 : 45;
+
+                    progressWindow.UpdateProgress(stageStart, "YOLO 학습 중...");
+                    progressWindow.AppendLog("[YOLO] START");
+                    int yoloCode = await runner.RunAsync(
+                        pythonExe: pythonExe,
+                        scriptPath: yoloScript,
+                        args: $"--workspace \"{yoloWorkspaceRoot}\" --out \"{yoloOut}\"",
+                        workingDir: aiProjectRoot,
+                        logPath: IOPath.Combine(logsDir, "yolo.log"),
+                        ct: cts.Token,
+                        onOutputLine: line =>
+                        {
+                            progressWindow.AppendLog("[YOLO] " + line);
+                            int? logPercent = TryParseTrainingPercentFromLog(line);
+                            if (logPercent.HasValue)
+                            {
+                                int mapped = MapStagePercent(logPercent.Value, stageStart, stageSpan);
+                                progressWindow.UpdateProgress(mapped, $"YOLO 학습 중... ({logPercent.Value}%)");
+                            }
+                        }
+                    );
+
+                    if (yoloCode != 0)
+                    {
+                        MessageBox.Show($"YOLO 학습 실패 (ExitCode={yoloCode})\nlogs/yolo.log 확인");
+                        OpenFolder(logsDir);
+                        return;
+                    }
+                }
+
+                progressWindow.UpdateProgress(92, $"패키지 생성 중... ({pipelineDisplayName})");
                 string pkgDir = IOPath.Combine(runDir, "inference_package");
                 string modelsDir = IOPath.Combine(pkgDir, "models");
                 string cfgDir = IOPath.Combine(pkgDir, "config");
@@ -214,65 +333,30 @@ namespace CoilTrainingUI
                 string yoloOnnx = IOPath.Combine(yoloOut, "yolo.onnx");
                 string anomaOnnx = IOPath.Combine(anomaOut, "anoma.onnx");
 
-                if (!File.Exists(yoloOnnx) || !File.Exists(anomaOnnx))
+                if ((trainYolo && !File.Exists(yoloOnnx)) || (trainAnoma && !File.Exists(anomaOnnx)))
                 {
-                    MessageBox.Show("ONNX 산출물이 없습니다. 스크립트가 yolo.onnx / anoma.onnx를 out 폴더에 생성해야 합니다.");
+                    MessageBox.Show("필수 ONNX 산출물이 없습니다. 스크립트가 필요한 모델 파일을 out 폴더에 생성해야 합니다.");
                     OpenFolder(runDir);
                     return;
                 }
 
-                File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
-                File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
+                if (trainYolo)
+                    File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
 
-                var pipelineObj = new
-                {
-                    schema_version = 1,
-                    input = new
-                    {
-                        image_format = "bmp"
-                    },
-                    yolo = new
-                    {
-                        model = "models/yolo.onnx",
-                        imgsz = settings.YoloInfer.ImgSz,
-                        letterbox = settings.YoloInfer.Letterbox,
-                        conf_thres = settings.YoloInfer.ConfThres,
-                        iou_thres = settings.YoloInfer.IouThres,
-                        max_det = settings.YoloInfer.MaxDet,
-                        class_map = new { dent = 0, loose = 1 }
-                    },
-                    anoma = new
-                    {
-                        model = "models/anoma.onnx",
-                        mode = settings.AnomaInfer.Mode,
-                        input_size = settings.AnomaInfer.InputSize,
-                        score_thres = settings.AnomaInfer.ScoreThres,
-                        crop_padding_px = settings.AnomaInfer.CropPaddingPx
-                    },
-                    fusion = new
-                    {
-                        rule = settings.Fusion.Rule,
-                        yolo_conf_thres = settings.Fusion.YoloThreshold,
-                        anoma_score_thres = settings.Fusion.AnomaThreshold
-                    },
-                    output = new
-                    {
-                        format = "json",
-                        schema = "detections_v1"
-                    }
-                };
+                if (trainAnoma)
+                    File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
                 File.WriteAllText(
                     pipelinePath,
                     JsonSerializer.Serialize(
-                        pipelineObj,
+                        BuildPipelineConfig(settings, pipelineMode),
                         new JsonSerializerOptions { WriteIndented = true }
                     ),
                     System.Text.Encoding.UTF8
                 );
 
-                VerifyInferencePackageOrThrow(pkgDir);
+                VerifyInferencePackageOrThrow(pkgDir, pipelineMode);
                 progressWindow.UpdateProgress(100, "학습 및 패키지 생성 완료");
 
                 WriteRunManifest(
@@ -282,8 +366,9 @@ namespace CoilTrainingUI
                     pythonExe: pythonExe,
                     yoloScript: yoloScript,
                     anomaScript: anomaScript,
-                    yoloWorkspaceRoot: yoloWs.WorkspaceRoot,
-                    anomaWorkspaceRoot: anomaWs.WorkspaceRoot,
+                    pipelineMode: pipelineMode,
+                    yoloWorkspaceRoot: trainYolo ? yoloWorkspaceRoot : "",
+                    anomaWorkspaceRoot: trainAnoma ? stagedRawRoot : "",
                     yoloOutDir: yoloOut,
                     anomaOutDir: anomaOut,
                     inferencePackageDir: pkgDir,
@@ -401,6 +486,77 @@ namespace CoilTrainingUI
             return imageDir;
         }
 
+        private int StageTrainingInputsForPython(
+            IReadOnlyList<TrainingImageInput> trainingInputs,
+            string stagedRawRoot)
+        {
+            if (trainingInputs == null)
+                throw new ArgumentNullException(nameof(trainingInputs));
+
+            if (Directory.Exists(stagedRawRoot))
+                Directory.Delete(stagedRawRoot, recursive: true);
+
+            Directory.CreateDirectory(stagedRawRoot);
+
+            var usedRelativePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int stagedCount = 0;
+
+            foreach (var input in trainingInputs)
+            {
+                if (input == null || string.IsNullOrWhiteSpace(input.ImagePath) || !File.Exists(input.ImagePath))
+                    continue;
+
+                string batchKey = SanitizePathSegment(
+                    string.IsNullOrWhiteSpace(input.BatchKey) ? "batch_unknown" : input.BatchKey
+                );
+
+                string originalName = IOPath.GetFileNameWithoutExtension(input.ImagePath);
+                string originalExt = IOPath.GetExtension(input.ImagePath);
+                string safeStem = SanitizePathSegment(string.IsNullOrWhiteSpace(originalName) ? "image" : originalName);
+                string safeExt = string.IsNullOrWhiteSpace(originalExt) ? ".bmp" : originalExt;
+
+                int copyIndex = 0;
+                string relativeImagePath;
+                do
+                {
+                    string indexedStem = copyIndex == 0 ? safeStem : $"{safeStem}__{copyIndex:000}";
+                    relativeImagePath = IOPath.Combine(batchKey, indexedStem + safeExt);
+                    copyIndex++;
+                }
+                while (!usedRelativePaths.Add(relativeImagePath));
+
+                string destImagePath = IOPath.Combine(stagedRawRoot, relativeImagePath);
+                Directory.CreateDirectory(IOPath.GetDirectoryName(destImagePath)!);
+
+                File.Copy(input.ImagePath, destImagePath, overwrite: true);
+
+                var state = _stateService.Load(input.ImagePath);
+                _stateService.Save(destImagePath, state);
+                stagedCount++;
+            }
+
+            return stagedCount;
+        }
+
+        private static string SanitizePathSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "item";
+
+            var sb = new System.Text.StringBuilder(value.Length);
+            foreach (char ch in value)
+            {
+                sb.Append(ch switch
+                {
+                    '<' or '>' or ':' or '"' or '/' or '\\' or '|' or '?' or '*' => '_',
+                    _ => ch
+                });
+            }
+
+            string sanitized = sb.ToString().Trim();
+            return string.IsNullOrWhiteSpace(sanitized) ? "item" : sanitized;
+        }
+
         private void OpenFolder(string path)
         {
             try
@@ -414,7 +570,117 @@ namespace CoilTrainingUI
             catch { }
         }
 
-        private void VerifyInferencePackageOrThrow(string pkgDir)
+        private object BuildPipelineConfig(AppSettings settings, TrainingPipelineMode pipelineMode)
+        {
+            var requiredModels = new List<string>();
+            if (RequiresAnomaTraining(pipelineMode))
+                requiredModels.Add("anoma");
+            if (RequiresYoloTraining(pipelineMode))
+                requiredModels.Add("yolo");
+
+            var pipelineObj = new Dictionary<string, object?>
+            {
+                ["schema_version"] = 2,
+                ["pipeline"] = new
+                {
+                    mode = GetTrainingPipelineModeToken(pipelineMode),
+                    display_name = GetTrainingPipelineDisplayName(pipelineMode),
+                    stage1 = pipelineMode == TrainingPipelineMode.YoloOnly ? "yolo" : "anoma",
+                    stage2 = pipelineMode == TrainingPipelineMode.AnomaThenYolo ? "yolo" : null,
+                    skip_yolo_when_stage1_normal = pipelineMode == TrainingPipelineMode.AnomaThenYolo,
+                    required_models = requiredModels
+                },
+                ["input"] = new
+                {
+                    image_format = "bmp"
+                },
+                ["output"] = new
+                {
+                    format = "json",
+                    schema = "detections_v1"
+                }
+            };
+
+            if (RequiresYoloTraining(pipelineMode))
+            {
+                pipelineObj["yolo"] = new
+                {
+                    model = "models/yolo.onnx",
+                    imgsz = settings.YoloInfer.ImgSz,
+                    letterbox = settings.YoloInfer.Letterbox,
+                    conf_thres = settings.YoloInfer.ConfThres,
+                    iou_thres = settings.YoloInfer.IouThres,
+                    max_det = settings.YoloInfer.MaxDet,
+                    class_map = new { dent = 0, loose = 1 }
+                };
+            }
+
+            if (RequiresAnomaTraining(pipelineMode))
+            {
+                pipelineObj["anoma"] = new
+                {
+                    model = "models/anoma.onnx",
+                    mode = settings.AnomaInfer.Mode,
+                    input_size = settings.AnomaInfer.InputSize,
+                    score_thres = settings.AnomaInfer.ScoreThres,
+                    crop_padding_px = settings.AnomaInfer.CropPaddingPx
+                };
+            }
+
+            if (pipelineMode == TrainingPipelineMode.AnomaThenYolo)
+            {
+                // 현재 추론 UI 호환을 위해 fusion 섹션은 유지한다.
+                pipelineObj["fusion"] = new
+                {
+                    rule = settings.Fusion.Rule,
+                    yolo_conf_thres = settings.Fusion.YoloThreshold,
+                    anoma_score_thres = settings.Fusion.AnomaThreshold
+                };
+            }
+
+            return pipelineObj;
+        }
+
+        private RunManifestMetadata? TryLoadRunManifestMetadata(string runDir)
+        {
+            string manifestPath = IOPath.Combine(runDir, "run_manifest.json");
+            if (!File.Exists(manifestPath))
+                return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                var root = doc.RootElement;
+
+                if (!root.TryGetProperty("Pipeline", out var pipelineElement))
+                    return null;
+
+                if (!pipelineElement.TryGetProperty("Mode", out var modeElement))
+                    return null;
+
+                string? modeToken = modeElement.GetString();
+                return new RunManifestMetadata
+                {
+                    PipelineMode = TryParseTrainingPipelineMode(modeToken)
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static TrainingPipelineMode TryParseTrainingPipelineMode(string? modeToken)
+        {
+            return (modeToken ?? "").Trim().ToLowerInvariant() switch
+            {
+                "anoma_only" => TrainingPipelineMode.AnomaOnly,
+                "yolo_only" => TrainingPipelineMode.YoloOnly,
+                _ => TrainingPipelineMode.AnomaThenYolo
+            };
+        }
+
+        private void VerifyInferencePackageOrThrow(string pkgDir, TrainingPipelineMode pipelineMode)
         {
             string modelsDir = IOPath.Combine(pkgDir, "models");
             string cfgDir = IOPath.Combine(pkgDir, "config");
@@ -423,50 +689,64 @@ namespace CoilTrainingUI
             string anomaOnnx = IOPath.Combine(modelsDir, "anoma.onnx");
             string pipeline = IOPath.Combine(cfgDir, "pipeline.json");
 
-            if (!File.Exists(yoloOnnx))
+            if (RequiresYoloTraining(pipelineMode) && !File.Exists(yoloOnnx))
                 throw new FileNotFoundException("Missing yolo.onnx in inference_package/models", yoloOnnx);
 
-            if (!File.Exists(anomaOnnx))
+            if (RequiresAnomaTraining(pipelineMode) && !File.Exists(anomaOnnx))
                 throw new FileNotFoundException("Missing anoma.onnx in inference_package/models", anomaOnnx);
 
             if (!File.Exists(pipeline))
                 throw new FileNotFoundException("Missing pipeline.json in inference_package/config", pipeline);
 
-            var yoloSize = new FileInfo(yoloOnnx).Length;
-            var anomaSize = new FileInfo(anomaOnnx).Length;
-
-            if (yoloSize <= 0)
+            if (RequiresYoloTraining(pipelineMode) && new FileInfo(yoloOnnx).Length <= 0)
                 throw new InvalidOperationException("yolo.onnx is empty (0 bytes).");
 
-            if (anomaSize <= 0)
+            if (RequiresAnomaTraining(pipelineMode) && new FileInfo(anomaOnnx).Length <= 0)
                 throw new InvalidOperationException("anoma.onnx is empty (0 bytes).");
 
             using var doc = JsonDocument.Parse(File.ReadAllText(pipeline));
             var root = doc.RootElement;
 
             Require(root, "schema_version");
-            Require(root, "yolo");
-            Require(root, "anoma");
-            Require(root, "fusion");
+            Require(root, "pipeline");
+            Require(root, "input");
+            Require(root, "output");
 
-            var yolo = root.GetProperty("yolo");
-            Require(yolo, "model");
-            Require(yolo, "imgsz");
-            Require(yolo, "conf_thres");
-            Require(yolo, "iou_thres");
-            Require(yolo, "max_det");
-            Require(yolo, "class_map");
+            var pipelineSection = root.GetProperty("pipeline");
+            Require(pipelineSection, "mode");
+            Require(pipelineSection, "stage1");
+            Require(pipelineSection, "required_models");
 
-            var anoma = root.GetProperty("anoma");
-            Require(anoma, "model");
-            Require(anoma, "mode");
-            Require(anoma, "input_size");
-            Require(anoma, "score_thres");
+            if (RequiresYoloTraining(pipelineMode))
+            {
+                Require(root, "yolo");
+                var yolo = root.GetProperty("yolo");
+                Require(yolo, "model");
+                Require(yolo, "imgsz");
+                Require(yolo, "conf_thres");
+                Require(yolo, "iou_thres");
+                Require(yolo, "max_det");
+                Require(yolo, "class_map");
+            }
 
-            var fusion = root.GetProperty("fusion");
-            Require(fusion, "rule");
-            Require(fusion, "yolo_conf_thres");
-            Require(fusion, "anoma_score_thres");
+            if (RequiresAnomaTraining(pipelineMode))
+            {
+                Require(root, "anoma");
+                var anoma = root.GetProperty("anoma");
+                Require(anoma, "model");
+                Require(anoma, "mode");
+                Require(anoma, "input_size");
+                Require(anoma, "score_thres");
+            }
+
+            if (pipelineMode == TrainingPipelineMode.AnomaThenYolo)
+            {
+                Require(root, "fusion");
+                var fusion = root.GetProperty("fusion");
+                Require(fusion, "rule");
+                Require(fusion, "yolo_conf_thres");
+                Require(fusion, "anoma_score_thres");
+            }
         }
 
         private void Require(JsonElement obj, string prop)
@@ -577,6 +857,7 @@ namespace CoilTrainingUI
             string pythonExe,
             string yoloScript,
             string anomaScript,
+            TrainingPipelineMode pipelineMode,
             string yoloWorkspaceRoot,
             string anomaWorkspaceRoot,
             string yoloOutDir,
@@ -595,6 +876,11 @@ namespace CoilTrainingUI
                 AiProjectRoot = aiProjectRoot,
                 PythonExe = pythonExe,
                 Scripts = new { Yolo = yoloScript, Anoma = anomaScript },
+                Pipeline = new
+                {
+                    Mode = GetTrainingPipelineModeToken(pipelineMode),
+                    DisplayName = GetTrainingPipelineDisplayName(pipelineMode)
+                },
                 Workspaces = new { Yolo = yoloWorkspaceRoot, Anoma = anomaWorkspaceRoot },
                 Outputs = new { YoloOut = yoloOutDir, AnomaOut = anomaOutDir, InferencePackage = inferencePackageDir },
                 Dataset = new { TotalImages = totalImages, NormalImages = normalImages },
@@ -632,18 +918,20 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                var latestRunDir = Directory.GetDirectories(runRoot, "run_*_all")
+                var latestRunDir = Directory.GetDirectories(runRoot, "run_*")
                                             .Select(dir => new DirectoryInfo(dir))
                                             .OrderByDescending(dir => dir.CreationTimeUtc)
                                             .FirstOrDefault();
 
                 if (latestRunDir == null)
                 {
-                    MessageBox.Show("run_*_all 폴더가 없습니다.");
+                    MessageBox.Show("run_* 폴더가 없습니다.");
                     return;
                 }
 
                 string runDir = latestRunDir.FullName;
+                var runMetadata = TryLoadRunManifestMetadata(runDir);
+                var pipelineMode = runMetadata?.PipelineMode ?? TrainingPipelineMode.AnomaThenYolo;
 
                 string yoloOut = IOPath.Combine(runDir, "yolo_out");
                 string anomaOut = IOPath.Combine(runDir, "anoma_out");
@@ -651,13 +939,14 @@ namespace CoilTrainingUI
                 string yoloOnnx = IOPath.Combine(yoloOut, "yolo.onnx");
                 string anomaOnnx = IOPath.Combine(anomaOut, "anoma.onnx");
 
-                if (!File.Exists(yoloOnnx) || !File.Exists(anomaOnnx))
+                if ((RequiresYoloTraining(pipelineMode) && !File.Exists(yoloOnnx)) ||
+                    (RequiresAnomaTraining(pipelineMode) && !File.Exists(anomaOnnx)))
                 {
                     MessageBox.Show(
-                        "필요한 ONNX가 없습니다.\n\n" +
+                        $"필요한 ONNX가 없습니다. (파이프라인: {GetTrainingPipelineDisplayName(pipelineMode)})\n\n" +
                         $"yolo: {yoloOnnx}\n" +
                         $"anoma: {anomaOnnx}\n\n" +
-                        "Train All을 먼저 수행했는지 확인하세요."
+                        "현재 파이프라인 학습을 먼저 수행했는지 확인하세요."
                     );
                     OpenFolder(runDir);
                     return;
@@ -671,60 +960,25 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(cfgDir);
                 Directory.CreateDirectory(IOPath.Combine(pkgDir, "run"));
 
-                File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
-                File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
+                if (RequiresYoloTraining(pipelineMode))
+                    File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
+
+                if (RequiresAnomaTraining(pipelineMode))
+                    File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
-
-                var pipelineObj = new
-                {
-                    schema_version = 1,
-                    input = new
-                    {
-                        image_format = "bmp"
-                    },
-                    yolo = new
-                    {
-                        model = "models/yolo.onnx",
-                        imgsz = settings.YoloInfer.ImgSz,
-                        letterbox = settings.YoloInfer.Letterbox,
-                        conf_thres = settings.YoloInfer.ConfThres,
-                        iou_thres = settings.YoloInfer.IouThres,
-                        max_det = settings.YoloInfer.MaxDet,
-                        class_map = new { dent = 0, loose = 1 }
-                    },
-                    anoma = new
-                    {
-                        model = "models/anoma.onnx",
-                        mode = settings.AnomaInfer.Mode,
-                        input_size = settings.AnomaInfer.InputSize,
-                        score_thres = settings.AnomaInfer.ScoreThres,
-                        crop_padding_px = settings.AnomaInfer.CropPaddingPx
-                    },
-                    fusion = new
-                    {
-                        rule = settings.Fusion.Rule,
-                        yolo_conf_thres = settings.Fusion.YoloThreshold,
-                        anoma_score_thres = settings.Fusion.AnomaThreshold
-                    },
-                    output = new
-                    {
-                        format = "json",
-                        schema = "detections_v1"
-                    }
-                };
 
                 File.WriteAllText(
                     pipelinePath,
                     JsonSerializer.Serialize(
-                        pipelineObj,
+                        BuildPipelineConfig(settings, pipelineMode),
                         new JsonSerializerOptions { WriteIndented = true }),
                     System.Text.Encoding.UTF8
                 );
 
-                VerifyInferencePackageOrThrow(pkgDir);
+                VerifyInferencePackageOrThrow(pkgDir, pipelineMode);
 
-                MessageBox.Show($"Package Only 완료\n\n{pkgDir}");
+                MessageBox.Show($"Package Only 완료 ({GetTrainingPipelineDisplayName(pipelineMode)})\n\n{pkgDir}");
                 OpenFolder(pkgDir);
             }
             catch (Exception ex)
