@@ -65,6 +65,8 @@ def compute_image_metrics(labels: np.ndarray, scores: np.ndarray) -> dict[str, f
             "image_auroc": 0.0,
             "image_ap": 0.0,
             "best_f1": 0.0,
+            "best_precision": 0.0,
+            "best_recall": 0.0,
             "best_threshold": 0.0,
         }
 
@@ -89,5 +91,7 @@ def compute_image_metrics(labels: np.ndarray, scores: np.ndarray) -> dict[str, f
         "image_auroc": image_auroc,
         "image_ap": image_ap,
         "best_f1": float(f1_scores[best_index]),
+        "best_precision": float(precision[best_index]),
+        "best_recall": float(recall[best_index]),
         "best_threshold": float(thresholds[best_index]),
     }
