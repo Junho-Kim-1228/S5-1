@@ -26,6 +26,7 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -35,6 +36,7 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
     <DebugSymbols>true</DebugSymbols>
@@ -44,7 +46,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <LangVersion>7.3</LangVersion>
     <ErrorReport>prompt</ErrorReport>
-    <Prefer32Bit>true</Prefer32Bit>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <OutputPath>bin\x64\Release\</OutputPath>
@@ -54,7 +56,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <LangVersion>7.3</LangVersion>
     <ErrorReport>prompt</ErrorReport>
-    <Prefer32Bit>true</Prefer32Bit>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.ML.OnnxRuntime, Version=1.23.2.0, Culture=neutral, PublicKeyToken=f27f157f0a5b7bb6, processorArchitecture=MSIL">
@@ -105,6 +107,7 @@
     <Compile Include="Interface\OnnxModelTester.cs" />
     <Compile Include="Logging\CsvLogger.cs" />
     <Compile Include="Preprocess\ImageProcessor.cs" />
+    <Compile Include="Preprocess\MaskRuntimeRunner.cs" />
     <Compile Include="UI\Form1.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -139,6 +142,14 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="InferencePackage\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="mask-runtime\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Models\" />

@@ -17,6 +17,11 @@ namespace CoilInspectionApp.Preprocess
         // --- 2. 메인 실행 함수 (외부에서 호출하는 함수) ---
         public Mat PrepareImage(string imagePath, int width, int height)
         {
+            return PrepareModelInput(imagePath, width, height);
+        }
+
+        public Mat PrepareModelInput(string imagePath, int width, int height)
+        {
             try
             {
                 // 1. 이미지 로드
@@ -37,6 +42,74 @@ namespace CoilInspectionApp.Preprocess
 
                         return rgbImage;
                     }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"이미지 처리 오류: {ex.Message}");
+                return null;
+            }
+        }
+
+        public Mat PrepareDisplayImage(string imagePath, int width, int height)
+        {
+            try
+            {
+                using (Mat src = new Mat(imagePath, ImreadModes.Color))
+                {
+                    if (src.Empty()) return null;
+
+                    using (Mat coilOnly = ApplyTextureMask(src))
+                    {
+                        Mat resized = new Mat();
+                        Cv2.Resize(coilOnly, resized, new Size(width, height));
+                        return resized;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"이미지 처리 오류: {ex.Message}");
+                return null;
+            }
+        }
+
+        public Mat PrepareExistingMaskedDisplayImage(string imagePath, int width, int height)
+        {
+            try
+            {
+                using (Mat src = new Mat(imagePath, ImreadModes.Color))
+                {
+                    if (src.Empty()) return null;
+
+                    Mat resized = new Mat();
+                    Cv2.Resize(src, resized, new Size(width, height));
+                    return resized;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"이미지 처리 오류: {ex.Message}");
+                return null;
+            }
+        }
+
+        public Mat PrepareExistingMaskedModelInput(string imagePath, int width, int height)
+        {
+            try
+            {
+                using (Mat src = new Mat(imagePath, ImreadModes.Color))
+                {
+                    if (src.Empty()) return null;
+
+                    Mat resized = new Mat();
+                    Cv2.Resize(src, resized, new Size(width, height));
+
+                    Mat rgbImage = new Mat();
+                    Cv2.CvtColor(resized, rgbImage, ColorConversionCodes.BGR2RGB);
+                    resized.Dispose();
+
+                    return rgbImage;
                 }
             }
             catch (Exception ex)

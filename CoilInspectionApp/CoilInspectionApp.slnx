@@ -1,9 +1,0 @@
-<Solution>
-  <Configurations>
-    <Platform Name="Any CPU" />
-    <Platform Name="x64" />
-  </Configurations>
-  <Project Path="CoilInspectionApp/CoilInspectionApp.csproj" Id="5b792eb8-1eb7-4669-9544-5875ff204c04">
-    <Platform Solution="*|x64" Project="x64" />
-  </Project>
-</Solution>

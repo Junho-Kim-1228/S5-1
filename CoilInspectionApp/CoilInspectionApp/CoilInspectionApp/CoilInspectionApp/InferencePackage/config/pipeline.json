@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "pipeline": {
+    "mode": "anoma_then_yolo",
+    "display_name": "2단계 (Anoma -> YOLO)",
+    "stage1": "anoma",
+    "stage2": "yolo",
+    "skip_yolo_when_stage1_normal": true,
+    "required_models": [
+      "anoma",
+      "yolo"
+    ]
+  },
+  "input": {
+    "image_format": "bmp"
+  },
+  "output": {
+    "format": "json",
+    "schema": "detections_v1"
+  },
+  "yolo": {
+    "model": "models/yolo.onnx",
+    "imgsz": 1024,
+    "letterbox": true,
+    "conf_thres": 0.25,
+    "iou_thres": 0.45,
+    "max_det": 300,
+    "class_map": {
+      "dent": 0,
+      "loose": 1
+    }
+  },
+  "anoma": {
+    "model": "models/anoma.onnx",
+    "mode": "crop",
+    "input_size": 640,
+    "score_thres": 13.412755966186523,
+    "crop_padding_px": 8
+  },
+  "fusion": {
+    "rule": "AND",
+    "yolo_conf_thres": 0.25,
+    "anoma_score_thres": 13.412755966186523
+  }
+}
