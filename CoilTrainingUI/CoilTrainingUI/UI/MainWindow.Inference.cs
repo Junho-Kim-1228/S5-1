@@ -217,12 +217,13 @@ namespace CoilTrainingUI
                 _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
             }
 
+            ApplyAnomalyDecisionToItem(item, isNormal: false, refreshSummary: false);
             UpdatePredictionOverlayVisibility(imagePath);
 
             SyncGtSummaryForImage(imagePath);
             RefreshSummaryCounts();
 
-            SaveLabelsToStateJson(imagePath, markManualYoloDecision: false);
+            SaveLabelsToStateJson(imagePath, markManualYoloDecision: true);
             RequestSaveLabelsDebounced(imagePath);
 
             MessageBox.Show(
@@ -231,6 +232,143 @@ namespace CoilTrainingUI
                 MessageBoxButton.OK,
                 MessageBoxImage.Information
             );
+        }
+
+        private void ApplyPredictionsToLabelsFilteredImages_Click(object sender, RoutedEventArgs e)
+        {
+            var visibleItems = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
+                .OfType<ImageItem>()
+                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .ToList();
+
+            if (visibleItems.Count == 0)
+            {
+                MessageBox.Show(
+                    "현재 필터 결과에 해당하는 이미지가 없습니다.",
+                    "Batch Apply Predictions to Labels",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                $"현재 필터 결과 {visibleItems.Count}개 이미지에 대해 AI YOLO 예측 박스를 GT Boxes로 일괄 적용할까요?\n" +
+                "기존 GT Boxes가 있으면 예측 박스로 덮어쓰고, 박스가 적용된 이미지는 Abnormal로 확정됩니다.",
+                "Batch Apply Predictions to Labels",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes)
+                return;
+
+            string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
+            var appliedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int appliedImages = 0;
+            int appliedBoxes = 0;
+            int overwrittenImages = 0;
+            int skippedMissingInfer = 0;
+            int skippedNoBoxes = 0;
+            int parseFailed = 0;
+
+            foreach (ImageItem item in visibleItems)
+            {
+                string imagePath = item.ProcessedPath;
+                if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath)
+                    || string.IsNullOrWhiteSpace(inferJsonPath)
+                    || !File.Exists(inferJsonPath))
+                {
+                    skippedMissingInfer++;
+                    continue;
+                }
+
+                InferResultDto infer;
+                try
+                {
+                    infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
+                }
+                catch
+                {
+                    parseFailed++;
+                    continue;
+                }
+
+                var predictionBoxes = ConvertDetectionsToGtBoxes(infer.Yolo?.Detections);
+                if (predictionBoxes.Count == 0)
+                {
+                    skippedNoBoxes++;
+                    continue;
+                }
+
+                ImageStateDto state = _stateService.Load(imagePath);
+                state.Labels ??= new List<LabelDto>();
+                if (state.Labels.Count > 0)
+                    overwrittenImages++;
+
+                state.Labels.Clear();
+                foreach (DetectionDto detection in infer.Yolo?.Detections ?? new List<DetectionDto>())
+                {
+                    if (!TryConvertDetectionToBoundingBox(detection, out var bbox))
+                        continue;
+
+                    state.Labels.Add(new LabelDto
+                    {
+                        ClassName = bbox.ClassName,
+                        X = bbox.X,
+                        Y = bbox.Y,
+                        Width = bbox.Width,
+                        Height = bbox.Height,
+                        Source = "auto_infer",
+                        InferConf = detection.Conf
+                    });
+                }
+
+                if (state.Labels.Count == 0)
+                {
+                    skippedNoBoxes++;
+                    continue;
+                }
+
+                state.IsNormal = false;
+                state.HasManualAnomalyDecision = true;
+                state.HasManualYoloDecision = true;
+                state.ReviewStatus = ReviewStatus.ReviewDone;
+                state.ReviewReasons.Clear();
+                state.ReviewedAt = DateTime.UtcNow;
+                _stateService.Save(imagePath, state);
+
+                _imageStateManager.SetNormal(imagePath, isNormal: false);
+                _imageStateManager.ClearLabels(imagePath);
+                var mutableLabels = _imageStateManager.GetMutableLabels(imagePath);
+                foreach (BoundingBox bbox in predictionBoxes)
+                    mutableLabels.Add(bbox);
+
+                item.IsNormal = false;
+                item.HasStateFile = true;
+                UpdateGtSummaryForImageItem(item, imagePath);
+
+                appliedImages++;
+                appliedBoxes += state.Labels.Count;
+                appliedPaths.Add(imagePath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedPath) && appliedPaths.Contains(selectedPath))
+                LoadImage(selectedPath);
+
+            ApplyImageFilters();
+            EnsureSelectedImageVisible();
+            RefreshSummaryCounts();
+
+            MessageBox.Show(
+                "필터된 이미지 예측 박스 일괄 적용 완료\n" +
+                $"- 적용 이미지: {appliedImages}\n" +
+                $"- 적용 박스: {appliedBoxes}\n" +
+                $"- 기존 GT 덮어쓴 이미지: {overwrittenImages}\n" +
+                $"- infer 없음 스킵: {skippedMissingInfer}\n" +
+                $"- 예측 박스 없음 스킵: {skippedNoBoxes}\n" +
+                $"- infer 파싱 실패: {parseFailed}",
+                "Batch Apply Predictions to Labels",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
         private IReadOnlyList<BatchPredictionApplyTarget> BuildBatchPredictionTargets()

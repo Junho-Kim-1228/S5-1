@@ -30,11 +30,13 @@ namespace CoilInspectionApp
             this.labelPipeline = new System.Windows.Forms.Label();
             this.buttonOpenBatch = new System.Windows.Forms.Button();
             this.listViewResults = new System.Windows.Forms.ListView();
+            this.columnHeaderNo = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.columnHeaderFile = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.columnHeaderStage1 = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.columnHeaderStage2 = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.columnHeaderFinal = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.columnHeaderScore = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
+            this.columnHeaderDelete = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.labelRecentResults = new System.Windows.Forms.Label();
             this.pictureBox1 = new System.Windows.Forms.PictureBox();
             this.groupBoxResult = new System.Windows.Forms.GroupBox();
@@ -96,7 +98,7 @@ namespace CoilInspectionApp
             this.splitContainerMain.Panel2.Controls.Add(this.groupBoxResult);
             this.splitContainerMain.Panel2.Controls.Add(this.pictureBox1);
             this.splitContainerMain.Size = new System.Drawing.Size(1384, 861);
-            this.splitContainerMain.SplitterDistance = 430;
+            this.splitContainerMain.SplitterDistance = 520;
             this.splitContainerMain.TabIndex = 0;
             // 
             // groupBoxBatch
@@ -115,7 +117,7 @@ namespace CoilInspectionApp
             this.groupBoxBatch.Controls.Add(this.buttonOpenBatch);
             this.groupBoxBatch.Location = new System.Drawing.Point(12, 12);
             this.groupBoxBatch.Name = "groupBoxBatch";
-            this.groupBoxBatch.Size = new System.Drawing.Size(406, 173);
+            this.groupBoxBatch.Size = new System.Drawing.Size(496, 173);
             this.groupBoxBatch.TabIndex = 0;
             this.groupBoxBatch.TabStop = false;
             this.groupBoxBatch.Text = "실행 정보";
@@ -125,7 +127,7 @@ namespace CoilInspectionApp
             this.labelValueBatch.AutoEllipsis = true;
             this.labelValueBatch.Location = new System.Drawing.Point(101, 110);
             this.labelValueBatch.Name = "labelValueBatch";
-            this.labelValueBatch.Size = new System.Drawing.Size(257, 48);
+            this.labelValueBatch.Size = new System.Drawing.Size(347, 48);
             this.labelValueBatch.TabIndex = 7;
             this.labelValueBatch.Text = "-";
             // 
@@ -143,7 +145,7 @@ namespace CoilInspectionApp
             this.labelValuePackage.AutoEllipsis = true;
             this.labelValuePackage.Location = new System.Drawing.Point(101, 70);
             this.labelValuePackage.Name = "labelValuePackage";
-            this.labelValuePackage.Size = new System.Drawing.Size(291, 36);
+            this.labelValuePackage.Size = new System.Drawing.Size(381, 36);
             this.labelValuePackage.TabIndex = 5;
             this.labelValuePackage.Text = "-";
             // 
@@ -161,13 +163,13 @@ namespace CoilInspectionApp
             this.labelValueInput.AutoEllipsis = true;
             this.labelValueInput.Location = new System.Drawing.Point(101, 44);
             this.labelValueInput.Name = "labelValueInput";
-            this.labelValueInput.Size = new System.Drawing.Size(257, 18);
+            this.labelValueInput.Size = new System.Drawing.Size(347, 18);
             this.labelValueInput.TabIndex = 3;
             this.labelValueInput.Text = "-";
             // 
             // buttonOpenInput
             // 
-            this.buttonOpenInput.Location = new System.Drawing.Point(364, 40);
+            this.buttonOpenInput.Location = new System.Drawing.Point(454, 40);
             this.buttonOpenInput.Name = "buttonOpenInput";
             this.buttonOpenInput.Size = new System.Drawing.Size(28, 22);
             this.buttonOpenInput.TabIndex = 9;
@@ -204,7 +206,7 @@ namespace CoilInspectionApp
             // 
             // buttonOpenBatch
             // 
-            this.buttonOpenBatch.Location = new System.Drawing.Point(364, 106);
+            this.buttonOpenBatch.Location = new System.Drawing.Point(454, 106);
             this.buttonOpenBatch.Name = "buttonOpenBatch";
             this.buttonOpenBatch.Size = new System.Drawing.Size(28, 22);
             this.buttonOpenBatch.TabIndex = 8;
@@ -218,37 +220,45 @@ namespace CoilInspectionApp
             | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.listViewResults.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
+            this.columnHeaderNo,
             this.columnHeaderFile,
             this.columnHeaderStage1,
             this.columnHeaderStage2,
             this.columnHeaderFinal,
-            this.columnHeaderScore});
+            this.columnHeaderScore,
+            this.columnHeaderDelete});
             this.listViewResults.FullRowSelect = true;
             this.listViewResults.GridLines = true;
             this.listViewResults.HideSelection = false;
             this.listViewResults.Location = new System.Drawing.Point(12, 214);
             this.listViewResults.MultiSelect = false;
             this.listViewResults.Name = "listViewResults";
-            this.listViewResults.Size = new System.Drawing.Size(406, 635);
+            this.listViewResults.Size = new System.Drawing.Size(496, 635);
             this.listViewResults.TabIndex = 2;
             this.listViewResults.UseCompatibleStateImageBehavior = false;
             this.listViewResults.View = System.Windows.Forms.View.Details;
+            this.listViewResults.MouseClick += new System.Windows.Forms.MouseEventHandler(this.listViewResults_MouseClick);
             this.listViewResults.SelectedIndexChanged += new System.EventHandler(this.listViewResults_SelectedIndexChanged);
             // 
+            // columnHeaderNo
+            //
+            this.columnHeaderNo.Text = "No";
+            this.columnHeaderNo.Width = 38;
+            //
             // columnHeaderFile
             // 
             this.columnHeaderFile.Text = "파일";
-            this.columnHeaderFile.Width = 160;
+            this.columnHeaderFile.Width = 155;
             // 
             // columnHeaderStage1
             // 
             this.columnHeaderStage1.Text = "Stage1";
-            this.columnHeaderStage1.Width = 65;
+            this.columnHeaderStage1.Width = 60;
             // 
             // columnHeaderStage2
             // 
             this.columnHeaderStage2.Text = "Stage2";
-            this.columnHeaderStage2.Width = 65;
+            this.columnHeaderStage2.Width = 60;
             // 
             // columnHeaderFinal
             // 
@@ -260,6 +270,11 @@ namespace CoilInspectionApp
             this.columnHeaderScore.Text = "Score";
             this.columnHeaderScore.Width = 65;
             // 
+            // columnHeaderDelete
+            //
+            this.columnHeaderDelete.Text = "삭제";
+            this.columnHeaderDelete.Width = 52;
+            //
             // labelRecentResults
             // 
             this.labelRecentResults.AutoSize = true;
@@ -275,7 +290,7 @@ namespace CoilInspectionApp
             | System.Windows.Forms.AnchorStyles.Right)));
             this.progressBarInference.Location = new System.Drawing.Point(14, 824);
             this.progressBarInference.Name = "progressBarInference";
-            this.progressBarInference.Size = new System.Drawing.Size(337, 18);
+            this.progressBarInference.Size = new System.Drawing.Size(247, 18);
             this.progressBarInference.TabIndex = 6;
             // 
             // labelInferenceProgress
@@ -291,7 +306,7 @@ namespace CoilInspectionApp
             // buttonRefreshInput
             // 
             this.buttonRefreshInput.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonRefreshInput.Location = new System.Drawing.Point(367, 808);
+            this.buttonRefreshInput.Location = new System.Drawing.Point(277, 808);
             this.buttonRefreshInput.Name = "buttonRefreshInput";
             this.buttonRefreshInput.Size = new System.Drawing.Size(130, 34);
             this.buttonRefreshInput.TabIndex = 2;
@@ -302,7 +317,7 @@ namespace CoilInspectionApp
             // button3
             // 
             this.button3.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.button3.Location = new System.Drawing.Point(511, 808);
+            this.button3.Location = new System.Drawing.Point(421, 808);
             this.button3.Name = "button3";
             this.button3.Size = new System.Drawing.Size(130, 34);
             this.button3.TabIndex = 3;
@@ -318,7 +333,7 @@ namespace CoilInspectionApp
             this.pictureBox1.BackColor = System.Drawing.Color.Black;
             this.pictureBox1.Location = new System.Drawing.Point(14, 12);
             this.pictureBox1.Name = "pictureBox1";
-            this.pictureBox1.Size = new System.Drawing.Size(922, 589);
+            this.pictureBox1.Size = new System.Drawing.Size(832, 589);
             this.pictureBox1.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Normal;
             this.pictureBox1.TabIndex = 0;
             this.pictureBox1.TabStop = true;
@@ -333,7 +348,7 @@ namespace CoilInspectionApp
             // buttonZoomIn
             // 
             this.buttonZoomIn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonZoomIn.Location = new System.Drawing.Point(786, 601);
+            this.buttonZoomIn.Location = new System.Drawing.Point(696, 601);
             this.buttonZoomIn.Name = "buttonZoomIn";
             this.buttonZoomIn.Size = new System.Drawing.Size(42, 28);
             this.buttonZoomIn.TabIndex = 9;
@@ -344,7 +359,7 @@ namespace CoilInspectionApp
             // buttonZoomOut
             // 
             this.buttonZoomOut.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonZoomOut.Location = new System.Drawing.Point(834, 601);
+            this.buttonZoomOut.Location = new System.Drawing.Point(744, 601);
             this.buttonZoomOut.Name = "buttonZoomOut";
             this.buttonZoomOut.Size = new System.Drawing.Size(42, 28);
             this.buttonZoomOut.TabIndex = 10;
@@ -355,7 +370,7 @@ namespace CoilInspectionApp
             // buttonZoomFit
             // 
             this.buttonZoomFit.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonZoomFit.Location = new System.Drawing.Point(882, 601);
+            this.buttonZoomFit.Location = new System.Drawing.Point(792, 601);
             this.buttonZoomFit.Name = "buttonZoomFit";
             this.buttonZoomFit.Size = new System.Drawing.Size(54, 28);
             this.buttonZoomFit.TabIndex = 11;
@@ -383,7 +398,7 @@ namespace CoilInspectionApp
             this.groupBoxResult.Controls.Add(this.labelFile);
             this.groupBoxResult.Location = new System.Drawing.Point(14, 635);
             this.groupBoxResult.Name = "groupBoxResult";
-            this.groupBoxResult.Size = new System.Drawing.Size(922, 157);
+            this.groupBoxResult.Size = new System.Drawing.Size(832, 157);
             this.groupBoxResult.TabIndex = 1;
             this.groupBoxResult.TabStop = false;
             this.groupBoxResult.Text = "현재 선택 결과";
@@ -393,7 +408,7 @@ namespace CoilInspectionApp
             this.labelValueReasons.AutoEllipsis = true;
             this.labelValueReasons.Location = new System.Drawing.Point(95, 125);
             this.labelValueReasons.Name = "labelValueReasons";
-            this.labelValueReasons.Size = new System.Drawing.Size(807, 25);
+            this.labelValueReasons.Size = new System.Drawing.Size(717, 25);
             this.labelValueReasons.TabIndex = 13;
             this.labelValueReasons.Text = "-";
             // 
@@ -518,7 +533,7 @@ namespace CoilInspectionApp
             // button2
             // 
             this.button2.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.button2.Location = new System.Drawing.Point(799, 808);
+            this.button2.Location = new System.Drawing.Point(709, 808);
             this.button2.Name = "button2";
             this.button2.Size = new System.Drawing.Size(137, 34);
             this.button2.TabIndex = 5;
@@ -529,7 +544,7 @@ namespace CoilInspectionApp
             // button1
             // 
             this.button1.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.button1.Location = new System.Drawing.Point(655, 808);
+            this.button1.Location = new System.Drawing.Point(565, 808);
             this.button1.Name = "button1";
             this.button1.Size = new System.Drawing.Size(130, 34);
             this.button1.TabIndex = 4;
@@ -576,11 +591,13 @@ namespace CoilInspectionApp
         private System.Windows.Forms.Label labelPipeline;
         private System.Windows.Forms.Button buttonOpenBatch;
         private System.Windows.Forms.ListView listViewResults;
+        private System.Windows.Forms.ColumnHeader columnHeaderNo;
         private System.Windows.Forms.ColumnHeader columnHeaderFile;
         private System.Windows.Forms.ColumnHeader columnHeaderStage1;
         private System.Windows.Forms.ColumnHeader columnHeaderStage2;
         private System.Windows.Forms.ColumnHeader columnHeaderFinal;
         private System.Windows.Forms.ColumnHeader columnHeaderScore;
+        private System.Windows.Forms.ColumnHeader columnHeaderDelete;
         private System.Windows.Forms.Label labelRecentResults;
         private System.Windows.Forms.PictureBox pictureBox1;
         private System.Windows.Forms.GroupBox groupBoxResult;

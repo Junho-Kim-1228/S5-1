@@ -185,6 +185,34 @@ namespace CoilInspectionApp
             };
         }
 
+        public void RemoveItem(string imageId)
+        {
+            if (string.IsNullOrWhiteSpace(imageId))
+                return;
+
+            if (_currentManifest == null)
+                _currentManifest = LoadManifestOrCreate("current_session");
+
+            EnsureBatchDirectories();
+
+            ManifestItem item = _currentManifest.items.Find(manifestItem =>
+                string.Equals(manifestItem.id, imageId, StringComparison.OrdinalIgnoreCase));
+
+            if (item != null)
+            {
+                DeleteRelativePathIfExists(item.raw_image);
+                DeleteRelativePathIfExists(item.processed_image);
+                DeleteRelativePathIfExists(item.infer_json);
+                _currentManifest.items.Remove(item);
+                SaveManifest();
+                return;
+            }
+
+            DeleteIfExists(Path.Combine(_currentBatchDir, "raw", $"{imageId}.bmp"));
+            DeleteIfExists(Path.Combine(_currentBatchDir, "images", $"{imageId}_masked.bmp"));
+            DeleteIfExists(Path.Combine(_currentBatchDir, "inference", $"{imageId}.infer.json"));
+        }
+
         public void CloseBatch()
         {
             if (_currentManifest == null || _currentManifest.items.Count == 0) return;
@@ -268,6 +296,22 @@ namespace CoilInspectionApp
                 Directory.CreateDirectory(destinationDir);
 
             File.Copy(sourcePath, destinationPath, true);
+        }
+
+        private static void DeleteIfExists(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return;
+
+            File.Delete(path);
+        }
+
+        private void DeleteRelativePathIfExists(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+                return;
+
+            DeleteIfExists(Path.Combine(_currentBatchDir, relativePath));
         }
 
         private ManifestJson LoadManifestOrCreate(string batchId)

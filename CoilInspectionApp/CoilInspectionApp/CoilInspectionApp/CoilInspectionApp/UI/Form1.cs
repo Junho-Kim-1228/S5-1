@@ -1088,11 +1088,36 @@ namespace CoilInspectionApp
             if (listViewResults.SelectedIndices.Count == 0)
                 return;
 
-            int index = listViewResults.SelectedIndices[0];
-            if (index < 0 || index >= _results.Count)
+            InspectionResultViewModel result = listViewResults.SelectedItems[0].Tag as InspectionResultViewModel;
+            if (result == null)
                 return;
 
-            ShowResult(_results[index]);
+            ShowResult(result);
+        }
+
+        private void listViewResults_MouseClick(object sender, MouseEventArgs e)
+        {
+            ListViewHitTestInfo hit = listViewResults.HitTest(e.Location);
+            if (hit.Item == null || hit.SubItem == null)
+                return;
+
+            int columnIndex = hit.Item.SubItems.IndexOf(hit.SubItem);
+            if (columnIndex != listViewResults.Columns.Count - 1)
+                return;
+
+            InspectionResultViewModel result = hit.Item.Tag as InspectionResultViewModel;
+            if (result == null)
+                return;
+
+            DialogResult confirm = MessageBox.Show(
+                $"이 항목을 삭제할까요?\n\n{result.FileName}\n\ninput 폴더와 현재 배치 임시 파일에서도 삭제됩니다.",
+                "항목 삭제",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes)
+                return;
+
+            DeleteResultItem(result);
         }
 
         private void RefreshResultList(bool selectFirst)
@@ -1101,13 +1126,16 @@ namespace CoilInspectionApp
             try
             {
                 listViewResults.Items.Clear();
-                foreach (InspectionResultViewModel result in _results)
+                for (int index = 0; index < _results.Count; index++)
                 {
-                    var item = new ListViewItem(result.FileName);
+                    InspectionResultViewModel result = _results[index];
+                    var item = new ListViewItem((index + 1).ToString());
+                    item.SubItems.Add(result.FileName);
                     item.SubItems.Add(result.Stage1);
                     item.SubItems.Add(result.Stage2);
                     item.SubItems.Add(result.Final);
                     item.SubItems.Add(result.ScoreText);
+                    item.SubItems.Add("삭제");
                     item.Tag = result;
                     listViewResults.Items.Add(item);
                 }
@@ -1116,12 +1144,70 @@ namespace CoilInspectionApp
                 {
                     listViewResults.Items[0].Selected = true;
                     listViewResults.Select();
-                    ShowResult(_results[0]);
+                    ShowResult(listViewResults.Items[0].Tag as InspectionResultViewModel);
                 }
             }
             finally
             {
                 listViewResults.EndUpdate();
+            }
+        }
+
+        private void DeleteResultItem(InspectionResultViewModel result)
+        {
+            if (result == null)
+                return;
+
+            int removedIndex = _results.IndexOf(result);
+            if (removedIndex < 0)
+                return;
+
+            _results.RemoveAt(removedIndex);
+            DeleteFileIfExists(result.SourceFilePath);
+            DeleteFileIfExists(result.RawImagePath);
+            DeleteFileIfExists(result.ProcessedImagePath);
+            _batchExporter?.RemoveItem(result.ImageId);
+
+            RefreshResultList(selectFirst: false);
+            if (_results.Count == 0)
+            {
+                ClearSelectionView();
+            }
+            else
+            {
+                int nextIndex = Math.Min(removedIndex, _results.Count - 1);
+                SelectResultAt(nextIndex);
+            }
+
+            SaveSessionState();
+            UpdateStaticUi();
+        }
+
+        private void SelectResultAt(int index)
+        {
+            if (index < 0 || index >= listViewResults.Items.Count)
+                return;
+
+            ListViewItem item = listViewResults.Items[index];
+            item.Selected = true;
+            item.Focused = true;
+            item.EnsureVisible();
+            listViewResults.Select();
+            ShowResult(item.Tag as InspectionResultViewModel);
+        }
+
+        private void DeleteFileIfExists(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return;
+
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                LogException(ex);
             }
         }
 
@@ -1415,14 +1501,10 @@ namespace CoilInspectionApp
 
         private InspectionResultViewModel GetCurrentSelectedResult()
         {
-            if (listViewResults.SelectedIndices.Count == 0)
+            if (listViewResults.SelectedItems.Count == 0)
                 return null;
 
-            int index = listViewResults.SelectedIndices[0];
-            if (index < 0 || index >= _results.Count)
-                return null;
-
-            return _results[index];
+            return listViewResults.SelectedItems[0].Tag as InspectionResultViewModel;
         }
 
         private static string ToStage1Text(bool anomaExecuted, string anomaDecision)
