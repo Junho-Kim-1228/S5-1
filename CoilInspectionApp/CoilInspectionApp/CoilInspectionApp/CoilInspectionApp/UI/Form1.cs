@@ -1,6 +1,7 @@
 ﻿using CoilInspectionApp.Interface;
 using CoilInspectionApp.Logging;
 using CoilInspectionApp.Preprocess;
+using CoilInspectionApp.UI;
 using CoilInspectionApp.Watcher;
 using Newtonsoft.Json;
 using OpenCvSharp;
@@ -22,6 +23,10 @@ namespace CoilInspectionApp
         private readonly CsvLogger _logger = new CsvLogger();
         private readonly OnnxModelTester _modelTester = new OnnxModelTester();
         private readonly List<InspectionResultViewModel> _results = new List<InspectionResultViewModel>();
+        private readonly object _batchExporterLock = new object();
+        private readonly ContextMenuStrip _resultContextMenu = new ContextMenuStrip();
+        private readonly ToolStripMenuItem _retryInferenceMenuItem = new ToolStripMenuItem("추론 재시도");
+        private StatisticsForm _statisticsForm;
         private BatchExporter _batchExporter;
         private MaskRuntimeRunner _maskRuntimeRunner;
         private PipelinePackageConfig _config;
@@ -32,6 +37,11 @@ namespace CoilInspectionApp
         private volatile bool _isPreprocessing;
         private volatile bool _preprocessAgainRequested;
         private bool _isClosingBatch;
+        private bool _isAutoClosePaused;
+        private volatile bool _isInferring;
+        private bool _autoInferenceScheduled;
+        private readonly System.Windows.Forms.Timer _autoCloseTimer = new System.Windows.Forms.Timer();
+        private long _lastInputReceivedTicks;
         private System.Drawing.Image _displayImage;
         private double _imageScale = 1.0;
         private double _imageFitScale = 1.0;
@@ -41,6 +51,7 @@ namespace CoilInspectionApp
 
         private const double ImageZoomStep = 0.10;
         private const double ImageMaxScale = 10.0;
+        private readonly int _autoCloseIdleSeconds = ResolveAutoCloseIdleSeconds();
 
         public Form1()
         {
@@ -48,7 +59,56 @@ namespace CoilInspectionApp
             buttonZoomIn.BringToFront();
             buttonZoomOut.BringToFront();
             buttonZoomFit.BringToFront();
+            InitializeResultContextMenu();
             InitSystem();
+            InitializeAutoCloseTimer();
+        }
+
+        private void InitializeResultContextMenu()
+        {
+            var deleteMenuItem = new ToolStripMenuItem("이미지 삭제");
+            var retrySeparator = new ToolStripSeparator();
+            deleteMenuItem.Click += (sender, args) => DeleteSelectedResult();
+            _retryInferenceMenuItem.Click += (sender, args) => RetrySelectedInference();
+            _resultContextMenu.Items.Add(_retryInferenceMenuItem);
+            _resultContextMenu.Items.Add(retrySeparator);
+            _resultContextMenu.Items.Add(deleteMenuItem);
+            _resultContextMenu.Opening += (sender, args) =>
+            {
+                InspectionResultViewModel selectedResult = GetCurrentSelectedResult();
+                args.Cancel = selectedResult == null;
+                _retryInferenceMenuItem.Visible = selectedResult != null
+                    && string.Equals(selectedResult.ReasonText, "inference_failed", StringComparison.OrdinalIgnoreCase);
+                retrySeparator.Visible = _retryInferenceMenuItem.Visible;
+            };
+            listViewResults.ContextMenuStrip = _resultContextMenu;
+        }
+
+        private void RetrySelectedInference()
+        {
+            InspectionResultViewModel result = GetCurrentSelectedResult();
+            if (result == null
+                || !string.Equals(result.ReasonText, "inference_failed", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            result.Stage1 = "대기";
+            result.Stage2 = "대기";
+            result.Final = "추론대기";
+            result.ScoreText = "-";
+            result.IsPending = true;
+            result.IsInferenceCompleted = false;
+            RefreshResultList(selectFirst: false);
+            SaveSessionState();
+            StartAutomaticInferenceIfNeeded();
+        }
+
+        private void InitializeAutoCloseTimer()
+        {
+            _autoCloseTimer.Interval = 1000;
+            _autoCloseTimer.Tick += AutoCloseTimer_Tick;
+            _autoCloseTimer.Start();
         }
 
         private void InitSystem()
@@ -73,15 +133,42 @@ namespace CoilInspectionApp
                 UpdateStaticUi();
 
                 _dw = new DirectoryWatcher();
-                _dw.OnFileCreated += filePath => Invoke(new Action(() => RegisterIncomingFile(filePath)));
-                _dw.OnFileDeleted += filePath => Invoke(new Action(() => RemoveIncomingFile(filePath)));
+                _dw.OnFileCreated += filePath =>
+                {
+                    MarkInputReceived();
+                    PostToUi(() => RegisterIncomingFile(filePath));
+                };
+                _dw.OnFileDeleted += filePath => PostToUi(() => RemoveIncomingFile(filePath));
                 _dw.StartWatch(_inputPath);
                 RegisterExistingInputFiles();
+
+                if (_results.Count > 0 && System.Threading.Interlocked.Read(ref _lastInputReceivedTicks) <= 0)
+                    MarkInputReceived();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"초기화 오류: {ex.Message}", "CoilInspectionApp", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void PostToUi(Action action)
+        {
+            if (action == null || IsDisposed || !IsHandleCreated)
+                return;
+
+            try
+            {
+                BeginInvoke(action);
+            }
+            catch (InvalidOperationException)
+            {
+                // 종료 중 들어온 파일 시스템 이벤트는 무시한다.
+            }
+        }
+
+        private void MarkInputReceived()
+        {
+            System.Threading.Interlocked.Exchange(ref _lastInputReceivedTicks, DateTime.Now.Ticks);
         }
 
         private void RegisterExistingInputFiles()
@@ -118,6 +205,16 @@ namespace CoilInspectionApp
             }
 
             return value;
+        }
+
+        private static int ResolveAutoCloseIdleSeconds()
+        {
+            const int defaultSeconds = 300;
+            int configuredSeconds;
+            return int.TryParse(ConfigurationManager.AppSettings["AutoCloseIdleSeconds"], out configuredSeconds)
+                && configuredSeconds > 0
+                ? configuredSeconds
+                : defaultSeconds;
         }
 
         private static string ResolvePackagePath(string configuredValue, string fallbackValue)
@@ -244,6 +341,7 @@ namespace CoilInspectionApp
             };
 
             _results.Insert(0, viewModel);
+            MarkInputReceived();
             RefreshResultList(selectFirst: true);
             SaveSessionState();
             StartPreprocessWorkerIfNeeded();
@@ -332,7 +430,10 @@ namespace CoilInspectionApp
                 if (showNoPendingMessage)
                     MessageBox.Show("전처리 대기 중인 항목이 없습니다.");
                 else if (runInBackground)
+                {
                     _isPreprocessing = false;
+                    StartAutomaticInferenceIfNeeded();
+                }
                 return;
             }
 
@@ -348,7 +449,13 @@ namespace CoilInspectionApp
                 if (showNoPendingMessage)
                     MessageBox.Show("전처리 가능한 입력 파일이 없습니다.");
                 else if (runInBackground)
+                {
                     _isPreprocessing = false;
+                    if (_results.Any(item => item.IsPreprocessPending))
+                        StartPreprocessWorkerIfNeeded();
+                    else
+                        StartAutomaticInferenceIfNeeded();
+                }
                 return;
             }
 
@@ -434,7 +541,7 @@ namespace CoilInspectionApp
                             MarkPreprocessFailed(item, "preprocess_failed");
                         RefreshResultList(selectFirst: true);
                         SaveSessionState();
-                        MessageBox.Show($"자동 전처리 오류: {ex.Message}", "CoilInspectionApp", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        SetAutoCloseStatus("자동 전처리 오류: error_log.txt 확인");
                     }));
                 }
             }
@@ -447,6 +554,8 @@ namespace CoilInspectionApp
                         _isPreprocessing = false;
                         if (_preprocessAgainRequested || _results.Any(item => item.IsPreprocessPending))
                             StartPreprocessWorkerIfNeeded();
+                        else
+                            StartAutomaticInferenceIfNeeded();
                     }));
                 }
             }
@@ -470,6 +579,7 @@ namespace CoilInspectionApp
 
             RefreshResultList(selectFirst: true);
             SaveSessionState();
+            StartAutomaticInferenceIfNeeded();
         }
 
         private void MarkMissingPreprocessResults(
@@ -504,6 +614,7 @@ namespace CoilInspectionApp
             }
 
             SavePreparedItem(item, maskedPath);
+            StartAutomaticInferenceIfNeeded();
         }
 
         private static void MarkPreprocessFailed(InspectionResultViewModel item, string reason)
@@ -535,7 +646,6 @@ namespace CoilInspectionApp
             try
             {
                 _preprocessAgainRequested = false;
-                System.Threading.Thread.Sleep(1500);
 
                 if (IsDisposed || !IsHandleCreated)
                     return;
@@ -550,7 +660,7 @@ namespace CoilInspectionApp
                     {
                         _isPreprocessing = false;
                         LogException(ex);
-                        MessageBox.Show($"자동 전처리 오류: {ex.Message}", "CoilInspectionApp", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        SetAutoCloseStatus("자동 전처리 오류: error_log.txt 확인");
                     }));
                 }
             }
@@ -567,8 +677,9 @@ namespace CoilInspectionApp
                     throw new InvalidOperationException("Masked image load failed.");
 
                 var processor = new ImageProcessor();
-                BatchExporter.PreparedImagePaths savedPaths =
-                    _batchExporter.SavePreparedImages(item.ImageId, rawImg, maskedImg);
+                BatchExporter.PreparedImagePaths savedPaths;
+                lock (_batchExporterLock)
+                    savedPaths = _batchExporter.SavePreparedImages(item.ImageId, rawImg, maskedImg);
 
                 int displaySize = ResolveDisplayInputSize();
                 using (Mat displayImg = processor.PrepareExistingMaskedDisplayImage(preparedImagePath, displaySize, displaySize))
@@ -598,52 +709,121 @@ namespace CoilInspectionApp
             UpdateStaticUi();
         }
 
-        private void RunPendingInference()
+        private void StartAutomaticInferenceIfNeeded()
         {
+            if (_isInferring || _autoInferenceScheduled || _isClosingBatch)
+                return;
+
+            if (!_results.Any(item => item.IsPending))
+                return;
+
+            if (IsDisposed || !IsHandleCreated)
+                return;
+
+            _autoInferenceScheduled = true;
+            BeginInvoke(new Action(RunNextAutomaticInference));
+        }
+
+        private async void RunNextAutomaticInference()
+        {
+            _autoInferenceScheduled = false;
+            if (_isInferring || _isClosingBatch)
+                return;
+
+            InspectionResultViewModel pendingItem = _results.FirstOrDefault(item => item.IsPending);
+            if (pendingItem == null)
+                return;
+
+            int waitingCount = _results.Count(item => item.IsPending);
+            _isInferring = true;
+            SetInferenceProgress(0, 1, $"자동 추론 중: {pendingItem.FileName} / 대기 {waitingCount}개");
+            try
+            {
+                await Task.Run(() => RunInferenceForPreparedItem(pendingItem));
+                SaveSessionState();
+                SetInferenceProgress(1, 1, $"자동 추론 완료: {pendingItem.FileName}");
+            }
+            finally
+            {
+                _isInferring = false;
+            }
+
+            RefreshResultList(selectFirst: false);
+            RefreshSelectedResult(pendingItem);
+            StartAutomaticInferenceIfNeeded();
+        }
+
+        private async void RunPendingInference(bool showNoPendingMessage = true)
+        {
+            if (_isInferring)
+            {
+                if (showNoPendingMessage)
+                    MessageBox.Show("자동 추론이 진행 중입니다. 완료 후 다시 시도하세요.");
+                return;
+            }
+
             List<InspectionResultViewModel> pendingItems = _results
-                .Where(item => item.IsPending)
+                .Where(item => item.IsPending
+                    || (showNoPendingMessage
+                        && string.Equals(item.ReasonText, "inference_failed", StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             if (pendingItems.Count == 0)
             {
-                MessageBox.Show("추론 대기 중인 항목이 없습니다.");
+                if (showNoPendingMessage)
+                    MessageBox.Show("추론 대기 또는 재시도할 항목이 없습니다.");
                 return;
             }
 
+            foreach (InspectionResultViewModel item in pendingItems)
+                item.IsPending = true;
+
             SetInferenceProgress(0, pendingItems.Count, "추론 시작");
-            button3.Enabled = false;
+            _isInferring = true;
             try
             {
                 for (int index = 0; index < pendingItems.Count; index++)
                 {
                     InspectionResultViewModel pendingItem = pendingItems[index];
                     SetInferenceProgress(index, pendingItems.Count, $"추론 중: {pendingItem.FileName}");
-                    RunInferenceForPreparedItem(pendingItem);
+                    await Task.Run(() => RunInferenceForPreparedItem(pendingItem));
+                    SaveSessionState();
                     SetInferenceProgress(index + 1, pendingItems.Count, $"추론 완료: {index + 1}/{pendingItems.Count}");
-                    Application.DoEvents();
+                    RefreshResultList(selectFirst: false);
+                    RefreshSelectedResult(pendingItem);
                 }
             }
             finally
             {
-                button3.Enabled = true;
+                _isInferring = false;
             }
 
             RefreshResultList(selectFirst: true);
+            StartAutomaticInferenceIfNeeded();
         }
 
         private void SetInferenceProgress(int completed, int total, string message)
         {
-            int safeTotal = Math.Max(total, 1);
-            int safeCompleted = Math.Max(0, Math.Min(completed, safeTotal));
+            UpdatePipelineProgress();
+        }
 
+        private void UpdatePipelineProgress()
+        {
+            int total = _results.Count;
+            int preprocessed = _results.Count(item => !item.IsPreprocessPending);
+            int inferred = _results.Count(item => item.IsInferenceCompleted);
+            int progressMaximum = Math.Max(total, 1);
+
+            labelInputProgress.Text = $"입력 {total}장";
+            labelPreprocessProgress.Text = $"전처리 {preprocessed}/{total}" + (_isPreprocessing ? " · 진행" : "");
+            labelInferenceProgress.Text = $"추론 {inferred}/{total}" + (_isInferring ? " · 진행" : "");
+
+            progressBarPreprocess.Minimum = 0;
+            progressBarPreprocess.Maximum = progressMaximum;
+            progressBarPreprocess.Value = Math.Min(preprocessed, progressMaximum);
             progressBarInference.Minimum = 0;
-            progressBarInference.Maximum = safeTotal;
-            progressBarInference.Value = safeCompleted;
-            labelInferenceProgress.Text = total <= 0
-                ? message
-                : $"{message} ({safeCompleted}/{total})";
-            labelInferenceProgress.Refresh();
-            progressBarInference.Refresh();
+            progressBarInference.Maximum = progressMaximum;
+            progressBarInference.Value = Math.Min(inferred, progressMaximum);
         }
 
         private void RunInferenceForPreparedItem(InspectionResultViewModel result)
@@ -673,8 +853,6 @@ namespace CoilInspectionApp
                     {
                         if (displayImg == null || displayImg.Empty())
                             throw new InvalidOperationException("Image display preparation failed.");
-
-                        SetDisplayImage(BitmapConverter.ToBitmap(displayImg), resetView: true);
 
                         if (_config.RequiresAnoma)
                         {
@@ -731,21 +909,22 @@ namespace CoilInspectionApp
                         if (yoloExecuted && detections.Count > 0)
                             DrawDetections(displayImg, detections);
 
-                        SetDisplayImage(BitmapConverter.ToBitmap(displayImg), resetView: true);
-
                         _logger.SaveResult(result.FileName, finalIsDefect ? "NG" : "OK", anomaScore);
-                        _batchExporter.AddResult(
-                            result.ImageId,
-                            rawImg,
-                            processedImg,
-                            anomaExecuted,
-                            anomaScore,
-                            anomaDecision,
-                            yoloExecuted,
-                            yoloSkippedReason,
-                            detections,
-                            finalIsDefect,
-                            reasons);
+                        lock (_batchExporterLock)
+                        {
+                            _batchExporter.AddResult(
+                                result.ImageId,
+                                rawImg,
+                                processedImg,
+                                anomaExecuted,
+                                anomaScore,
+                                anomaDecision,
+                                yoloExecuted,
+                                yoloSkippedReason,
+                                detections,
+                                finalIsDefect,
+                                reasons);
+                        }
                     }
 
                     result.Stage1 = ToStage1Text(anomaExecuted, anomaDecision);
@@ -757,14 +936,24 @@ namespace CoilInspectionApp
                     result.ReasonText = reasons.Count > 0 ? string.Join(", ", reasons) : "-";
                     result.IsPending = false;
                     result.IsInferenceCompleted = true;
-                    SaveSessionState();
                 }
             }
             catch (Exception ex)
             {
                 LogException(ex);
-                MessageBox.Show($"추론 오류: {ex.Message}", "CoilInspectionApp", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                result.Stage1 = "추론실패";
+                result.Stage2 = "미실행";
+                result.Final = "실패";
+                result.ReasonText = "inference_failed";
+                result.IsPending = false;
+                result.IsInferenceCompleted = false;
             }
+        }
+
+        private void RefreshSelectedResult(InspectionResultViewModel completedResult)
+        {
+            if (ReferenceEquals(GetCurrentSelectedResult(), completedResult))
+                ShowResult(completedResult);
         }
 
         private List<Detection> RunYoloStage(ImageProcessor processor, string imagePath, bool alreadyMasked)
@@ -885,26 +1074,106 @@ namespace CoilInspectionApp
             Process.Start("explorer.exe", path);
         }
 
-        private void button1_Click(object sender, EventArgs e) => SelectAndQueueImage();
-
         private void button2_Click(object sender, EventArgs e)
+        {
+            CloseCurrentBatch(isAutomatic: false);
+        }
+
+        private void AutoCloseTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isAutoClosePaused)
+            {
+                SetAutoCloseStatus("자동 마감 일시정지");
+                return;
+            }
+
+            long lastInputTicks = System.Threading.Interlocked.Read(ref _lastInputReceivedTicks);
+            if (_isClosingBatch || _batchExporter == null || _results.Count == 0 || lastInputTicks <= 0)
+                return;
+
+            if (_isInferring)
+                return;
+
+            int failedCount = _results.Count(item =>
+                string.Equals(item.Final, "실패", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Stage1, "전처리실패", StringComparison.OrdinalIgnoreCase));
+            if (failedCount > 0)
+            {
+                SetAutoCloseStatus($"자동 마감 보류: 실패 {failedCount}개");
+                return;
+            }
+
+            int incompleteCount = _results.Count(item => !item.IsInferenceCompleted);
+            if (_isPreprocessing || incompleteCount > 0)
+            {
+                SetAutoCloseStatus($"자동 마감: 처리 완료 대기 ({incompleteCount}개)");
+                return;
+            }
+
+            var lastInputReceivedAt = new DateTime(lastInputTicks);
+            double idleSeconds = (DateTime.Now - lastInputReceivedAt).TotalSeconds;
+            int remainingSeconds = Math.Max(0, _autoCloseIdleSeconds - (int)Math.Floor(idleSeconds));
+            if (remainingSeconds > 0)
+            {
+                SetAutoCloseStatus($"자동 마감까지 {remainingSeconds}초");
+                return;
+            }
+
+            CloseCurrentBatch(isAutomatic: true);
+        }
+
+        private void buttonToggleAutoClose_CheckedChanged(object sender, EventArgs e)
+        {
+            _isAutoClosePaused = !buttonToggleAutoClose.Checked;
+            buttonToggleAutoClose.Text = _isAutoClosePaused ? "자동 마감 OFF" : "자동 마감 ON";
+            buttonToggleAutoClose.BackColor = _isAutoClosePaused
+                ? System.Drawing.Color.MistyRose
+                : System.Drawing.Color.Honeydew;
+
+            if (_isAutoClosePaused)
+            {
+                SetAutoCloseStatus("자동 마감 일시정지");
+                return;
+            }
+
+            if (_results.Count > 0)
+            {
+                MarkInputReceived();
+                SetAutoCloseStatus($"자동 마감까지 {_autoCloseIdleSeconds}초");
+            }
+            else
+            {
+                SetAutoCloseStatus("자동 마감 대기");
+            }
+        }
+
+        private void SetAutoCloseStatus(string message)
+        {
+            labelAutoCloseProgress.Text = message;
+        }
+
+        private void CloseCurrentBatch(bool isAutomatic)
         {
             try
             {
                 if (_results.Count == 0)
                 {
-                    MessageBox.Show("마감할 항목이 없습니다.");
+                    if (!isAutomatic)
+                        MessageBox.Show("마감할 항목이 없습니다.");
                     return;
                 }
 
                 InspectionResultViewModel incompleteItem = _results.FirstOrDefault(item => !item.IsInferenceCompleted);
                 if (incompleteItem != null)
                 {
-                    MessageBox.Show(
-                        $"추론을 마치지 않은 이미지가 있습니다.\n먼저 추론을 완료하세요.\n\n파일: {incompleteItem.FileName}\n상태: {incompleteItem.Final}",
-                        "CoilInspectionApp",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
+                    if (!isAutomatic)
+                    {
+                        MessageBox.Show(
+                            $"추론을 마치지 않은 이미지가 있습니다.\n먼저 추론을 완료하세요.\n\n파일: {incompleteItem.FileName}\n상태: {incompleteItem.Final}",
+                            "CoilInspectionApp",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
                     return;
                 }
 
@@ -912,14 +1181,27 @@ namespace CoilInspectionApp
                 try
                 {
                     _batchExporter.CloseBatch();
+                    string exportedBatchDirectory = _batchExporter.LastExportDirectory;
                     DeleteBatchInputFiles();
-                    MessageBox.Show("배치 마감 완료 (DONE.flag 생성됨)");
                     _batchExporter.StartNewBatch();
                     _results.Clear();
                     listViewResults.Items.Clear();
+                    System.Threading.Interlocked.Exchange(ref _lastInputReceivedTicks, 0);
                     ClearSelectionView();
                     SaveSessionState();
                     UpdateStaticUi();
+
+                    if (isAutomatic)
+                    {
+                        string batchName = string.IsNullOrWhiteSpace(exportedBatchDirectory)
+                            ? "-"
+                            : Path.GetFileName(exportedBatchDirectory);
+                        SetAutoCloseStatus($"자동 배치 마감 완료: {batchName}");
+                    }
+                    else
+                    {
+                        MessageBox.Show("배치 마감 완료 (DONE.flag 생성됨)");
+                    }
                 }
                 finally
                 {
@@ -928,7 +1210,11 @@ namespace CoilInspectionApp
             }
             catch (Exception ex)
             {
-                MessageBox.Show("마감 오류: " + ex.Message);
+                LogException(ex);
+                if (isAutomatic)
+                    SetAutoCloseStatus("자동 마감 오류: error_log.txt 확인");
+                else
+                    MessageBox.Show("마감 오류: " + ex.Message);
             }
         }
 
@@ -954,11 +1240,6 @@ namespace CoilInspectionApp
             }
         }
 
-        private void button3_Click(object sender, EventArgs e)
-        {
-            RunPendingInference();
-        }
-
         private void buttonRefreshInput_Click(object sender, EventArgs e)
         {
             RefreshInputListFromFolder();
@@ -969,9 +1250,35 @@ namespace CoilInspectionApp
             OpenFolderPath(_inputPath);
         }
 
+        private void buttonOpenPackage_Click(object sender, EventArgs e)
+        {
+            OpenFolderPath(_packagePath);
+        }
+
         private void buttonOpenBatch_Click(object sender, EventArgs e)
         {
             OpenFolderPath(_batchExporter?.ExportBaseDirectory);
+        }
+
+        private void buttonStatistics_Click(object sender, EventArgs e)
+        {
+            if (_batchExporter == null)
+                return;
+
+            if (_statisticsForm == null || _statisticsForm.IsDisposed)
+            {
+                _statisticsForm = new StatisticsForm(
+                    _batchExporter.ExportBaseDirectory,
+                    _batchExporter.CurrentBatchDirectory,
+                    _config?.anoma?.score_thres);
+                _statisticsForm.FormClosed += (closedSender, closedArgs) => _statisticsForm = null;
+                _statisticsForm.Show(this);
+                return;
+            }
+
+            if (_statisticsForm.WindowState == FormWindowState.Minimized)
+                _statisticsForm.WindowState = FormWindowState.Normal;
+            _statisticsForm.Activate();
         }
 
         private void buttonZoomIn_Click(object sender, EventArgs e)
@@ -1072,6 +1379,9 @@ namespace CoilInspectionApp
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            _autoCloseTimer.Stop();
+            _autoCloseTimer.Dispose();
+            _resultContextMenu.Dispose();
             SaveSessionState();
             ClearDisplayImage();
             base.OnFormClosing(e);
@@ -1081,6 +1391,7 @@ namespace CoilInspectionApp
         {
             UpdateStaticUi();
             ClearSelectionDetails();
+            StartAutomaticInferenceIfNeeded();
         }
 
         private void listViewResults_SelectedIndexChanged(object sender, EventArgs e)
@@ -1095,17 +1406,28 @@ namespace CoilInspectionApp
             ShowResult(result);
         }
 
-        private void listViewResults_MouseClick(object sender, MouseEventArgs e)
+        private void listViewResults_MouseDown(object sender, MouseEventArgs e)
         {
+            if (e.Button != MouseButtons.Right)
+                return;
+
             ListViewHitTestInfo hit = listViewResults.HitTest(e.Location);
-            if (hit.Item == null || hit.SubItem == null)
+            if (hit.Item == null)
+            {
+                listViewResults.SelectedItems.Clear();
+                return;
+            }
+
+            hit.Item.Selected = true;
+            hit.Item.Focused = true;
+        }
+
+        private void DeleteSelectedResult()
+        {
+            if (listViewResults.SelectedItems.Count == 0)
                 return;
 
-            int columnIndex = hit.Item.SubItems.IndexOf(hit.SubItem);
-            if (columnIndex != listViewResults.Columns.Count - 1)
-                return;
-
-            InspectionResultViewModel result = hit.Item.Tag as InspectionResultViewModel;
+            InspectionResultViewModel result = listViewResults.SelectedItems[0].Tag as InspectionResultViewModel;
             if (result == null)
                 return;
 
@@ -1122,35 +1444,172 @@ namespace CoilInspectionApp
 
         private void RefreshResultList(bool selectFirst)
         {
+            UpdatePipelineProgress();
+            InspectionResultViewModel selectedResult = GetCurrentSelectedResult();
+            InspectionResultViewModel topResult = listViewResults.TopItem?.Tag as InspectionResultViewModel;
+            bool updateInPlace = CanUpdateResultListInPlace();
+            ListViewItem itemToSelect = null;
+            ListViewItem itemToKeepAtTop = null;
+
+            if (updateInPlace)
+            {
+                for (int index = 0; index < _results.Count; index++)
+                    UpdateResultListItem(listViewResults.Items[index], _results[index], index);
+                return;
+            }
+
             listViewResults.BeginUpdate();
             try
             {
                 listViewResults.Items.Clear();
                 for (int index = 0; index < _results.Count; index++)
                 {
-                    InspectionResultViewModel result = _results[index];
-                    var item = new ListViewItem((index + 1).ToString());
-                    item.SubItems.Add(result.FileName);
-                    item.SubItems.Add(result.Stage1);
-                    item.SubItems.Add(result.Stage2);
-                    item.SubItems.Add(result.Final);
-                    item.SubItems.Add(result.ScoreText);
-                    item.SubItems.Add("삭제");
-                    item.Tag = result;
+                    ListViewItem item = CreateResultListItem(_results[index], index);
                     listViewResults.Items.Add(item);
+
+                    if (ReferenceEquals(_results[index], selectedResult))
+                        itemToSelect = item;
+                    if (ReferenceEquals(_results[index], topResult))
+                        itemToKeepAtTop = item;
                 }
 
-                if (selectFirst && listViewResults.Items.Count > 0)
+                if (itemToSelect == null && selectFirst && listViewResults.SelectedItems.Count == 0
+                    && listViewResults.Items.Count > 0)
                 {
-                    listViewResults.Items[0].Selected = true;
-                    listViewResults.Select();
-                    ShowResult(listViewResults.Items[0].Tag as InspectionResultViewModel);
+                    itemToSelect = listViewResults.Items[0];
+                }
+
+                if (itemToSelect != null)
+                {
+                    itemToSelect.Selected = true;
+                    itemToSelect.Focused = true;
                 }
             }
             finally
             {
                 listViewResults.EndUpdate();
             }
+
+            if (itemToKeepAtTop != null)
+                listViewResults.TopItem = itemToKeepAtTop;
+
+            if (itemToSelect != null)
+                listViewResults.Select();
+        }
+
+        private bool CanUpdateResultListInPlace()
+        {
+            if (listViewResults.Items.Count != _results.Count)
+                return false;
+
+            for (int index = 0; index < _results.Count; index++)
+            {
+                if (!ReferenceEquals(listViewResults.Items[index].Tag, _results[index]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static ListViewItem CreateResultListItem(InspectionResultViewModel result, int index)
+        {
+            var item = new ListViewItem();
+            while (item.SubItems.Count < 7)
+                item.SubItems.Add("");
+
+            UpdateResultListItem(item, result, index);
+            return item;
+        }
+
+        private static void UpdateResultListItem(ListViewItem item, InspectionResultViewModel result, int index)
+        {
+            while (item.SubItems.Count < 7)
+                item.SubItems.Add("");
+
+            SetSubItemText(item, 0, (index + 1).ToString());
+            SetSubItemText(item, 1, result.FileName);
+            SetSubItemText(item, 2, ResolvePreprocessStatus(result));
+            SetSubItemText(item, 3, ResolveAnomalyStatus(result));
+            SetSubItemText(item, 4, ResolveDetectionStatus(result));
+            SetSubItemText(item, 5, result.Final);
+            SetSubItemText(item, 6, result.ScoreText);
+            ApplyResultListColors(item);
+            item.Tag = result;
+        }
+
+        private static void ApplyResultListColors(ListViewItem item)
+        {
+            item.UseItemStyleForSubItems = false;
+            for (int index = 0; index < item.SubItems.Count; index++)
+                item.SubItems[index].ForeColor = System.Drawing.SystemColors.ControlText;
+
+            item.SubItems[2].ForeColor = ResolveStatusColor(item.SubItems[2].Text);
+            item.SubItems[3].ForeColor = ResolveStatusColor(item.SubItems[3].Text);
+            item.SubItems[4].ForeColor = ResolveStatusColor(item.SubItems[4].Text);
+            item.SubItems[5].ForeColor = ResolveStatusColor(item.SubItems[5].Text);
+        }
+
+        private static System.Drawing.Color ResolveStatusColor(string status)
+        {
+            if (string.Equals(status, "완료", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "정상", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "미검출", StringComparison.OrdinalIgnoreCase))
+            {
+                return System.Drawing.Color.SeaGreen;
+            }
+
+            if (string.Equals(status, "이상", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "검출", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "진행 중", StringComparison.OrdinalIgnoreCase))
+            {
+                return System.Drawing.Color.DarkOrange;
+            }
+
+            if (string.Equals(status, "불량", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "실패", StringComparison.OrdinalIgnoreCase))
+            {
+                return System.Drawing.Color.Firebrick;
+            }
+
+            return System.Drawing.SystemColors.ControlText;
+        }
+
+        private static string ResolvePreprocessStatus(InspectionResultViewModel result)
+        {
+            if (string.Equals(result.Stage1, "전처리실패", StringComparison.OrdinalIgnoreCase))
+                return "실패";
+            if (!result.IsPreprocessPending)
+                return "완료";
+            if (string.Equals(result.Final, "전처리중", StringComparison.OrdinalIgnoreCase))
+                return "진행 중";
+            return "대기";
+        }
+
+        private static string ResolveAnomalyStatus(InspectionResultViewModel result)
+        {
+            if (result.IsPreprocessPending)
+                return "-";
+            if (result.IsPending)
+                return "대기";
+            if (string.Equals(result.Stage1, "추론실패", StringComparison.OrdinalIgnoreCase))
+                return "실패";
+            return result.Stage1;
+        }
+
+        private static string ResolveDetectionStatus(InspectionResultViewModel result)
+        {
+            if (result.IsPreprocessPending)
+                return "-";
+            if (result.IsPending)
+                return "대기";
+            return result.Stage2;
+        }
+
+        private static void SetSubItemText(ListViewItem item, int index, string value)
+        {
+            string safeValue = value ?? "";
+            if (!string.Equals(item.SubItems[index].Text, safeValue, StringComparison.Ordinal))
+                item.SubItems[index].Text = safeValue;
         }
 
         private void DeleteResultItem(InspectionResultViewModel result)
@@ -1346,7 +1805,7 @@ namespace CoilInspectionApp
             labelValueScore.Text = "-";
             labelValueDetections.Text = "-";
             labelValueReasons.Text = "-";
-            SetInferenceProgress(0, 0, "추론 대기 중");
+            SetInferenceProgress(0, 0, "자동 검사 대기 중");
         }
 
         private void ClearSelectionView()
