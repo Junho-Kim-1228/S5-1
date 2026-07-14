@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using Microsoft.Win32;
 using IOPath = System.IO.Path;
 
 namespace CoilTrainingUI
@@ -23,12 +24,20 @@ namespace CoilTrainingUI
             YoloOnly
         }
 
+        private enum YoloTrainingMode
+        {
+            Fresh,
+            FineTune
+        }
+
         private sealed class RunManifestMetadata
         {
             public TrainingPipelineMode PipelineMode { get; set; } = TrainingPipelineMode.AnomaThenYolo;
         }
 
         private TrainingPipelineMode _trainingPipelineMode = TrainingPipelineMode.AnomaThenYolo;
+        private YoloTrainingMode _yoloTrainingMode = YoloTrainingMode.Fresh;
+        private string _yoloFineTuneWeightsPath = "";
 
         private void RequestSaveLabelsDebounced(string imagePath)
         {
@@ -54,6 +63,43 @@ namespace CoilTrainingUI
         private void TrainPipelineYoloOnly_Click(object sender, RoutedEventArgs e)
         {
             SetTrainingPipelineMode(TrainingPipelineMode.YoloOnly);
+        }
+
+        private void YoloTrainFresh_Click(object sender, RoutedEventArgs e)
+        {
+            _yoloTrainingMode = YoloTrainingMode.Fresh;
+            _yoloFineTuneWeightsPath = "";
+            UpdateYoloTrainingModeMenu();
+        }
+
+        private void YoloTrainFineTune_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "파인튜닝에 사용할 YOLO best.pt 선택",
+                Filter = "PyTorch checkpoint (*.pt)|*.pt",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                UpdateYoloTrainingModeMenu();
+                return;
+            }
+
+            _yoloTrainingMode = YoloTrainingMode.FineTune;
+            _yoloFineTuneWeightsPath = dialog.FileName;
+            UpdateYoloTrainingModeMenu();
+        }
+
+        private void UpdateYoloTrainingModeMenu()
+        {
+            YoloTrainFreshMenuItem.IsChecked = _yoloTrainingMode == YoloTrainingMode.Fresh;
+            YoloTrainFineTuneMenuItem.IsChecked = _yoloTrainingMode == YoloTrainingMode.FineTune;
+            YoloTrainFineTuneMenuItem.Header = _yoloTrainingMode == YoloTrainingMode.FineTune
+                ? $"파인튜닝: {IOPath.GetFileName(_yoloFineTuneWeightsPath)}..."
+                : "기존 best.pt로 파인튜닝...";
         }
 
         private void SetTrainingPipelineMode(TrainingPipelineMode mode)
@@ -122,6 +168,18 @@ namespace CoilTrainingUI
             bool trainYolo = RequiresYoloTraining(pipelineMode);
             bool trainAnoma = RequiresAnomaTraining(pipelineMode);
 
+            if (trainYolo && _yoloTrainingMode == YoloTrainingMode.FineTune
+                && (string.IsNullOrWhiteSpace(_yoloFineTuneWeightsPath)
+                    || !File.Exists(_yoloFineTuneWeightsPath)))
+            {
+                MessageBox.Show(
+                    "YOLO 파인튜닝용 best.pt 파일을 찾을 수 없습니다.\nTrain > YOLO 학습 방식에서 다시 선택하세요.",
+                    "YOLO Fine-tune",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             var progressWindow = new OperationProgressWindow($"{operationName} 진행")
             {
                 Owner = this
@@ -170,13 +228,39 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                int totalImages = imagePaths.Count;
-                var normalImagePaths = imagePaths
+                var anomaTrainingInputs = trainAnoma
+                    ? BuildTrainingInputsFromCurrentImageScope()
+                    : new List<TrainingImageInput>();
+                if (trainAnoma)
+                {
+                    var anomaValidation = await Task.Run(() => _datasetValidator.Validate(anomaTrainingInputs));
+                    if (!anomaValidation.IsValid)
+                    {
+                        MessageBox.Show(
+                            anomaValidation.ToErrorMessage(),
+                            "Anoma Cumulative Dataset Validation Failed",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+
+                var anomaImagePaths = anomaTrainingInputs
+                    .Select(input => input.ImagePath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                int totalImages = trainAnoma ? anomaImagePaths.Count : imagePaths.Count;
+                var normalImagePaths = anomaTrainingInputs
+                    .Select(input => input.ImagePath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Where(path => (_stateService.Load(path).IsNormal ?? true) == true)
                     .ToList();
                 int normalImages = normalImagePaths.Count;
 
-                EnsureEnoughWorkspaceDiskSpace(runRoot, imagePaths, normalImagePaths);
+                EnsureEnoughWorkspaceDiskSpace(
+                    runRoot,
+                    trainAnoma ? anomaImagePaths : imagePaths,
+                    normalImagePaths);
 
                 string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 string runDir = IOPath.Combine(runRoot, $"run_{stamp}_{GetTrainingPipelineModeToken(pipelineMode)}");
@@ -184,6 +268,7 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(logsDir);
 
                 string stagedRawRoot = IOPath.Combine(runDir, "staged_raw");
+                string anomaStagedRawRoot = IOPath.Combine(runDir, "anoma_staged_raw");
                 progressWindow.UpdateProgress(15, "학습 raw 입력 staging 중...");
                 int stagedImageCount = await Task.Run(() => StageTrainingInputsForPython(
                     trainingInputs,
@@ -194,6 +279,18 @@ namespace CoilTrainingUI
                 {
                     MessageBox.Show("staged raw 입력 생성 결과가 비었습니다.");
                     return;
+                }
+
+                if (trainAnoma)
+                {
+                    int stagedAnomaImageCount = await Task.Run(() => StageTrainingInputsForPython(
+                        anomaTrainingInputs,
+                        anomaStagedRawRoot));
+                    if (stagedAnomaImageCount == 0)
+                    {
+                        MessageBox.Show("Anoma 누적 학습 입력 생성 결과가 비었습니다.");
+                        return;
+                    }
                 }
 
                 string yoloWorkspaceRoot = IOPath.Combine(runDir, "yolo_workspace");
@@ -264,7 +361,7 @@ namespace CoilTrainingUI
                     int anomaCode = await runner.RunAsync(
                         pythonExe: pythonExe,
                         scriptPath: anomaScript,
-                        args: $"--workspace \"{stagedRawRoot}\" --out \"{anomaOut}\"",
+                        args: $"--workspace \"{anomaStagedRawRoot}\" --out \"{anomaOut}\"",
                         workingDir: aiProjectRoot,
                         logPath: IOPath.Combine(logsDir, "anoma.log"),
                         ct: cts.Token,
@@ -295,10 +392,13 @@ namespace CoilTrainingUI
 
                     progressWindow.UpdateProgress(stageStart, "YOLO 학습 중...");
                     progressWindow.AppendLog("[YOLO] START");
+                    string yoloModelArgs = _yoloTrainingMode == YoloTrainingMode.FineTune
+                        ? $" --model \"{_yoloFineTuneWeightsPath}\""
+                        : "";
                     int yoloCode = await runner.RunAsync(
                         pythonExe: pythonExe,
                         scriptPath: yoloScript,
-                        args: $"--workspace \"{yoloWorkspaceRoot}\" --out \"{yoloOut}\"",
+                        args: $"--workspace \"{yoloWorkspaceRoot}\" --out \"{yoloOut}\"{yoloModelArgs}",
                         workingDir: aiProjectRoot,
                         logPath: IOPath.Combine(logsDir, "yolo.log"),
                         ct: cts.Token,
@@ -343,6 +443,14 @@ namespace CoilTrainingUI
                 if (trainYolo)
                     File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
 
+                string yoloBestPt = IOPath.Combine(yoloOut, "best.pt");
+                if (trainYolo && File.Exists(yoloBestPt))
+                {
+                    string trainingAssetsDir = IOPath.Combine(pkgDir, "training");
+                    Directory.CreateDirectory(trainingAssetsDir);
+                    File.Copy(yoloBestPt, IOPath.Combine(trainingAssetsDir, "yolo_best.pt"), true);
+                }
+
                 if (trainAnoma)
                     File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
@@ -368,14 +476,14 @@ namespace CoilTrainingUI
                     anomaScript: anomaScript,
                     pipelineMode: pipelineMode,
                     yoloWorkspaceRoot: trainYolo ? yoloWorkspaceRoot : "",
-                    anomaWorkspaceRoot: trainAnoma ? stagedRawRoot : "",
+                    anomaWorkspaceRoot: trainAnoma ? anomaStagedRawRoot : "",
                     yoloOutDir: yoloOut,
                     anomaOutDir: anomaOut,
                     inferencePackageDir: pkgDir,
                     settings: settings,
                     totalImages: totalImages,
                     normalImages: normalImages,
-                    sourceBatches: trainingInputs
+                    sourceBatches: (trainAnoma ? anomaTrainingInputs : trainingInputs)
                         .Select(input => input.BatchKey)
                         .Where(batchKey => !string.IsNullOrWhiteSpace(batchKey))
                         .Distinct(StringComparer.OrdinalIgnoreCase)

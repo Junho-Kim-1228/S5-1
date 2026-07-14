@@ -16,6 +16,7 @@ namespace CoilTrainingUI.Services
             s.ReviewStatus = ReviewStatus.ReviewDone;
             s.ReviewReasons.Clear();
             s.ReviewedAt = DateTime.UtcNow;
+            s.DecisionSource = "manual";
 
             _state.Save(imagePath, s);
         }

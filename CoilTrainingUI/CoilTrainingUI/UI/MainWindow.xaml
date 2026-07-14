@@ -102,6 +102,18 @@
                               Click="TrainPipelineYoloOnly_Click"/>
                 </MenuItem>
 
+                <MenuItem Header="YOLO 학습 방식">
+                    <MenuItem x:Name="YoloTrainFreshMenuItem"
+                              Header="기본 가중치로 재학습"
+                              IsCheckable="True"
+                              IsChecked="True"
+                              Click="YoloTrainFresh_Click"/>
+                    <MenuItem x:Name="YoloTrainFineTuneMenuItem"
+                              Header="기존 best.pt로 파인튜닝..."
+                              IsCheckable="True"
+                              Click="YoloTrainFineTune_Click"/>
+                </MenuItem>
+
                 <Separator/>
 
                 <MenuItem Header="현재 파이프라인 학습 실행" 
@@ -314,79 +326,60 @@
 
                                     <StackPanel Orientation="Vertical">
 
-                                        <!-- 파일명 -->
                                         <TextBlock Text="{Binding FileName}"
-                                                   Foreground="Black"
+                                                   Foreground="#171717"
                                                    FontWeight="Bold"
                                                    FontSize="13"
+                                                   TextTrimming="CharacterEllipsis"/>
+
+                                        <TextBlock Text="{Binding BatchName, StringFormat='배치  {0}'}"
+                                                   FontSize="10"
+                                                   Foreground="#888888"
+                                                   Margin="0,1,0,5"/>
+
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding DisplayDecisionText}"
+                                                       FontSize="13"
+                                                       FontWeight="Bold"
+                                                       Foreground="{Binding DisplayDecisionStatus, Converter={StaticResource SimpleStatusColorConverter}}"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding DecisionSourceText}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#2563A8"/>
+                                        </Grid>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                            <TextBlock Text="신뢰도  " FontSize="11" Foreground="#666666"/>
+                                            <TextBlock Text="{Binding ConfidenceStatusText}"
+                                                       FontSize="11"
+                                                       FontWeight="Bold"
+                                                       ToolTip="임시 기준: 정상 Anoma ≤ 11.5, 불량 Anoma ≥ 15.0 및 YOLO ≥ 0.75"
+                                                       Foreground="{Binding ConfidenceStatusText, Converter={StaticResource SimpleStatusColorConverter}}"/>
+                                        </StackPanel>
+
+                                        <TextBlock Text="{Binding AiEvidenceText}"
+                                                   FontSize="11"
+                                                   Foreground="#444444"
+                                                   TextTrimming="CharacterEllipsis"
                                                    Margin="0,0,0,2"/>
 
-                                        <!-- 상태 표시 (2-stage 기준) -->
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="AI Stage1:"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#606060"/>
+                                        <TextBlock FontSize="11" Foreground="#606060" Margin="0,0,0,2">
+                                            <Run Text="1차 이상 탐지 "/>
+                                            <Run Text="{Binding AiStage1StatusText, Mode=OneWay}" FontWeight="SemiBold"/>
+                                            <Run Text="  ·  2차 결함 검출 "/>
+                                            <Run Text="{Binding AiStage2StatusText, Mode=OneWay}" FontWeight="SemiBold"/>
+                                        </TextBlock>
 
-                                            <TextBlock Text="{Binding AiStage1StatusText}"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{Binding AiStage1StatusText, Converter={StaticResource SimpleStatusColorConverter}}"
-                                                       Margin="4,0,12,0"/>
-
-                                            <TextBlock Text="AI Stage2:"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#606060"/>
-
-                                            <TextBlock Text="{Binding AiStage2StatusText}"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{Binding AiStage2StatusText, Converter={StaticResource SimpleStatusColorConverter}}"
-                                                       Margin="4,0,0,0"/>
-                                        </StackPanel>
-
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="AI Final:"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#606060"/>
-
-                                            <TextBlock Text="{Binding AiFinalStatusText}"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{Binding AiFinalStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
-                                                       Margin="4,0,12,0"/>
-
-                                            <TextBlock Text="GT Image:"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#606060"/>
-
-                                            <TextBlock Text="{Binding GtImageStatusText}"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{Binding GtImageStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
-                                                       Margin="4,0,0,0"/>
-                                        </StackPanel>
-
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="GT Boxes:"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#606060"/>
-
-                                            <TextBlock Text="{Binding GtBoxesStatusText}"
-                                                       FontSize="12"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{Binding GtBoxesStatusText, Converter={StaticResource SimpleStatusColorConverter}}"
-                                                       Margin="4,0,0,0"/>
-                                        </StackPanel>
-
-                                        <TextBlock Text="{Binding ReviewStatusText, StringFormat='Review: {0}'}"
-                                                   FontSize="11"
-                                                   Foreground="#505050"
-                                                   Margin="0,2,0,0"/>
+                                        <TextBlock FontSize="11" TextTrimming="CharacterEllipsis">
+                                            <Run Text="{Binding ReviewStatusText, Mode=OneWay}" FontWeight="Bold"/>
+                                            <Run Text="  ·  "/>
+                                            <Run Text="{Binding ReviewGuideText, Mode=OneWay}"/>
+                                        </TextBlock>
 
                                     </StackPanel>
                                 </Border>
@@ -481,8 +474,8 @@
 
                     <StackPanel Grid.Column="3" VerticalAlignment="Center">
                         <CheckBox x:Name="ShowPredictionCheckBox"
-                                  Content="Show Prediction Overlay"
-                                  IsChecked="False"
+                                  Content="AI 예측 박스 표시"
+                                  IsChecked="True"
                                   Checked="ShowPredictionCheckBox_Checked"
                                   Unchecked="ShowPredictionCheckBox_Unchecked"/>
 

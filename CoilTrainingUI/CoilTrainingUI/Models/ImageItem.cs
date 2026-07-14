@@ -8,6 +8,7 @@ namespace CoilTrainingUI.Models
     {
         private string _fileName = "";
         private string _batchName = "";
+        private string _batchKey = "";
         private string _processedPath = "";
         private string? _rawPath;
         private bool _hasLabel;
@@ -30,6 +31,7 @@ namespace CoilTrainingUI.Models
         private int _aiOtherCount;
         private string _reviewStatus = "none";
         private string _reviewReasonText = "";
+        private string _decisionSource = "";
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -115,19 +117,34 @@ namespace CoilTrainingUI.Models
         public bool AiConsensusHighConfidence
         {
             get => _aiConsensusHighConfidence;
-            set => SetField(ref _aiConsensusHighConfidence, value);
+            set
+            {
+                if (!SetField(ref _aiConsensusHighConfidence, value))
+                    return;
+                OnPropertyChanged(nameof(ConfidenceStatusText));
+            }
         }
 
         public double AiYoloMaxConf
         {
             get => _aiYoloMaxConf;
-            set => SetField(ref _aiYoloMaxConf, value);
+            set
+            {
+                if (!SetField(ref _aiYoloMaxConf, value))
+                    return;
+                OnPropertyChanged(nameof(AiEvidenceText));
+            }
         }
 
         public double AiAnomaScore
         {
             get => _aiAnomaScore;
-            set => SetField(ref _aiAnomaScore, value);
+            set
+            {
+                if (!SetField(ref _aiAnomaScore, value))
+                    return;
+                OnPropertyChanged(nameof(AiEvidenceText));
+            }
         }
 
         public bool RequiresInfer
@@ -207,13 +224,33 @@ namespace CoilTrainingUI.Models
                 OnPropertyChanged(nameof(AutoApproveCandidate));
                 OnPropertyChanged(nameof(NeedsReview));
                 OnPropertyChanged(nameof(ReviewStatusText));
+                OnPropertyChanged(nameof(DisplayDecisionText));
+                OnPropertyChanged(nameof(DisplayDecisionStatus));
+                OnPropertyChanged(nameof(DecisionSourceText));
+                OnPropertyChanged(nameof(ReviewGuideText));
             }
         }
 
         public string ReviewReasonText
         {
             get => _reviewReasonText;
-            set => SetField(ref _reviewReasonText, value);
+            set
+            {
+                if (!SetField(ref _reviewReasonText, value))
+                    return;
+                OnPropertyChanged(nameof(ReviewGuideText));
+            }
+        }
+
+        public string DecisionSource
+        {
+            get => _decisionSource;
+            set
+            {
+                if (!SetField(ref _decisionSource, value ?? ""))
+                    return;
+                OnPropertyChanged(nameof(DecisionSourceText));
+            }
         }
 
         public bool HasRawFile => !string.IsNullOrWhiteSpace(RawPath);
@@ -229,6 +266,60 @@ namespace CoilTrainingUI.Models
             "review_done" => "확정 완료",
             _ => "-"
         };
+
+        public string ConfidenceStatusText => !HasAiInfer
+            ? "판정 없음"
+            : (AiConsensusHighConfidence ? "AI 신뢰도 높음" : "AI 신뢰도 낮음");
+
+        public string DecisionSourceText => !ReviewDone
+            ? "미확정"
+            : DecisionSource switch
+            {
+                "auto" => "AI 자동 확정",
+                "manual" => "사용자 확정",
+                _ => "기존 확정"
+            };
+
+        public string DisplayDecisionText => ReviewDone
+            ? $"최종 {GtImageStatusText}"
+            : $"AI 후보 {AiFinalStatusText}";
+
+        public string DisplayDecisionStatus => ReviewDone ? GtImageStatusText : AiFinalStatusText;
+
+        public string AiEvidenceText
+        {
+            get
+            {
+                if (!HasAiInfer)
+                    return "AI 추론 결과 없음";
+
+                string yolo = AiDetectionCount > 0
+                    ? $"YOLO {AiYoloMaxConf:0.00} / 박스 {AiDetectionCount}개"
+                    : "YOLO 미검출";
+                return $"Anoma {AiAnomaScore:0.000} / {yolo}";
+            }
+        }
+
+        public string ReviewGuideText
+        {
+            get
+            {
+                if (string.IsNullOrWhiteSpace(ReviewReasonText))
+                    return ReviewDone ? "추가 검수 불필요" : "판정 확인 대기";
+
+                string translated = ReviewReasonText
+                    .Replace("model_disagree", "모델 판정 불일치")
+                    .Replace("yolo_low_conf", "YOLO 신뢰도 낮음")
+                    .Replace("anoma_low_conf", "Anoma 신뢰도 낮음")
+                    .Replace("infer_missing", "추론 결과 없음")
+                    .Replace("infer_parse_failed", "추론 결과 해석 실패")
+                    .Replace("model_agree_high_conf", "고신뢰 모델 일치")
+                    .Replace("yolo_detection_exists", "YOLO 예측 박스 확인 필요")
+                    .Replace("bbox_edited_pending_confirmation", "박스 수정됨, 이미지 판정 확인 필요")
+                    .Replace("defect_predicted", "불량 후보 확인 필요");
+                return translated;
+            }
+        }
 
         // AI 기준 불량 여부 (YOLO/Anoma 둘 중 하나라도 불량이면 true)
         public bool AiIsDefect => AiYoloDefect || AiAnomaDefect;
@@ -259,6 +350,12 @@ namespace CoilTrainingUI.Models
 
                 return "미검출";
             }
+        }
+
+        public string BatchKey
+        {
+            get => _batchKey;
+            set => SetField(ref _batchKey, value);
         }
 
         public string AiFinalStatusText => !HasAiInfer ? "미분류" : (AiIsDefect ? "불량" : "정상");

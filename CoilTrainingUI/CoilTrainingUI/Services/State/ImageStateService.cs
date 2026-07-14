@@ -64,6 +64,7 @@ namespace CoilTrainingUI.Services
         public List<string> ReviewReasons { get; set; } = new();
         public DateTime? AutoAppliedAt { get; set; }
         public DateTime? ReviewedAt { get; set; }
+        public string DecisionSource { get; set; } = "";
 
         // ✅ 라벨을 클래스 이름으로 저장
         public List<LabelDto> Labels { get; set; } = new();

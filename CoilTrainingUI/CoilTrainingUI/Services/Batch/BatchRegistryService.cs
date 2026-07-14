@@ -87,6 +87,27 @@ public static class BatchRegistryService
         Save(inboxRoot, registry);
     }
 
+    public static void SetReviewStatus(string inboxRoot, string batchKey, string reviewStatus)
+    {
+        if (string.IsNullOrWhiteSpace(batchKey))
+            return;
+
+        string normalizedStatus = string.IsNullOrWhiteSpace(reviewStatus)
+            ? "pending"
+            : reviewStatus.Trim().ToLowerInvariant();
+        var registry = Load(inboxRoot);
+        var entry = GetOrCreateEntry(registry, batchKey.Trim());
+        if (string.Equals(entry.ReviewStatus, normalizedStatus, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        entry.ReviewStatus = normalizedStatus;
+        entry.ReviewedAt = string.Equals(normalizedStatus, "reviewed", StringComparison.OrdinalIgnoreCase)
+            ? DateTime.UtcNow
+            : null;
+        entry.UpdatedAt = DateTime.UtcNow;
+        Save(inboxRoot, registry);
+    }
+
     public static void DeleteBatches(string inboxRoot, IEnumerable<string> batchKeys)
     {
         var normalizedKeys = DistinctBatchKeys(batchKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);

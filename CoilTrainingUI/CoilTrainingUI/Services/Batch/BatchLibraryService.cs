@@ -57,6 +57,7 @@ public sealed class BatchLibraryService
                     HiddenReason = registryEntry?.HiddenReason ?? "",
                     RequiresInfer = InferenceBatchPathResolver.DetermineBatchRequiresInfer(candidateFolder, manifest),
                     HasAnyInfer = manifest.Items.Any(item => InferenceBatchPathResolver.DetermineItemRequiresInfer(candidateFolder, manifest, item)),
+                    ReviewStatus = registryEntry?.ReviewStatus ?? "pending",
                     SourceBatches = registryEntry?.SourceBatches?.ToList() ?? new List<string>()
                 };
 

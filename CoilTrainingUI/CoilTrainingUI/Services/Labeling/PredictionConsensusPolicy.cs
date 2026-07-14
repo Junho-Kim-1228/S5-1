@@ -21,10 +21,10 @@ namespace CoilTrainingUI.Services
     {
         // Defect agreement confidence gate
         public const double YoloDefectMinConf = 0.75;
-        public const double AnomaAnomalyMinScore = 0.75;
+        public const double AnomaAnomalyMinScore = 15.0;
 
-        // Normal agreement confidence gate
-        public const double AnomaNormalMaxScore = 0.25;
+        // Temporary PaDiM confidence gate. Move this into package config after calibration.
+        public const double AnomaNormalMaxScore = 11.5;
 
         public static PredictionConsensusEvaluation Evaluate(InferResultDto infer)
         {

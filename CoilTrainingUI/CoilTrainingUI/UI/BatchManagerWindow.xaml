@@ -71,6 +71,10 @@
                                     Width="170"
                                     IsReadOnly="True"
                                     Binding="{Binding CreatedAtText}"/>
+                <DataGridTextColumn Header="검수 상태"
+                                    Width="90"
+                                    IsReadOnly="True"
+                                    Binding="{Binding ReviewStatusText}"/>
                 <DataGridTemplateColumn Header="숨김"
                                         Width="60">
                     <DataGridTemplateColumn.CellTemplate>
@@ -82,8 +86,8 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="상태"
-                                    Width="220"
+                <DataGridTextColumn Header="숨김 상태"
+                                    Width="160"
                                     IsReadOnly="True"
                                     Binding="{Binding HiddenReasonText}">
                     <DataGridTextColumn.ElementStyle>

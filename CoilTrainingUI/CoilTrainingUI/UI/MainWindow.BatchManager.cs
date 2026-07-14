@@ -17,10 +17,19 @@ namespace CoilTrainingUI
             {
                 Owner = this
             };
+            bool refreshedWhileOpen = false;
+            window.LibraryChanged += (sender, args) =>
+            {
+                refreshedWhileOpen = true;
+                string? currentImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
+                RefreshAllImagesFromTrainingInbox(
+                    preferredImagePath: currentImagePath,
+                    preferredBatchRoot: args.PreferredBatchRoot);
+            };
 
             window.ShowDialog();
 
-            if (window.HasLibraryChanges)
+            if (window.HasLibraryChanges && !refreshedWhileOpen)
             {
                 RefreshAllImagesFromTrainingInbox(
                     preferredImagePath: preferredImagePath,

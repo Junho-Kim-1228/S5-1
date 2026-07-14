@@ -18,6 +18,7 @@ public sealed class BatchLibraryItem : INotifyPropertyChanged
     private bool _requiresInfer;
     private bool _hasAnyInfer;
     private List<string> _sourceBatches = new();
+    private string _reviewStatus = "pending";
     private bool _isSelected;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -119,6 +120,17 @@ public sealed class BatchLibraryItem : INotifyPropertyChanged
         set => SetField(ref _isSelected, value);
     }
 
+    public string ReviewStatus
+    {
+        get => _reviewStatus;
+        set
+        {
+            if (!SetField(ref _reviewStatus, string.IsNullOrWhiteSpace(value) ? "pending" : value))
+                return;
+            OnPropertyChanged(nameof(ReviewStatusText));
+        }
+    }
+
     public string CreatedAtText => CreatedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
 
     public string BatchKindText => (BatchKind ?? "").Trim().ToLowerInvariant() switch
@@ -156,6 +168,13 @@ public sealed class BatchLibraryItem : INotifyPropertyChanged
     public string SourceBatchesText => SourceBatches.Count == 0
         ? "-"
         : string.Join(", ", SourceBatches);
+
+    public string ReviewStatusText => (ReviewStatus ?? "").Trim().ToLowerInvariant() switch
+    {
+        "reviewed" => "검수 완료",
+        "review_needed" => "검수 필요",
+        _ => "검수 대기"
+    };
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {

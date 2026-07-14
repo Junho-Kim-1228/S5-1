@@ -16,6 +16,11 @@ namespace CoilTrainingUI
         TrainSelected
     }
 
+    public sealed class BatchLibraryChangedEventArgs : EventArgs
+    {
+        public string? PreferredBatchRoot { get; init; }
+    }
+
     public partial class BatchManagerWindow : Window
     {
         private readonly string _inboxRoot;
@@ -30,6 +35,7 @@ namespace CoilTrainingUI
         public BatchManagerRequestedAction RequestedAction { get; private set; }
         public IReadOnlyList<BatchLibraryItem> RequestedBatches { get; private set; } = Array.Empty<BatchLibraryItem>();
         public string? PreferredBatchRoot { get; private set; }
+        public event EventHandler<BatchLibraryChangedEventArgs>? LibraryChanged;
 
         public BatchManagerWindow(string inboxRoot, string projectRoot, BatchMergeService batchMergeService)
         {
@@ -54,6 +60,15 @@ namespace CoilTrainingUI
 
             UpdateSummary(scan.Skipped.Count);
             _isRefreshing = false;
+        }
+
+        private void NotifyLibraryChanged(string? preferredBatchRoot = null)
+        {
+            HasLibraryChanges = true;
+            PreferredBatchRoot = preferredBatchRoot;
+            LibraryChanged?.Invoke(
+                this,
+                new BatchLibraryChangedEventArgs { PreferredBatchRoot = preferredBatchRoot });
         }
 
         private List<BatchLibraryItem> GetSelectedBatches()
@@ -147,10 +162,9 @@ namespace CoilTrainingUI
                     itemCount = imported.ItemCount;
                 }
 
-                HasLibraryChanges = true;
-                PreferredBatchRoot = batchToLoad;
                 RefreshBatches();
                 SelectBatchByRoot(batchToLoad);
+                NotifyLibraryChanged(batchToLoad);
 
                 MessageBox.Show(
                     $"배치 불러오기 완료\n- 경로: {batchToLoad}\n- 이미지 수: {itemCount}",
@@ -209,10 +223,9 @@ namespace CoilTrainingUI
             try
             {
                 BatchManifestService.UpdateBatchId(target.BatchRoot, newBatchName);
-                HasLibraryChanges = true;
-                PreferredBatchRoot = target.BatchRoot;
                 RefreshBatches();
                 SelectBatchByRoot(target.BatchRoot);
+                NotifyLibraryChanged(target.BatchRoot);
             }
             catch (Exception ex)
             {
@@ -245,7 +258,7 @@ namespace CoilTrainingUI
                 reason: batch.IsHidden ? "manual" : "");
 
             batch.HiddenReason = batch.IsHidden ? "manual" : "";
-            HasLibraryChanges = true;
+            NotifyLibraryChanged(batch.BatchRoot);
             UpdateSummary();
         }
 
@@ -304,11 +317,9 @@ namespace CoilTrainingUI
                     _batchMergeService.MergeSelectedBatches(_inboxRoot, selected, progress));
                 BatchRegistryService.MarkMergedBatch(_inboxRoot, merged.MergedBatchKey, merged.SourceBatchKeys);
 
-                HasLibraryChanges = true;
-                PreferredBatchRoot = merged.MergedBatchPath;
-
                 RefreshBatches();
                 SelectBatchByRoot(merged.MergedBatchPath);
+                NotifyLibraryChanged(merged.MergedBatchPath);
                 progressWindow.UpdateProgress(100, "병합 완료");
 
                 MessageBox.Show(
@@ -352,7 +363,7 @@ namespace CoilTrainingUI
                 batch.HiddenReason = "manual";
             }
 
-            HasLibraryChanges = true;
+            NotifyLibraryChanged(PreferredBatchRoot);
             UpdateSummary();
         }
 
@@ -406,12 +417,11 @@ namespace CoilTrainingUI
             if (deletedKeys.Count > 0)
             {
                 BatchRegistryService.DeleteBatches(_inboxRoot, deletedKeys);
-                HasLibraryChanges = true;
-
                 if (!string.IsNullOrWhiteSpace(PreferredBatchRoot) && deletedRoots.Contains(PreferredBatchRoot))
                     PreferredBatchRoot = null;
 
                 RefreshBatches();
+                NotifyLibraryChanged(PreferredBatchRoot);
             }
 
             if (failedMessages.Count == 0)

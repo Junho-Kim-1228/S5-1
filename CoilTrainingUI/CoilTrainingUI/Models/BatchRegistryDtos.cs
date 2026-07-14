@@ -27,6 +27,12 @@ public sealed class BatchRegistryEntryDto
     [JsonPropertyName("merged_into")]
     public List<string> MergedInto { get; set; } = new();
 
+    [JsonPropertyName("review_status")]
+    public string ReviewStatus { get; set; } = "pending";
+
+    [JsonPropertyName("reviewed_at")]
+    public DateTime? ReviewedAt { get; set; }
+
     [JsonPropertyName("updated_at")]
     public DateTime? UpdatedAt { get; set; }
 }

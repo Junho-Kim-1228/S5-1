@@ -1,5 +1,7 @@
 using System;
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Services;
+using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
@@ -288,6 +290,25 @@ namespace CoilTrainingUI
             VisibleCountText.Text = $"필터 후 {visible}개";
             NormalCountText.Text = $"정상 {normal}개";
             DefectCountText.Text = $"불량 이미지 {defect}개";
+            UpdateBatchReviewStatuses(uniqueImages);
+        }
+
+        private void UpdateBatchReviewStatuses(IReadOnlyList<ImageItem> images)
+        {
+            if (images == null || images.Count == 0)
+                return;
+
+            string inboxRoot = GetTrainingInboxRoot();
+            foreach (var batchGroup in images
+                         .Where(item => !string.IsNullOrWhiteSpace(item.BatchKey))
+                         .GroupBy(item => item.BatchKey, StringComparer.OrdinalIgnoreCase))
+            {
+                bool isReviewed = batchGroup.All(item => item.ReviewDone);
+                BatchRegistryService.SetReviewStatus(
+                    inboxRoot,
+                    batchGroup.Key,
+                    isReviewed ? "reviewed" : "review_needed");
+            }
         }
 
         private void MarkFilteredAbnormal_Click(object sender, RoutedEventArgs e)

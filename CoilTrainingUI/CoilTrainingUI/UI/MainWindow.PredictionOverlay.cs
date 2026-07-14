@@ -27,10 +27,13 @@ namespace CoilTrainingUI
         private void UpdatePredictionFeatureUiState()
         {
             bool predictionAvailableInBatch = _currentBatchHasAnyInfer;
+            bool predictionWasEnabled = ShowPredictionCheckBox.IsEnabled;
 
             ShowPredictionCheckBox.IsEnabled = predictionAvailableInBatch;
             if (!predictionAvailableInBatch)
                 ShowPredictionCheckBox.IsChecked = false;
+            else if (!predictionWasEnabled)
+                ShowPredictionCheckBox.IsChecked = true;
 
             PreLabelBatchMenuItem.IsEnabled = predictionAvailableInBatch;
             AutoApproveSafeMenuItem.IsEnabled = predictionAvailableInBatch;

@@ -322,11 +322,22 @@ namespace CoilTrainingUI
 
             if (markManualYoloDecision)
             {
-                // 라벨 편집(추가/삭제/수정)이 발생한 경우에만 수동 확정으로 본다.
+                // 박스 편집만으로 이미지 정상/불량 판정을 확정하지 않는다.
                 state.HasManualYoloDecision = true;
-                state.ReviewStatus = ReviewStatus.ReviewDone;
-                state.ReviewReasons.Clear();
-                state.ReviewedAt = DateTime.UtcNow;
+                if (state.HasManualAnomalyDecision)
+                {
+                    state.ReviewStatus = ReviewStatus.ReviewDone;
+                    state.ReviewReasons.Clear();
+                    state.ReviewedAt = DateTime.UtcNow;
+                    state.DecisionSource = "manual";
+                }
+                else
+                {
+                    state.ReviewStatus = ReviewStatus.ReviewNeeded;
+                    state.ReviewReasons = new List<string> { "bbox_edited_pending_confirmation" };
+                    state.ReviewedAt = null;
+                    state.DecisionSource = "";
+                }
             }
 
             _stateService.Save(imagePath, state);

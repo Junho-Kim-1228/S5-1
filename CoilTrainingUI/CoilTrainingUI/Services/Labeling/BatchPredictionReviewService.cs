@@ -230,7 +230,9 @@ namespace CoilTrainingUI.Services
 
                 state.IsNormal = true;
                 state.HasManualAnomalyDecision = true;
-                state.ReviewedAt = DateTime.UtcNow;
+                state.AutoAppliedAt = DateTime.UtcNow;
+                state.ReviewedAt = state.AutoAppliedAt;
+                state.DecisionSource = "auto";
                 SetReviewStatus(
                     state,
                     ReviewStatus.ReviewDone,

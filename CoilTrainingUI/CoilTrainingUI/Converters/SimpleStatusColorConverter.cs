@@ -19,7 +19,12 @@ namespace CoilTrainingUI.Converters
                 "검출" => Brushes.IndianRed,
                 "있음" => Brushes.IndianRed,
                 "정상" => Brushes.SeaGreen,
+                "고신뢰" => Brushes.SeaGreen,
+                "AI 신뢰도 높음" => Brushes.SeaGreen,
+                "AI 신뢰도 낮음" => Brushes.DarkOrange,
                 "없음" => Brushes.SeaGreen,
+                "검수 필요" => Brushes.DarkOrange,
+                "판정 없음" => Brushes.Gray,
                 "건너뜀" => Brushes.Gray,
                 "미검출" => Brushes.Gray,
                 _ => Brushes.Gray

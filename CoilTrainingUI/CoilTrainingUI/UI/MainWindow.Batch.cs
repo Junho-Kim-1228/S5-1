@@ -456,6 +456,7 @@ namespace CoilTrainingUI
             ApplyImageFilters();
             RefreshSummaryCounts();
             UpdateDataSourceUiState();
+            ActivateReviewQueueFilter(selectFirst: false);
 
             if (_images.Count == 0)
             {
@@ -528,8 +529,33 @@ namespace CoilTrainingUI
                 bool itemRequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batchFolder, manifest, item);
                 var aiMeta = InferMetaEvaluator.Evaluate(inferJsonPath);
 
+                if (aiMeta.HasAiInfer)
+                {
+                    var predictionTarget = new BatchPredictionApplyTarget
+                    {
+                        ImagePath = imagePath,
+                        InferJsonPath = inferJsonPath,
+                        RequiresInfer = itemRequiresInfer
+                    };
+                    _predictionReviewService.PreLabelBatch(
+                        new[] { predictionTarget },
+                        overwriteExistingLabels: false);
+                    _predictionReviewService.AutoApproveSafeNormals(
+                        new[] { predictionTarget });
+                }
+
                 bool hadStateFile = _stateService.HasState(imagePath);
                 var state = _stateService.Load(imagePath);
+                if (state.HasManualYoloDecision
+                    && !state.HasManualAnomalyDecision
+                    && string.Equals(state.ReviewStatus, ReviewStatus.ReviewDone, StringComparison.OrdinalIgnoreCase))
+                {
+                    state.ReviewStatus = ReviewStatus.ReviewNeeded;
+                    state.ReviewReasons = new List<string> { "bbox_edited_pending_confirmation" };
+                    state.ReviewedAt = null;
+                    state.DecisionSource = "";
+                    _stateService.Save(imagePath, state);
+                }
                 if (!hadStateFile)
                 {
                     state.IsNormal = true;
@@ -544,11 +570,15 @@ namespace CoilTrainingUI
                 string reviewStatus = DetermineReviewStatus(state, aiMeta, itemRequiresInfer);
 
                 _imageStateManager.EnsureImage(imagePath);
+                _inferJsonByImagePath[imagePath] = inferJsonPath;
+                if (aiMeta.HasInferFile)
+                    _currentBatchHasAnyInfer = true;
 
                 _images.Add(new ImageItem
                 {
                     FileName = IOPath.GetFileName(imagePath),
                     BatchName = batchName,
+                    BatchKey = BatchLibraryService.GetBatchKey(batchFolder),
                     ProcessedPath = imagePath,
                     RawPath = rawImagePath,
                     RequiresInfer = itemRequiresInfer,
@@ -570,12 +600,10 @@ namespace CoilTrainingUI
                     GtLooseCount = gtCounts.Loose,
                     GtOtherCount = gtCounts.Other,
                     ReviewStatus = reviewStatus,
-                    ReviewReasonText = BuildReviewReasonPreview(state.ReviewReasons)
+                    ReviewReasonText = BuildReviewReasonPreview(state.ReviewReasons),
+                    DecisionSource = ResolveDecisionSource(state)
                 });
 
-                _inferJsonByImagePath[imagePath] = inferJsonPath;
-                if (aiMeta.HasInferFile)
-                    _currentBatchHasAnyInfer = true;
             }
         }
 
@@ -597,10 +625,15 @@ namespace CoilTrainingUI
 
         private static string DetermineReviewStatus(ImageStateDto state, InferMetaSummary aiMeta, bool requiresInfer)
         {
-            if (state.HasManualYoloDecision || state.HasManualAnomalyDecision)
+            if (state.HasManualAnomalyDecision)
                 return ReviewStatus.ReviewDone;
 
             string normalized = NormalizeReviewStatus(state.ReviewStatus);
+            if (state.HasManualYoloDecision
+                && string.Equals(normalized, ReviewStatus.ReviewDone, StringComparison.OrdinalIgnoreCase))
+            {
+                return ReviewStatus.ReviewNeeded;
+            }
             if (!string.Equals(normalized, ReviewStatus.None, StringComparison.OrdinalIgnoreCase))
                 return normalized;
 

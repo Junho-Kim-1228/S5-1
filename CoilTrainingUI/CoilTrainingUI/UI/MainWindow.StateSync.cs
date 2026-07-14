@@ -51,6 +51,14 @@ namespace CoilTrainingUI
             item.ReviewReasonText = state.ReviewReasons.Count > 0
                 ? string.Join(", ", state.ReviewReasons.Take(3))
                 : "";
+            item.DecisionSource = ResolveDecisionSource(state);
+        }
+
+        private static string ResolveDecisionSource(ImageStateDto state)
+        {
+            if (!string.IsNullOrWhiteSpace(state.DecisionSource))
+                return state.DecisionSource.Trim().ToLowerInvariant();
+            return "";
         }
 
         private void SyncGtSummaryForImage(string imagePath)
@@ -67,10 +75,13 @@ namespace CoilTrainingUI
 
         private static string DeriveReviewStatusForItem(ImageItem item, ImageStateDto state)
         {
-            if (state.HasManualYoloDecision || state.HasManualAnomalyDecision)
+            if (state.HasManualAnomalyDecision)
                 return ReviewStatus.ReviewDone;
 
             string normalized = (state.ReviewStatus ?? "").Trim().ToLowerInvariant();
+            if (state.HasManualYoloDecision && normalized == ReviewStatus.ReviewDone)
+                return ReviewStatus.ReviewNeeded;
+
             if (normalized == ReviewStatus.ReviewNeeded ||
                 normalized == ReviewStatus.AutoCandidate ||
                 normalized == ReviewStatus.ReviewDone)
@@ -98,10 +109,19 @@ namespace CoilTrainingUI
             _imageStateManager.SetNormal(item.ProcessedPath, isNormal);
             _anomalyService.Save(item.ProcessedPath, isNormal);
 
+            if (isNormal)
+            {
+                _imageStateManager.ClearLabels(item.ProcessedPath);
+                if (string.Equals(_currentImagePath, item.ProcessedPath, StringComparison.OrdinalIgnoreCase))
+                    _bboxManager.ClearAll();
+                SaveLabelsToStateJson(item.ProcessedPath, markManualYoloDecision: true);
+            }
+
             item.IsNormal = isNormal;
             item.HasStateFile = true;
             item.ReviewStatus = ReviewStatus.ReviewDone;
             item.ReviewReasonText = "";
+            item.DecisionSource = "manual";
 
             if (refreshSummary)
                 RefreshSummaryCounts();
@@ -139,8 +159,10 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                NormalRadio.IsChecked = item.IsNormal;
-                AbnormalRadio.IsChecked = !item.IsNormal;
+                var state = _stateService.Load(item.ProcessedPath);
+                bool hasConfirmedImageDecision = state.HasManualAnomalyDecision && state.IsNormal.HasValue;
+                NormalRadio.IsChecked = hasConfirmedImageDecision ? item.IsNormal : false;
+                AbnormalRadio.IsChecked = hasConfirmedImageDecision ? !item.IsNormal : false;
             }
             finally
             {

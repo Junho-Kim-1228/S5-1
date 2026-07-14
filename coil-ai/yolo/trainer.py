@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 from common.exceptions import CoilAIError
 from common.logging_utils import get_logger
@@ -116,6 +117,7 @@ def run_yolo_training(
         eval_model = YOLO(str(best_weights)) if best_weights else model_obj
         if best_weights:
             log_info(logger, "Best weights: %s", best_weights)
+            shutil.copy2(best_weights, out_path / "best.pt")
         else:
             log_warn(logger, "Best checkpoint was not found. Using in-memory trained model for val/export.")
 

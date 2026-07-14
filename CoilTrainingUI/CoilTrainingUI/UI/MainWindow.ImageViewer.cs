@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace CoilTrainingUI
 {
@@ -76,11 +77,19 @@ namespace CoilTrainingUI
                     item.IsNormal = isNormal;
                     UpdateGtSummaryForImageItem(item, imagePath);
 
-                    NormalRadio.IsChecked = isNormal;
-                    AbnormalRadio.IsChecked = !isNormal;
+                    bool hasConfirmedImageDecision = state.HasManualAnomalyDecision && state.IsNormal.HasValue;
+                    NormalRadio.IsChecked = hasConfirmedImageDecision ? isNormal : false;
+                    AbnormalRadio.IsChecked = hasConfirmedImageDecision ? !isNormal : false;
                 }
 
                 UpdateMainImageDisplayFromToggle();
+                Dispatcher.BeginInvoke(
+                    DispatcherPriority.Loaded,
+                    new Action(() =>
+                    {
+                        if (string.Equals(_currentImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
+                            UpdatePredictionOverlayVisibility(imagePath);
+                    }));
             }
             finally
             {

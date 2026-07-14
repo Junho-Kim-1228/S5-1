@@ -83,6 +83,11 @@ namespace CoilTrainingUI
 
         private void ShowReviewQueue_Click(object sender, RoutedEventArgs e)
         {
+            ActivateReviewQueueFilter(selectFirst: true);
+        }
+
+        private void ActivateReviewQueueFilter(bool selectFirst)
+        {
             _suppressFilterRefresh = true;
             try
             {
@@ -112,6 +117,9 @@ namespace CoilTrainingUI
             }
 
             ApplyImageFilters();
+
+            if (!selectFirst)
+                return;
 
             var firstVisible = _imageCollectionView?.Cast<object>()
                 .OfType<ImageItem>()
@@ -334,6 +342,7 @@ namespace CoilTrainingUI
                 state.ReviewStatus = ReviewStatus.ReviewDone;
                 state.ReviewReasons.Clear();
                 state.ReviewedAt = DateTime.UtcNow;
+                state.DecisionSource = "manual";
                 _stateService.Save(imagePath, state);
 
                 _imageStateManager.SetNormal(imagePath, isNormal: false);
