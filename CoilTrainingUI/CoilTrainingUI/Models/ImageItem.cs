@@ -13,6 +13,7 @@ namespace CoilTrainingUI.Models
         private string? _rawPath;
         private bool _hasLabel;
         private bool _isNormal = true;
+        private bool _hasConfirmedDecision;
         private bool _hasAiInfer;
         private bool _aiYoloDefect;
         private bool _aiAnomaDefect;
@@ -242,6 +243,17 @@ namespace CoilTrainingUI.Models
             }
         }
 
+        public bool HasConfirmedDecision
+        {
+            get => _hasConfirmedDecision;
+            set
+            {
+                if (!SetField(ref _hasConfirmedDecision, value))
+                    return;
+                OnStatusPropertiesChanged();
+            }
+        }
+
         public string DecisionSource
         {
             get => _decisionSource;
@@ -254,8 +266,8 @@ namespace CoilTrainingUI.Models
         }
 
         public bool HasRawFile => !string.IsNullOrWhiteSpace(RawPath);
-        public bool IsConfirmedDefect => HasLabel || !IsNormal;
-        public bool IsConfirmedNormal => !HasLabel && IsNormal;
+        public bool IsConfirmedDefect => HasConfirmedDecision && (HasLabel || !IsNormal);
+        public bool IsConfirmedNormal => HasConfirmedDecision && !HasLabel && IsNormal;
         public bool ReviewDone => string.Equals(ReviewStatus, "review_done", System.StringComparison.OrdinalIgnoreCase);
         public bool AutoApproveCandidate => string.Equals(ReviewStatus, "auto_candidate", System.StringComparison.OrdinalIgnoreCase);
         public bool NeedsReview => string.Equals(ReviewStatus, "review_needed", System.StringComparison.OrdinalIgnoreCase);

@@ -108,6 +108,40 @@ public static class BatchRegistryService
         Save(inboxRoot, registry);
     }
 
+    public static void SetReviewStatuses(
+        string inboxRoot,
+        IReadOnlyDictionary<string, string> reviewStatuses)
+    {
+        if (reviewStatuses == null || reviewStatuses.Count == 0)
+            return;
+
+        var registry = Load(inboxRoot);
+        bool changed = false;
+
+        foreach (var pair in reviewStatuses)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key))
+                continue;
+
+            string normalizedStatus = string.IsNullOrWhiteSpace(pair.Value)
+                ? "pending"
+                : pair.Value.Trim().ToLowerInvariant();
+            var entry = GetOrCreateEntry(registry, pair.Key.Trim());
+            if (string.Equals(entry.ReviewStatus, normalizedStatus, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            entry.ReviewStatus = normalizedStatus;
+            entry.ReviewedAt = string.Equals(normalizedStatus, "reviewed", StringComparison.OrdinalIgnoreCase)
+                ? DateTime.UtcNow
+                : null;
+            entry.UpdatedAt = DateTime.UtcNow;
+            changed = true;
+        }
+
+        if (changed)
+            Save(inboxRoot, registry);
+    }
+
     public static void DeleteBatches(string inboxRoot, IEnumerable<string> batchKeys)
     {
         var normalizedKeys = DistinctBatchKeys(batchKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);

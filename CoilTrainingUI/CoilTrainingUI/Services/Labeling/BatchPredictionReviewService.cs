@@ -53,13 +53,13 @@ namespace CoilTrainingUI.Services
 
                 var state = _stateService.Load(target.ImagePath);
 
-                if ((state.HasManualYoloDecision && state.Labels.Count > 0) && !overwriteExistingLabels)
+                if (state.HasManualYoloDecision && !overwriteExistingLabels)
                 {
                     summary.SkippedManual++;
                     continue;
                 }
 
-                if (state.HasManualAnomalyDecision)
+                if (state.IsManualAnomalyDecision)
                 {
                     summary.SkippedManual++;
                     continue;
@@ -148,7 +148,7 @@ namespace CoilTrainingUI.Services
                     continue;
 
                 var state = _stateService.Load(target.ImagePath);
-                if (state.HasManualYoloDecision || state.HasManualAnomalyDecision)
+                if (state.HasManualYoloDecision || state.IsManualAnomalyDecision)
                 {
                     summary.SkippedManual++;
                     continue;
@@ -229,7 +229,7 @@ namespace CoilTrainingUI.Services
                 }
 
                 state.IsNormal = true;
-                state.HasManualAnomalyDecision = true;
+                state.HasManualAnomalyDecision = false;
                 state.AutoAppliedAt = DateTime.UtcNow;
                 state.ReviewedAt = state.AutoAppliedAt;
                 state.DecisionSource = "auto";

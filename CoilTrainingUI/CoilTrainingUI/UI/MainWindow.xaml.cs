@@ -324,7 +324,7 @@ namespace CoilTrainingUI
             {
                 // 박스 편집만으로 이미지 정상/불량 판정을 확정하지 않는다.
                 state.HasManualYoloDecision = true;
-                if (state.HasManualAnomalyDecision)
+                if (state.IsManualAnomalyDecision)
                 {
                     state.ReviewStatus = ReviewStatus.ReviewDone;
                     state.ReviewReasons.Clear();

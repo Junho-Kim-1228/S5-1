@@ -222,7 +222,8 @@ namespace CoilTrainingUI
                 }
 
                 progressWindow.UpdateProgress(5, "학습 데이터 검증 중...");
-                var validation = await Task.Run(() => _datasetValidator.Validate(trainingInputs));
+                var validation = await Task.Run(() =>
+                    _datasetValidator.Validate(trainingInputs, requireAnomaNormals: trainAnoma));
                 if (!validation.IsValid)
                 {
                     MessageBox.Show(
@@ -235,21 +236,8 @@ namespace CoilTrainingUI
                 }
 
                 var anomaTrainingInputs = trainAnoma
-                    ? BuildTrainingInputsFromCurrentImageScope()
+                    ? trainingInputs.ToList()
                     : new List<TrainingImageInput>();
-                if (trainAnoma)
-                {
-                    var anomaValidation = await Task.Run(() => _datasetValidator.Validate(anomaTrainingInputs));
-                    if (!anomaValidation.IsValid)
-                    {
-                        MessageBox.Show(
-                            anomaValidation.ToErrorMessage(),
-                            "Anoma Cumulative Dataset Validation Failed",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
-                        return;
-                    }
-                }
 
                 var anomaImagePaths = anomaTrainingInputs
                     .Select(input => input.ImagePath)
@@ -259,7 +247,11 @@ namespace CoilTrainingUI
                 var normalImagePaths = anomaTrainingInputs
                     .Select(input => input.ImagePath)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Where(path => (_stateService.Load(path).IsNormal ?? true) == true)
+                    .Where(path =>
+                    {
+                        var state = _stateService.Load(path);
+                        return state.HasConfirmedAnomalyDecision && state.IsNormal == true;
+                    })
                     .ToList();
                 int normalImages = normalImagePaths.Count;
 

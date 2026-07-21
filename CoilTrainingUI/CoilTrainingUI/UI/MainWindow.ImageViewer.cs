@@ -57,7 +57,7 @@ namespace CoilTrainingUI
                         });
                     }
                 }
-                else
+                else if (!state.HasManualYoloDecision)
                 {
                     _yoloService.Load(imagePath, _imageStateManager.GetMutableLabels(imagePath));
                 }
@@ -67,8 +67,8 @@ namespace CoilTrainingUI
 
                 UpdatePredictionOverlayVisibility(imagePath);
 
-                bool isNormal = (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
-                    ? state.IsNormal.Value
+                bool isNormal = state.HasConfirmedAnomalyDecision
+                    ? state.IsNormal == true
                     : true;
                 _imageStateManager.SetNormal(imagePath, isNormal);
 
@@ -77,7 +77,8 @@ namespace CoilTrainingUI
                     item.IsNormal = isNormal;
                     UpdateGtSummaryForImageItem(item, imagePath);
 
-                    bool hasConfirmedImageDecision = state.HasManualAnomalyDecision && state.IsNormal.HasValue;
+                    item.HasConfirmedDecision = state.HasConfirmedAnomalyDecision;
+                    bool hasConfirmedImageDecision = state.HasConfirmedAnomalyDecision;
                     NormalRadio.IsChecked = hasConfirmedImageDecision ? isNormal : false;
                     AbnormalRadio.IsChecked = hasConfirmedImageDecision ? !isNormal : false;
                 }
@@ -165,9 +166,6 @@ namespace CoilTrainingUI
             if (ImageListBox.SelectedItem is ImageItem item)
             {
                 LoadImage(item.ProcessedPath);
-
-                NormalRadio.IsChecked = item.IsNormal;
-                AbnormalRadio.IsChecked = !item.IsNormal;
 
                 _canvasInteractionManager.FitToView(
                     ImageCanvas.Width,

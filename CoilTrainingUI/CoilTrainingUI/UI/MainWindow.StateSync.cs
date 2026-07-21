@@ -46,6 +46,7 @@ namespace CoilTrainingUI
             item.GtLooseCount = counts.Loose;
             item.GtOtherCount = counts.Other;
             item.HasLabel = state.HasManualYoloDecision && boxes.Count > 0;
+            item.HasConfirmedDecision = state.HasConfirmedAnomalyDecision;
             item.HasStateFile = _stateService.HasState(imagePath);
             item.ReviewStatus = DeriveReviewStatusForItem(item, state);
             item.ReviewReasonText = state.ReviewReasons.Count > 0
@@ -75,7 +76,7 @@ namespace CoilTrainingUI
 
         private static string DeriveReviewStatusForItem(ImageItem item, ImageStateDto state)
         {
-            if (state.HasManualAnomalyDecision)
+            if (state.HasConfirmedAnomalyDecision)
                 return ReviewStatus.ReviewDone;
 
             string normalized = (state.ReviewStatus ?? "").Trim().ToLowerInvariant();
@@ -118,6 +119,7 @@ namespace CoilTrainingUI
             }
 
             item.IsNormal = isNormal;
+            item.HasConfirmedDecision = true;
             item.HasStateFile = true;
             item.ReviewStatus = ReviewStatus.ReviewDone;
             item.ReviewReasonText = "";
@@ -160,7 +162,7 @@ namespace CoilTrainingUI
                 }
 
                 var state = _stateService.Load(item.ProcessedPath);
-                bool hasConfirmedImageDecision = state.HasManualAnomalyDecision && state.IsNormal.HasValue;
+                bool hasConfirmedImageDecision = state.HasConfirmedAnomalyDecision;
                 NormalRadio.IsChecked = hasConfirmedImageDecision ? item.IsNormal : false;
                 AbnormalRadio.IsChecked = hasConfirmedImageDecision ? !item.IsNormal : false;
             }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using CoilTrainingUI.Models;
 
 namespace CoilTrainingUI.Services
@@ -70,6 +71,20 @@ namespace CoilTrainingUI.Services
         public List<LabelDto> Labels { get; set; } = new();
 
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+        [JsonIgnore]
+        public bool HasConfirmedAnomalyDecision =>
+            IsNormal.HasValue &&
+            (HasManualAnomalyDecision ||
+             string.Equals(
+                 ReviewStatus,
+                 global::CoilTrainingUI.Services.ReviewStatus.ReviewDone,
+                 StringComparison.OrdinalIgnoreCase));
+
+        [JsonIgnore]
+        public bool IsManualAnomalyDecision =>
+            HasManualAnomalyDecision &&
+            !string.Equals(DecisionSource, "auto", StringComparison.OrdinalIgnoreCase);
     }
 
     public class LabelDto

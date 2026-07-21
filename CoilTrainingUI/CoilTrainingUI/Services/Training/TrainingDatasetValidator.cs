@@ -61,10 +61,12 @@ namespace CoilTrainingUI.Services
                 })
                 .ToList();
 
-            return Validate(inputs);
+            return Validate(inputs, requireAnomaNormals: true);
         }
 
-        public DatasetValidationResult Validate(IReadOnlyList<TrainingImageInput> inputs)
+        public DatasetValidationResult Validate(
+            IReadOnlyList<TrainingImageInput> inputs,
+            bool requireAnomaNormals = true)
         {
             var result = new DatasetValidationResult
             {
@@ -82,6 +84,8 @@ namespace CoilTrainingUI.Services
             foreach (var input in inputs)
             {
                 string imagePath = input?.ImagePath ?? "";
+                bool requiresInfer = input?.RequiresInfer == true;
+                string inferJsonPath = input?.InferJsonPath ?? "";
                 if (string.IsNullOrWhiteSpace(imagePath))
                 {
                     result.Errors.Add("빈 이미지 경로가 포함되어 있습니다.");
@@ -94,33 +98,22 @@ namespace CoilTrainingUI.Services
                     continue;
                 }
 
-                if (input.RequiresInfer)
+                if (requiresInfer)
                 {
-                    if (string.IsNullOrWhiteSpace(input.InferJsonPath))
+                    if (string.IsNullOrWhiteSpace(inferJsonPath))
                     {
                         result.Errors.Add($"infer.json 경로 매핑이 없습니다: {imagePath}");
                     }
-                    else if (!File.Exists(input.InferJsonPath))
+                    else if (!File.Exists(inferJsonPath))
                     {
-                        result.Errors.Add($"infer.json 없음: {input.InferJsonPath}");
+                        result.Errors.Add($"infer.json 없음: {inferJsonPath}");
                     }
                 }
 
                 var state = _stateService.Load(imagePath);
-                if (!state.HasManualAnomalyDecision)
+                if (!state.HasConfirmedAnomalyDecision)
                 {
-                    if (state.IsNormal != true)
-                    {
-                        state.IsNormal = true;
-                        _stateService.Save(imagePath, state);
-                        result.NormalizedIsNormalCount++;
-                    }
-                }
-                else if (!state.IsNormal.HasValue)
-                {
-                    state.IsNormal = true;
-                    _stateService.Save(imagePath, state);
-                    result.NormalizedIsNormalCount++;
+                    result.Errors.Add($"최종 정상/불량 판정이 확정되지 않았습니다: {Path.GetFileName(imagePath)}");
                 }
 
                 if (string.Equals(state.ReviewStatus, ReviewStatus.ReviewNeeded, StringComparison.OrdinalIgnoreCase))
@@ -142,12 +135,12 @@ namespace CoilTrainingUI.Services
                     }
                 }
 
-                if (state.IsNormal == true)
+                if (state.HasConfirmedAnomalyDecision && state.IsNormal == true)
                     normalCandidates.Add(imagePath);
             }
 
             var abnormalMixedInNormalSet = normalCandidates
-                .Where(path => (_stateService.Load(path).IsNormal ?? true) == false)
+                .Where(path => _stateService.Load(path).IsNormal == false)
                 .ToList();
 
             if (abnormalMixedInNormalSet.Count > 0)
@@ -156,7 +149,7 @@ namespace CoilTrainingUI.Services
                     result.Errors.Add($"정상 학습셋에 IsNormal=false가 섞여 있습니다: {mixed}");
             }
 
-            if (normalCandidates.Count < 2)
+            if (requireAnomaNormals && normalCandidates.Count < 2)
                 result.Errors.Add("anoma 학습용 정상 이미지가 2장 미만입니다. (최소 2장 필요)");
 
             return result;

@@ -544,10 +544,9 @@ namespace CoilTrainingUI
                         new[] { predictionTarget });
                 }
 
-                bool hadStateFile = _stateService.HasState(imagePath);
                 var state = _stateService.Load(imagePath);
                 if (state.HasManualYoloDecision
-                    && !state.HasManualAnomalyDecision
+                    && !state.HasConfirmedAnomalyDecision
                     && string.Equals(state.ReviewStatus, ReviewStatus.ReviewDone, StringComparison.OrdinalIgnoreCase))
                 {
                     state.ReviewStatus = ReviewStatus.ReviewNeeded;
@@ -556,15 +555,9 @@ namespace CoilTrainingUI
                     state.DecisionSource = "";
                     _stateService.Save(imagePath, state);
                 }
-                if (!hadStateFile)
-                {
-                    state.IsNormal = true;
-                    _stateService.Save(imagePath, state);
-                }
-
                 bool hasGtLabel = state.HasManualYoloDecision && state.Labels.Count > 0;
-                bool isNormal = (state.HasManualAnomalyDecision && state.IsNormal.HasValue)
-                    ? state.IsNormal.Value
+                bool isNormal = state.HasConfirmedAnomalyDecision
+                    ? state.IsNormal == true
                     : true;
                 var gtCounts = CountDefectClasses(state.Labels.Select(l => l.ClassName));
                 string reviewStatus = DetermineReviewStatus(state, aiMeta, itemRequiresInfer);
@@ -587,6 +580,7 @@ namespace CoilTrainingUI
                     HasStateFile = _stateService.HasState(imagePath),
                     HasLabel = hasGtLabel,
                     IsNormal = isNormal,
+                    HasConfirmedDecision = state.HasConfirmedAnomalyDecision,
                     HasAiInfer = aiMeta.HasAiInfer,
                     AiYoloDefect = aiMeta.HasYoloDefect,
                     AiAnomaDefect = !aiMeta.IsAnomaNormal,
@@ -625,7 +619,7 @@ namespace CoilTrainingUI
 
         private static string DetermineReviewStatus(ImageStateDto state, InferMetaSummary aiMeta, bool requiresInfer)
         {
-            if (state.HasManualAnomalyDecision)
+            if (state.HasConfirmedAnomalyDecision)
                 return ReviewStatus.ReviewDone;
 
             string normalized = NormalizeReviewStatus(state.ReviewStatus);

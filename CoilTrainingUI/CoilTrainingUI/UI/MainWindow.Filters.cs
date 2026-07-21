@@ -299,16 +299,14 @@ namespace CoilTrainingUI
                 return;
 
             string inboxRoot = GetTrainingInboxRoot();
-            foreach (var batchGroup in images
-                         .Where(item => !string.IsNullOrWhiteSpace(item.BatchKey))
-                         .GroupBy(item => item.BatchKey, StringComparer.OrdinalIgnoreCase))
-            {
-                bool isReviewed = batchGroup.All(item => item.ReviewDone);
-                BatchRegistryService.SetReviewStatus(
-                    inboxRoot,
-                    batchGroup.Key,
-                    isReviewed ? "reviewed" : "review_needed");
-            }
+            var statuses = images
+                .Where(item => !string.IsNullOrWhiteSpace(item.BatchKey))
+                .GroupBy(item => item.BatchKey, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.All(item => item.ReviewDone) ? "reviewed" : "review_needed",
+                    StringComparer.OrdinalIgnoreCase);
+            BatchRegistryService.SetReviewStatuses(inboxRoot, statuses);
         }
 
         private void MarkFilteredAbnormal_Click(object sender, RoutedEventArgs e)
