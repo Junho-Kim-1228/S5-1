@@ -11,7 +11,7 @@ def build_train_parser(task_name: str) -> argparse.ArgumentParser:
     parser.add_argument("--out", required=True)
     if task_name == "yolo":
         parser.add_argument("--model", default=None)
-        parser.add_argument("--epochs", type=int, default=50)
+        parser.add_argument("--epochs", type=int, default=150)
         parser.add_argument("--imgsz", type=int, default=1024)
         parser.add_argument("--batch", type=int, default=4)
         parser.add_argument("--device", default="auto")

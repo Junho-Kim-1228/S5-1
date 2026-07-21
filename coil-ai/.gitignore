@@ -8,6 +8,7 @@ runs/
 runtime/
 
 yolo11n.pt
+yolo26n.pt
 yolov8n.pt
 yolov8l.pt
 

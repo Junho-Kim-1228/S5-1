@@ -35,6 +35,12 @@ namespace CoilTrainingUI
             public TrainingPipelineMode PipelineMode { get; set; } = TrainingPipelineMode.AnomaThenYolo;
         }
 
+        private sealed class AnomaInferenceCalibration
+        {
+            public int InputSize { get; set; }
+            public double ScoreThreshold { get; set; }
+        }
+
         private TrainingPipelineMode _trainingPipelineMode = TrainingPipelineMode.AnomaThenYolo;
         private YoloTrainingMode _yoloTrainingMode = YoloTrainingMode.Fresh;
         private string _yoloFineTuneWeightsPath = "";
@@ -331,7 +337,8 @@ namespace CoilTrainingUI
                         $"--out-root \"{yoloWorkspaceRoot}\" " +
                         $"--train-ratio {settings.Workspace.TrainRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
                         $"--seed {settings.Workspace.Seed} " +
-                        $"--max-background {settings.Workspace.YoloMaxBackground}";
+                        $"--max-background {settings.Workspace.YoloMaxBackground}" +
+                        BuildYoloBalanceArgs(settings);
 
                     int yoloPrepCode = await runner.RunAsync(
                         pythonExe: pythonExe,
@@ -361,7 +368,8 @@ namespace CoilTrainingUI
                     int anomaCode = await runner.RunAsync(
                         pythonExe: pythonExe,
                         scriptPath: anomaScript,
-                        args: $"--workspace \"{anomaStagedRawRoot}\" --out \"{anomaOut}\"",
+                        args: $"--workspace \"{anomaStagedRawRoot}\" --out \"{anomaOut}\" " +
+                              $"--image-size {settings.AnomaInfer.InputSize}",
                         workingDir: aiProjectRoot,
                         logPath: IOPath.Combine(logsDir, "anoma.log"),
                         ct: cts.Token,
@@ -398,7 +406,10 @@ namespace CoilTrainingUI
                     int yoloCode = await runner.RunAsync(
                         pythonExe: pythonExe,
                         scriptPath: yoloScript,
-                        args: $"--workspace \"{yoloWorkspaceRoot}\" --out \"{yoloOut}\"{yoloModelArgs}",
+                        args: $"--workspace \"{yoloWorkspaceRoot}\" --out \"{yoloOut}\" " +
+                              $"--epochs {settings.Workspace.YoloEpochs} " +
+                              $"--imgsz {settings.YoloInfer.ImgSz} " +
+                              $"--batch {settings.Workspace.YoloBatch}{yoloModelArgs}",
                         workingDir: aiProjectRoot,
                         logPath: IOPath.Combine(logsDir, "yolo.log"),
                         ct: cts.Token,
@@ -454,11 +465,14 @@ namespace CoilTrainingUI
                 if (trainAnoma)
                     File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
+                var anomaCalibration = trainAnoma
+                    ? TryLoadAnomaInferenceCalibration(anomaOut)
+                    : null;
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
                 File.WriteAllText(
                     pipelinePath,
                     JsonSerializer.Serialize(
-                        BuildPipelineConfig(settings, pipelineMode),
+                        BuildPipelineConfig(settings, pipelineMode, anomaCalibration),
                         new JsonSerializerOptions { WriteIndented = true }
                     ),
                     System.Text.Encoding.UTF8
@@ -678,8 +692,13 @@ namespace CoilTrainingUI
             catch { }
         }
 
-        private object BuildPipelineConfig(AppSettings settings, TrainingPipelineMode pipelineMode)
+        private object BuildPipelineConfig(
+            AppSettings settings,
+            TrainingPipelineMode pipelineMode,
+            AnomaInferenceCalibration? anomaCalibration = null)
         {
+            int anomaInputSize = anomaCalibration?.InputSize ?? settings.AnomaInfer.InputSize;
+            double anomaScoreThreshold = anomaCalibration?.ScoreThreshold ?? settings.AnomaInfer.ScoreThres;
             var requiredModels = new List<string>();
             if (RequiresAnomaTraining(pipelineMode))
                 requiredModels.Add("anoma");
@@ -729,8 +748,8 @@ namespace CoilTrainingUI
                 {
                     model = "models/anoma.onnx",
                     mode = settings.AnomaInfer.Mode,
-                    input_size = settings.AnomaInfer.InputSize,
-                    score_thres = settings.AnomaInfer.ScoreThres,
+                    input_size = anomaInputSize,
+                    score_thres = anomaScoreThreshold,
                     crop_padding_px = settings.AnomaInfer.CropPaddingPx
                 };
             }
@@ -742,7 +761,7 @@ namespace CoilTrainingUI
                 {
                     rule = settings.Fusion.Rule,
                     yolo_conf_thres = settings.Fusion.YoloThreshold,
-                    anoma_score_thres = settings.Fusion.AnomaThreshold
+                    anoma_score_thres = anomaScoreThreshold
                 };
             }
 
@@ -776,6 +795,60 @@ namespace CoilTrainingUI
             {
                 return null;
             }
+        }
+
+        private static AnomaInferenceCalibration? TryLoadAnomaInferenceCalibration(string anomaOutDir)
+        {
+            string configPath = IOPath.Combine(anomaOutDir, "inference_config.json");
+            if (!File.Exists(configPath))
+                return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
+                JsonElement root = doc.RootElement;
+                if (!root.TryGetProperty("input_size", out JsonElement inputSizeElement)
+                    || !inputSizeElement.TryGetInt32(out int inputSize)
+                    || inputSize <= 0
+                    || !root.TryGetProperty("score_threshold", out JsonElement thresholdElement)
+                    || !thresholdElement.TryGetDouble(out double scoreThreshold)
+                    || double.IsNaN(scoreThreshold)
+                    || double.IsInfinity(scoreThreshold))
+                {
+                    return null;
+                }
+
+                return new AnomaInferenceCalibration
+                {
+                    InputSize = inputSize,
+                    ScoreThreshold = scoreThreshold
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string BuildYoloBalanceArgs(AppSettings settings)
+        {
+            string oversampleClass = settings.Workspace.YoloOversampleClass?.Trim() ?? "";
+            string augmentClass = settings.Workspace.YoloAugmentClass?.Trim() ?? "";
+            var args = "";
+
+            if (!string.IsNullOrWhiteSpace(oversampleClass))
+            {
+                args += $" --oversample-class \"{oversampleClass}\" " +
+                        $"--oversample-factor {settings.Workspace.YoloOversampleFactor.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            }
+
+            if (!string.IsNullOrWhiteSpace(augmentClass))
+            {
+                args += $" --augment-class \"{augmentClass}\" " +
+                        $"--augment-factor {settings.Workspace.YoloAugmentFactor.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            }
+
+            return args;
         }
 
         private static TrainingPipelineMode TryParseTrainingPipelineMode(string? modeToken)
@@ -1074,12 +1147,15 @@ namespace CoilTrainingUI
                 if (RequiresAnomaTraining(pipelineMode))
                     File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
 
+                var anomaCalibration = RequiresAnomaTraining(pipelineMode)
+                    ? TryLoadAnomaInferenceCalibration(anomaOut)
+                    : null;
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
 
                 File.WriteAllText(
                     pipelinePath,
                     JsonSerializer.Serialize(
-                        BuildPipelineConfig(settings, pipelineMode),
+                        BuildPipelineConfig(settings, pipelineMode, anomaCalibration),
                         new JsonSerializerOptions { WriteIndented = true }),
                     System.Text.Encoding.UTF8
                 );

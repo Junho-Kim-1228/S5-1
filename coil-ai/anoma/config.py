@@ -40,8 +40,18 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         choices=["padim", "patchcore"],
         help="Anomaly model to run.",
     )
-    parser.add_argument("--image-size", type=int, default=256, help="Square input size.")
-    parser.add_argument("--batch-size", type=int, default=16, help="Batch size for feature extraction.")
+    parser.add_argument(
+        "--image-size",
+        type=int,
+        default=640,
+        help="Square input size. Use the same value during training and packaged inference.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size for feature extraction. Kept conservative for 640px inputs.",
+    )
     parser.add_argument(
         "--num-workers",
         type=int,

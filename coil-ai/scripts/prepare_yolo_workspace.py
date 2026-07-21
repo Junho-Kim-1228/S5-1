@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import random
 import shutil
@@ -13,6 +14,7 @@ CLASS_MAP: Dict[str, int] = {
     "dent": 0,
     "loose": 1,
 }
+ALL_DEFECTS = "all"
 
 VALID_IMAGE_EXTS = {".bmp", ".png", ".jpg", ".jpeg"}
 
@@ -118,6 +120,16 @@ def image_to_state_json_path(image_path: Path) -> Path:
     return image_path.with_name(f"{image_path.stem}.state.json")
 
 
+def build_unique_output_stem(relative_source: Path) -> str:
+    raw_stem = "__".join(relative_source.with_suffix("").parts)
+    safe_stem = "".join(
+        character if character.isalnum() or character in {"-", "_", "."} else "_"
+        for character in raw_stem
+    ).strip("._") or "image"
+    path_hash = hashlib.sha1(relative_source.as_posix().encode("utf-8")).hexdigest()[:8]
+    return f"{safe_stem}__{path_hash}"
+
+
 def find_image_files(raw_root: Path) -> List[Path]:
     image_files: List[Path] = []
     for path in raw_root.rglob("*"):
@@ -201,15 +213,16 @@ def build_sample_records(raw_root: Path, class_map: Dict[str, int]) -> List[dict
         is_defect = label_count > 0
 
         relative_source = image_path.relative_to(raw_root)
+        output_stem = build_unique_output_stem(relative_source)
 
         records.append(
             {
                 "image_path": image_path,
                 "json_path": json_path,
                 "relative_source": str(relative_source),
-                "file_stem": image_path.stem,
-                "output_image_name": image_path.name,
-                "output_label_name": f"{image_path.stem}.txt",
+                "file_stem": output_stem,
+                "output_image_name": f"{output_stem}{image_path.suffix.lower()}",
+                "output_label_name": f"{output_stem}.txt",
                 "yolo_lines": yolo_lines,
                 "review_status": meta.get("ReviewStatus"),
                 "label_count": label_count,
@@ -260,16 +273,19 @@ def simple_split(records: List[dict], train_ratio: float, seed: int) -> Tuple[Li
     if not records:
         return [], []
 
+    # A singleton cannot represent both splits; keep it in training so the
+    # corresponding class is learnable and let the data audit warn about the
+    # insufficient validation count.
+    if len(records) == 1:
+        return records[:], []
+
     rng = random.Random(seed)
     shuffled = records[:]
     rng.shuffle(shuffled)
 
-    split_index = int(len(shuffled) * train_ratio)
+    split_index = max(1, min(len(shuffled) - 1, int(len(shuffled) * train_ratio)))
     train_records = shuffled[:split_index]
     val_records = shuffled[split_index:]
-
-    if len(val_records) == 0 and len(train_records) > 1:
-        val_records = [train_records.pop()]
 
     return train_records, val_records
 
@@ -279,19 +295,24 @@ def stratified_split(
     train_ratio: float,
     seed: int,
 ) -> Tuple[List[dict], List[dict]]:
-    normal_records = [r for r in records if not r["is_defect"]]
-    defect_records = [r for r in records if r["is_defect"]]
+    groups: Dict[tuple[str, ...], List[dict]] = {}
+    for record in records:
+        class_signature = tuple(sorted(record.get("class_names", [])))
+        group_key = class_signature or ("__background__",)
+        groups.setdefault(group_key, []).append(record)
 
-    train_normal, val_normal = simple_split(normal_records, train_ratio, seed)
-    train_defect, val_defect = simple_split(defect_records, train_ratio, seed + 1)
+    train_records: List[dict] = []
+    val_records: List[dict] = []
+    for group_index, group_key in enumerate(sorted(groups)):
+        group_train, group_val = simple_split(
+            groups[group_key],
+            train_ratio,
+            seed + group_index,
+        )
+        train_records.extend(group_train)
+        val_records.extend(group_val)
 
-    # val에 불량이 0개가 되면 최소 1개 보정
-    if len(val_defect) == 0 and len(train_defect) > 1:
-        val_defect.append(train_defect.pop())
-
-    train_records = train_normal + train_defect
-    val_records = val_normal + val_defect
-
+    # Keep output order deterministic after splitting each label signature.
     rng = random.Random(seed + 999)
     rng.shuffle(train_records)
     rng.shuffle(val_records)
@@ -300,11 +321,11 @@ def stratified_split(
 
 
 def _clone_oversampled_record(record: dict, copy_index: int) -> dict:
-    image_path = record["image_path"]
     suffix = f"__os{copy_index:02d}"
+    output_image = Path(record["output_image_name"])
     cloned = dict(record)
-    cloned["output_image_name"] = f"{image_path.stem}{suffix}{image_path.suffix}"
-    cloned["output_label_name"] = f"{image_path.stem}{suffix}.txt"
+    cloned["output_image_name"] = f"{output_image.stem}{suffix}{output_image.suffix}"
+    cloned["output_label_name"] = f"{output_image.stem}{suffix}.txt"
     cloned["is_oversampled"] = True
     cloned["oversample_copy_index"] = copy_index
     return cloned
@@ -319,7 +340,7 @@ def oversample_train_records(
     if not target_class or oversample_factor <= 1.0:
         return records
 
-    eligible_records = [record for record in records if target_class in record.get("class_names", [])]
+    eligible_records = _select_target_records(records, target_class)
     if not eligible_records:
         print(f"[WARN] No train samples contain oversample class: {target_class}")
         return records
@@ -392,11 +413,11 @@ def _build_augmentation_profile(rng: random.Random) -> dict:
 
 
 def _clone_augmented_record(record: dict, copy_index: int, profile: dict) -> dict:
-    image_path = record["image_path"]
     suffix = f"__aug{copy_index:02d}"
+    output_image = Path(record["output_image_name"])
     cloned = dict(record)
-    cloned["output_image_name"] = f"{image_path.stem}{suffix}{image_path.suffix}"
-    cloned["output_label_name"] = f"{image_path.stem}{suffix}.txt"
+    cloned["output_image_name"] = f"{output_image.stem}{suffix}{output_image.suffix}"
+    cloned["output_label_name"] = f"{output_image.stem}{suffix}.txt"
     cloned["yolo_lines"] = _apply_profile_to_yolo_lines(record["yolo_lines"], profile)
     cloned["is_augmented"] = True
     cloned["augmentation_copy_index"] = copy_index
@@ -416,7 +437,7 @@ def augment_train_records(
     if augment_factor < 1.0:
         raise ValueError(f"augment-factor must be >= 1.0, got {augment_factor}")
 
-    eligible_records = [record for record in records if target_class in record.get("class_names", [])]
+    eligible_records = _select_target_records(records, target_class)
     if not eligible_records:
         print(f"[WARN] No train samples contain augment class: {target_class}")
         return records
@@ -450,6 +471,12 @@ def augment_train_records(
 
     rng.shuffle(augmented_records)
     return augmented_records
+
+
+def _select_target_records(records: List[dict], target_class: str) -> List[dict]:
+    if target_class == ALL_DEFECTS:
+        return [record for record in records if record.get("is_defect", False)]
+    return [record for record in records if target_class in record.get("class_names", [])]
 
 
 def _read_image(path: Path) -> np.ndarray:
@@ -632,9 +659,10 @@ def main() -> int:
         print(f"[ERROR] oversample-factor must be >= 1.0: {args.oversample_factor}")
         return 1
 
-    if args.oversample_class is not None and args.oversample_class not in CLASS_MAP:
+    valid_balance_targets = {*CLASS_MAP, ALL_DEFECTS}
+    if args.oversample_class is not None and args.oversample_class not in valid_balance_targets:
         print(
-            f"[ERROR] oversample-class must be one of {sorted(CLASS_MAP)}: {args.oversample_class}"
+            f"[ERROR] oversample-class must be one of {sorted(valid_balance_targets)}: {args.oversample_class}"
         )
         return 1
 
@@ -642,9 +670,9 @@ def main() -> int:
         print(f"[ERROR] augment-factor must be >= 1.0: {args.augment_factor}")
         return 1
 
-    if args.augment_class is not None and args.augment_class not in CLASS_MAP:
+    if args.augment_class is not None and args.augment_class not in valid_balance_targets:
         print(
-            f"[ERROR] augment-class must be one of {sorted(CLASS_MAP)}: {args.augment_class}"
+            f"[ERROR] augment-class must be one of {sorted(valid_balance_targets)}: {args.augment_class}"
         )
         return 1
 

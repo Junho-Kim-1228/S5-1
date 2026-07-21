@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from anoma.config import AnomaConfig
-from anoma.exporter import export_artifacts, save_debug_artifacts
+from anoma.exporter import export_artifacts, save_debug_artifacts, save_inference_config
 from anoma.metrics import compute_image_metrics, compute_score_distribution
 from anoma.models.patchcore import PatchcoreModel
 from anoma.models.padim import PadimModel
@@ -104,6 +104,12 @@ def run_training(config: AnomaConfig) -> dict[str, object]:
         metrics=metrics,
         distribution=distribution,
     )
+    inference_config = save_inference_config(
+        out_dir=config.out_dir,
+        model=model,
+        image_size=config.image_size,
+        metrics=metrics,
+    )
     log_progress(85)
 
     if config.skip_export:
@@ -120,6 +126,7 @@ def run_training(config: AnomaConfig) -> dict[str, object]:
         "dataset": dataset_counts,
         "artifacts": artifacts,
         "debug_artifacts": debug_artifacts,
+        "inference_config": inference_config,
         "dataset_root": dataset_info["dataset_root"],
         "manifest_path": dataset_info["manifest_path"],
     }

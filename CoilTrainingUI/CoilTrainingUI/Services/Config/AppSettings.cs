@@ -21,6 +21,12 @@ namespace CoilTrainingUI.Services
             public double ValRatio { get; set; } = 0.2;
             public int Seed { get; set; } = 42;
             public int YoloMaxBackground { get; set; } = 250;
+            public int YoloEpochs { get; set; } = 150;
+            public int YoloBatch { get; set; } = 4;
+            public string YoloOversampleClass { get; set; } = "";
+            public double YoloOversampleFactor { get; set; } = 1.0;
+            public string YoloAugmentClass { get; set; } = "all";
+            public double YoloAugmentFactor { get; set; } = 2.0;
         }
 
         public class FusionSection
@@ -220,7 +226,7 @@ namespace CoilTrainingUI.Services
     public class AnomaInferSection
     {
         public string Mode { get; set; } = "crop"; // "crop" 고정 권장
-        public int InputSize { get; set; } = 256;
+        public int InputSize { get; set; } = 640;
         public double ScoreThres { get; set; } = 0.5;
         public int CropPaddingPx { get; set; } = 8;
     }

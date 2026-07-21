@@ -38,7 +38,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "artifacts": {
                     "onnx": result["artifacts"]["onnx"].name
                     if result["artifacts"]["onnx"] is not None
-                    else None
+                    else None,
+                    "inference_config": result["inference_config"].name,
                 },
             },
         )

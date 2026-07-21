@@ -204,6 +204,42 @@ def save_debug_artifacts(
     }
 
 
+def save_inference_config(
+    *,
+    out_dir: Path,
+    model,
+    image_size: int,
+    metrics: dict[str, float],
+) -> Path:
+    """Persist the exact preprocessing and decision settings for deployment.
+
+    Anomaly scores are not probabilities, so a static value such as 0.5 is not
+    portable between fitted models.  The package builder consumes this file to
+    keep deployed inference aligned with the validation-calibrated model.
+    """
+    ensure_directory(out_dir)
+    path = out_dir / "inference_config.json"
+    _write_json(
+        path,
+        {
+            "schema_version": 1,
+            "model": str(model.model_info().get("model", "anoma")),
+            "input_size": int(image_size),
+            "score_threshold": float(metrics["best_threshold"]),
+            "threshold_policy": "best_f1_on_validation",
+            "validation_metrics": {
+                "image_auroc": float(metrics["image_auroc"]),
+                "image_ap": float(metrics["image_ap"]),
+                "best_f1": float(metrics["best_f1"]),
+                "best_precision": float(metrics["best_precision"]),
+                "best_recall": float(metrics["best_recall"]),
+            },
+        },
+    )
+    log_info(f"inference config: {path}")
+    return path
+
+
 def export_artifacts(*, model, out_dir: Path, image_size: int) -> dict[str, Path]:
     ensure_directory(out_dir)
     onnx_path = out_dir / "anoma.onnx"

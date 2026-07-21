@@ -158,6 +158,49 @@ python -m venv .venv_train
 pip install -r requirements-train.txt
 ```
 
+## Audit Raw Training Data
+
+Before training, validate image decoding, `*.state.json` pairing, anomaly labels,
+YOLO boxes, class counts, and duplicate images:
+
+```powershell
+python scripts/audit_training_data.py `
+  --raw-root "raw_data/coil_v1" `
+  --report "outputs/data_audit_coil_v1.json"
+```
+
+The command exits with code `2` when blocking data errors are found. Warnings do
+not block training, but should be reviewed before reporting model metrics.
+
+## Direct Training From Raw Data (Windows PowerShell)
+
+Anoma reads the audited raw folder directly. YOLO first converts the same raw
+folder into a class-preserving train/validation workspace:
+
+```powershell
+.\.venv_train\Scripts\Activate.ps1
+
+python scripts/train_anoma.py `
+  --workspace "raw_data/coil_v1" `
+  --out "outputs/anoma/coil_v1_padim" `
+  --dataset-name "coil_v1" `
+  --model padim --image-size 640 --batch-size 8 --device cuda
+
+python scripts/prepare_yolo_workspace.py `
+  --raw-root "raw_data/coil_v1" `
+  --out-root "datasets/yolo/coil_v1" `
+  --augment-class all --augment-factor 2.0
+
+python scripts/train_yolo.py `
+  --workspace "datasets/yolo/coil_v1" `
+  --out "outputs/yolo/coil_v1_yolov8l" `
+  --model "assets/weights/yolov8l.pt" `
+  --epochs 150 --imgsz 1024 --batch 4 --device 0
+```
+
+Run the audit first. If CUDA memory is insufficient, lower the YOLO batch to
+`2`; if training is stable, try `8` for higher throughput.
+
 ## Notes
 
 - `scripts/` intentionally contains very little logic.

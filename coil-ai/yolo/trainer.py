@@ -40,7 +40,7 @@ def run_yolo_training(
     workspace: str,
     out_dir: str,
     model: str | None = None,
-    epochs: int = 50,
+    epochs: int = 150,
     imgsz: int = 1024,
     batch: int = 4,
     device: str = "auto",
