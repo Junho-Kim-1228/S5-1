@@ -46,7 +46,7 @@ public sealed class ReviewProjectionService
             BoxStatusText = GetBoxStatusText(state.BoxReview, state.Boxes.Count),
             AiAnomaText = prediction.ParseFailed
                 ? "Anoma 결과 오류"
-                : $"Anoma {prediction.AnomaDecisionText} / {prediction.AnomaScore:0.000}",
+                : FormatAnomaPrediction(prediction),
             AiYoloText = prediction.HasAnomaDecision && !prediction.AnomaIsDefect
                 ? "YOLO 미실행"
                 : $"YOLO {prediction.YoloDetectionCount}개",
@@ -71,6 +71,14 @@ public sealed class ReviewProjectionService
         ImageReviewDecision.Excluded => "학습 제외",
         _ => decision.ToString()
     };
+
+    private static string FormatAnomaPrediction(PredictionSnapshot prediction)
+    {
+        string threshold = prediction.AnomaScoreThreshold.HasValue
+            ? $" / 기준 {prediction.AnomaScoreThreshold.Value:0.000}"
+            : " / 기준 미기록";
+        return $"Anoma {prediction.AnomaDecisionText} / {prediction.AnomaScore:0.000}{threshold}";
+    }
 
     private static string GetBoxStatusText(BoxReviewDecision status, int count) => status switch
     {

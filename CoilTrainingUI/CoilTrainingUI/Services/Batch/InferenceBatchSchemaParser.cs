@@ -1,9 +1,7 @@
 using CoilTrainingUI.Models.InferenceBatch;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
-using System.Windows;
 
 namespace CoilTrainingUI.Services;
 
@@ -36,22 +34,6 @@ public static class InferenceBatchSchemaParser
                ?? throw new InvalidOperationException($"Failed to deserialize infer.json: {inferResultPath}");
     }
 
-    public static bool RunSchemaSmokeTest(string manifestPath, string inferResultPath)
-    {
-        var manifest = ParseManifest(manifestPath);
-        var infer = ParseInferResult(inferResultPath);
-
-        string message =
-            "Batch schema parse OK\n" +
-            $"- manifest: {Path.GetFileName(manifestPath)} ({manifest.Items.Count} items)\n" +
-            $"- infer: {Path.GetFileName(inferResultPath)} ({infer.Yolo.Detections.Count} detections)";
-
-        Trace.WriteLine(message);
-        MessageBox.Show(message, "Inference Batch Schema", MessageBoxButton.OK, MessageBoxImage.Information);
-
-        return true;
-    }
-
     private static void EnsurePathExists(string path, string fileType)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -78,8 +60,13 @@ public static class InferenceBatchSchemaParser
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException($"Invalid manifest root type: expected object in {path}.");
 
-        _ = GetRequiredProperty(root, "manifest", "schema_version", path);
+        var schemaVersionElement = GetRequiredProperty(root, "manifest", "schema_version", path);
+        if (!schemaVersionElement.TryGetInt32(out int schemaVersion))
+            throw new InvalidDataException($"Invalid type for 'manifest.schema_version' (integer expected): {path}");
         _ = GetRequiredProperty(root, "manifest", "created_at", path);
+
+        if (schemaVersion >= 3)
+            ValidateInferenceContext(root, path);
 
         var items = GetRequiredProperty(root, "manifest", "items", path);
         if (items.ValueKind != JsonValueKind.Array)
@@ -100,7 +87,9 @@ public static class InferenceBatchSchemaParser
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException($"Invalid infer json root type: expected object in {path}.");
 
-        _ = GetRequiredProperty(root, "infer", "schema_version", path);
+        var schemaVersionElement = GetRequiredProperty(root, "infer", "schema_version", path);
+        if (!schemaVersionElement.TryGetInt32(out int schemaVersion))
+            throw new InvalidDataException($"Invalid type for 'infer.schema_version' (integer expected): {path}");
         _ = GetRequiredProperty(root, "infer", "image_id", path);
         _ = GetRequiredProperty(root, "infer", "image_size", path);
         _ = GetRequiredProperty(root, "infer", "yolo", path);
@@ -141,5 +130,33 @@ public static class InferenceBatchSchemaParser
 
         var final = GetRequiredProperty(root, "infer", "final", path);
         _ = GetRequiredProperty(final, "infer.final", "is_defect", path);
+
+        if (schemaVersion >= 2)
+        {
+            _ = GetRequiredProperty(root, "infer", "inference_context_id", path);
+            _ = GetRequiredProperty(yolo, "infer.yolo", "confidence_threshold", path);
+            _ = GetRequiredProperty(yolo, "infer.yolo", "model_sha256", path);
+
+            var anoma = GetRequiredProperty(root, "infer", "anoma", path);
+            _ = GetRequiredProperty(anoma, "infer.anoma", "score_threshold", path);
+            _ = GetRequiredProperty(anoma, "infer.anoma", "model_sha256", path);
+        }
+    }
+
+    private static void ValidateInferenceContext(JsonElement root, string path)
+    {
+        var context = GetRequiredProperty(root, "manifest", "inference_context", path);
+        if (context.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException($"Invalid type for 'manifest.inference_context' (object expected): {path}");
+
+        var statusElement = GetRequiredProperty(context, "manifest.inference_context", "status", path);
+        string status = statusElement.GetString()?.Trim().ToLowerInvariant() ?? "";
+        if (status != "recorded")
+            return;
+
+        _ = GetRequiredProperty(context, "manifest.inference_context", "context_id", path);
+        _ = GetRequiredProperty(context, "manifest.inference_context", "pipeline_mode", path);
+        _ = GetRequiredProperty(context, "manifest.inference_context", "package_fingerprint", path);
+        _ = GetRequiredProperty(context, "manifest.inference_context", "pipeline_sha256", path);
     }
 }

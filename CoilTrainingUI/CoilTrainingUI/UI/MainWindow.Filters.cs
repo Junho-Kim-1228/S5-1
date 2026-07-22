@@ -1,5 +1,6 @@
 using CoilTrainingUI.Models;
 using System;
+using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
@@ -258,42 +259,73 @@ namespace CoilTrainingUI
                 $"YOLO 박스 없는 불량 제외 {uniqueImages.Count(item => item.YoloExcludedNoBoxDefect)}";
         }
 
-        private void MarkFilteredAbnormal_Click(object sender, RoutedEventArgs e)
+        private void AcceptFilteredAnomaDecisions_Click(object sender, RoutedEventArgs e)
         {
-            var visibleItems = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
+            var targets = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
                 .OfType<ImageItem>()
-                .Where(item => !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .Where(item => !string.IsNullOrWhiteSpace(item.ProcessedPath) &&
+                               _predictionByImagePath.TryGetValue(item.ProcessedPath, out var prediction) &&
+                               prediction.HasAnomaDecision &&
+                               !prediction.ParseFailed)
+                .GroupBy(item => item.ProcessedPath, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
                 .ToList();
-            if (visibleItems.Count == 0)
+            if (targets.Count == 0)
             {
-                MessageBox.Show("현재 필터 결과에 해당하는 이미지가 없습니다.", "Filtered -> Abnormal");
+                MessageBox.Show(
+                    "현재 필터 결과에 수락 가능한 Anoma 판정이 없습니다.",
+                    "필터 전체 Anoma 판정 수락");
                 return;
             }
 
+            int normalCount = targets.Count(item =>
+                !_predictionByImagePath[item.ProcessedPath].AnomaIsDefect);
+            int defectCount = targets.Count - normalCount;
             if (MessageBox.Show(
-                    $"현재 필터 결과 {visibleItems.Count}개 이미지를 모두 불량으로 확정할까요?",
-                    "Filtered -> Abnormal",
+                    $"현재 필터 결과 중 {targets.Count}개의 Anoma 판정을 수락할까요?\n\n" +
+                    $"정상 확정 예정: {normalCount}개\n" +
+                    $"불량 확정 예정: {defectCount}개\n\n" +
+                    "기존 사용자 판정이 있으면 Anoma 판정으로 변경됩니다.",
+                    "필터 전체 Anoma 판정 수락",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question) != MessageBoxResult.Yes)
             {
                 return;
             }
 
+            string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
+            int saved = 0;
+            var failures = new List<string>();
             _suppressFilterRefresh = true;
             try
             {
-                foreach (ImageItem item in visibleItems)
-                    ApplyAnomalyDecisionToItem(item, isNormal: false, refreshSummary: false);
+                foreach (ImageItem item in targets)
+                {
+                    try
+                    {
+                        var prediction = _predictionByImagePath[item.ProcessedPath];
+                        var current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                        _reviewRepository.Save(
+                            item.ProcessedPath,
+                            _reviewWorkflow.AcceptAiDecision(current, prediction));
+                        saved++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"{item.FileName}: {ex.Message}");
+                    }
+                }
             }
             finally
             {
                 _suppressFilterRefresh = false;
             }
 
-            ApplyImageFilters();
-            EnsureSelectedImageVisible();
-            SyncAnomalyRadioFromSelectedItem();
-            MessageBox.Show($"{visibleItems.Count}개 이미지를 불량으로 확정했습니다.", "Filtered -> Abnormal");
+            RefreshAllImagesFromTrainingInbox(selectedPath, _currentBatchRoot);
+            MessageBox.Show(
+                $"Anoma 판정 수락: {saved}개 / 실패: {failures.Count}개" +
+                (failures.Count > 0 ? "\n\n" + string.Join("\n", failures.Take(10)) : ""),
+                "필터 전체 Anoma 판정 수락");
         }
     }
 }

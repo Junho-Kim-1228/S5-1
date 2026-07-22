@@ -66,23 +66,14 @@
             </MenuItem>
 
             <MenuItem Header="Review">
-                <MenuItem x:Name="AcceptAiDecisionMenuItem"
-                          Header="현재 이미지 Anoma 판정 수락"
-                          Click="AcceptAiDecision_Click"/>
-                <MenuItem x:Name="ApplyPredictionsMenuItem"
-                          Header="현재 이미지 AI 박스 전체 수락"
-                          Click="ApplyPredictionsToLabelsCurrentImage_Click"/>
-                <Separator/>
+                <MenuItem Header="필터 전체 Anoma 판정 수락"
+                          Click="AcceptFilteredAnomaDecisions_Click"/>
                 <MenuItem x:Name="PreLabelBatchMenuItem"
                           Header="필터된 이미지 AI 박스 전체 수락"
                           Click="ApplyPredictionsToLabelsFilteredImages_Click"/>
                 <MenuItem x:Name="ShowReviewQueueMenuItem"
                           Header="미검수·검수 중 목록 보기"
                           Click="ShowReviewQueue_Click"/>
-                <MenuItem Header="기존 state.json 안전 마이그레이션..."
-                          Click="MigrateLegacyStates_Click"/>
-                <MenuItem Header="필터된 이미지 일괄 불량 처리"
-                          Click="MarkFilteredAbnormal_Click"/>
             </MenuItem>
 
             <MenuItem Header="Train">
@@ -497,14 +488,14 @@
 
                         <WrapPanel>
                             <CheckBox x:Name="YoloBackgroundCheckBox"
-                                      Content="YOLO 정상 배경으로 사용"
+                                      Content="YOLO 정상 이미지 학습에 포함"
                                       Margin="0,0,14,0"
                                       Checked="YoloBackgroundCheckBox_Changed"
                                       Unchecked="YoloBackgroundCheckBox_Changed"/>
                             <CheckBox x:Name="ShowPredictionCheckBox"
                                       Content="AI 예측 박스 표시"
                                       Margin="0,0,14,0"
-                                      IsChecked="False"
+                                      IsChecked="True"
                                       Checked="ShowPredictionCheckBox_Checked"
                                       Unchecked="ShowPredictionCheckBox_Unchecked"/>
                             <CheckBox x:Name="ShowRawCheckBox"

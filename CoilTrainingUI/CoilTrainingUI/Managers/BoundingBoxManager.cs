@@ -11,6 +11,8 @@ namespace CoilTrainingUI.Managers
 {
     public class BoundingBoxManager
     {
+        private const double BoxStrokeThickness = 6;
+
         private readonly Canvas _canvas;
         private readonly Dictionary<Rectangle, BoundingBox> _bboxMap = new();
 
@@ -61,7 +63,7 @@ namespace CoilTrainingUI.Managers
                 _currentRect = new Rectangle
                 {
                     Stroke = GetStrokeBrush(_defaultClassName),
-                    StrokeThickness = 2,
+                    StrokeThickness = BoxStrokeThickness,
                     Fill = Brushes.Transparent
                 };
 
@@ -284,7 +286,7 @@ namespace CoilTrainingUI.Managers
             {
                 Width = bbox.Width * imgW,
                 Height = bbox.Height * imgH,
-                StrokeThickness = 2,
+                StrokeThickness = BoxStrokeThickness,
                 Stroke = GetStrokeBrush(bbox.ClassName),
                 Fill = Brushes.Transparent
             };

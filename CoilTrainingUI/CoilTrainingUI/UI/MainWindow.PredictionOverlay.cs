@@ -42,17 +42,15 @@ namespace CoilTrainingUI
                 selectedReviewItem != null &&
                 selectedReviewItem.HasAiInfer;
 
-            ApplyPredictionsMenuItem.IsEnabled = canApplyCurrentImage;
-            AcceptAiDecisionMenuItem.IsEnabled =
+            bool canAcceptAiDecision =
                 canApplyCurrentImage &&
                 selectedReviewItem != null &&
                 _predictionByImagePath.TryGetValue(selectedReviewItem.ProcessedPath, out var selectedPrediction) &&
                 selectedPrediction.HasAnomaDecision;
-            AcceptAiDecisionButton.IsEnabled = AcceptAiDecisionMenuItem.IsEnabled;
+            AcceptAiDecisionButton.IsEnabled = canAcceptAiDecision;
             bool canAcceptBoxes = canApplyCurrentImage &&
                                   selectedReviewItem != null &&
                                   (selectedReviewItem.AiAnomaDefect || selectedReviewItem.IsReviewConfirmedDefect);
-            ApplyPredictionsMenuItem.IsEnabled = canAcceptBoxes;
             AcceptPredictionBoxesButton.IsEnabled = canAcceptBoxes;
             ConfirmBoxesButton.IsEnabled = ImageListBox.SelectedItem is ImageItem selectedItem &&
                                            selectedItem.IsReviewConfirmedDefect;

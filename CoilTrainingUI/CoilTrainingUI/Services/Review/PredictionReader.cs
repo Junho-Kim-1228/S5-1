@@ -15,6 +15,8 @@ public sealed class PredictionSnapshot
     public bool HasAnomaDecision { get; init; }
     public bool AnomaIsDefect { get; init; }
     public double AnomaScore { get; init; }
+    public double? AnomaScoreThreshold { get; init; }
+    public string InferenceContextId { get; init; } = "";
     public IReadOnlyList<ReviewBox> YoloBoxes { get; init; } = Array.Empty<ReviewBox>();
 
     public int YoloDetectionCount => YoloBoxes.Count;
@@ -47,6 +49,8 @@ public sealed class PredictionReader
                 HasAnomaDecision = hasDecision,
                 AnomaIsDefect = decision == "anomaly",
                 AnomaScore = infer.Anoma?.Score ?? 0,
+                AnomaScoreThreshold = infer.Anoma?.ScoreThreshold,
+                InferenceContextId = infer.InferenceContextId ?? "",
                 YoloBoxes = boxes
             };
         }

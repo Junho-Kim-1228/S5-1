@@ -17,6 +17,9 @@ public class ManifestDto
     [JsonPropertyName("created_at")]
     public string CreatedAt { get; set; } = "";
 
+    [JsonPropertyName("inference_context")]
+    public InferenceContextDto? InferenceContext { get; set; }
+
     [JsonPropertyName("items")]
     public List<ManifestItemDto> Items { get; set; } = new();
 }
@@ -44,6 +47,9 @@ public class InferResultDto
     [JsonPropertyName("image_id")]
     public string ImageId { get; set; } = "";
 
+    [JsonPropertyName("inference_context_id")]
+    public string InferenceContextId { get; set; } = "";
+
     [JsonPropertyName("image_size")]
     public ImageSizeDto ImageSize { get; set; } = new();
 
@@ -68,6 +74,15 @@ public class ImageSizeDto
 
 public class InferYoloDto
 {
+    [JsonPropertyName("executed")]
+    public bool Executed { get; set; }
+
+    [JsonPropertyName("confidence_threshold")]
+    public double? ConfidenceThreshold { get; set; }
+
+    [JsonPropertyName("model_sha256")]
+    public string ModelSha256 { get; set; } = "";
+
     [JsonPropertyName("detections")]
     public List<DetectionDto> Detections { get; set; } = new();
 }
@@ -86,8 +101,17 @@ public class DetectionDto
 
 public class InferAnomaDto
 {
+    [JsonPropertyName("executed")]
+    public bool Executed { get; set; }
+
     [JsonPropertyName("score")]
     public double Score { get; set; }
+
+    [JsonPropertyName("score_threshold")]
+    public double? ScoreThreshold { get; set; }
+
+    [JsonPropertyName("model_sha256")]
+    public string ModelSha256 { get; set; } = "";
 
     [JsonPropertyName("decision")]
     public string Decision { get; set; } = "";
@@ -100,4 +124,70 @@ public class InferFinalDto
 
     [JsonPropertyName("reason")]
     public List<string> Reason { get; set; } = new();
+}
+
+public class InferenceContextDto
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; } = "";
+
+    [JsonPropertyName("context_id")]
+    public string ContextId { get; set; } = "";
+
+    [JsonPropertyName("captured_at_utc")]
+    public string CapturedAtUtc { get; set; } = "";
+
+    [JsonPropertyName("pipeline_mode")]
+    public string PipelineMode { get; set; } = "";
+
+    [JsonPropertyName("package_fingerprint")]
+    public string PackageFingerprint { get; set; } = "";
+
+    [JsonPropertyName("pipeline_sha256")]
+    public string PipelineSha256 { get; set; } = "";
+
+    [JsonPropertyName("anoma")]
+    public AnomaInferenceContextDto? Anoma { get; set; }
+
+    [JsonPropertyName("yolo")]
+    public YoloInferenceContextDto? Yolo { get; set; }
+}
+
+public class AnomaInferenceContextDto
+{
+    [JsonPropertyName("model_file")]
+    public string ModelFile { get; set; } = "";
+
+    [JsonPropertyName("model_sha256")]
+    public string ModelSha256 { get; set; } = "";
+
+    [JsonPropertyName("score_threshold")]
+    public double ScoreThreshold { get; set; }
+
+    [JsonPropertyName("input_size")]
+    public int InputSize { get; set; }
+
+    [JsonPropertyName("mode")]
+    public string Mode { get; set; } = "";
+}
+
+public class YoloInferenceContextDto
+{
+    [JsonPropertyName("model_file")]
+    public string ModelFile { get; set; } = "";
+
+    [JsonPropertyName("model_sha256")]
+    public string ModelSha256 { get; set; } = "";
+
+    [JsonPropertyName("confidence_threshold")]
+    public double ConfidenceThreshold { get; set; }
+
+    [JsonPropertyName("iou_threshold")]
+    public double IouThreshold { get; set; }
+
+    [JsonPropertyName("input_size")]
+    public int InputSize { get; set; }
 }

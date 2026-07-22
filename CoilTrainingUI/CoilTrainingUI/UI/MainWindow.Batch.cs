@@ -76,6 +76,7 @@ namespace CoilTrainingUI
                     preferredImagePath: null,
                     preferredBatchRoot: batchToLoad
                 );
+                ShowPredictionCheckBox.IsChecked = _currentBatchHasAnyInfer;
 
                 MessageBox.Show(
                     $"Batch loaded\n{batchToLoad}\n총 image 수: {_images.Count}",
@@ -445,6 +446,7 @@ namespace CoilTrainingUI
             RefreshBatchFilterOptions();
             ApplyImageFilters();
             RefreshSummaryCounts();
+            ShowPredictionCheckBox.IsChecked = _currentBatchHasAnyInfer;
             UpdateDataSourceUiState();
 
             if (_images.Count == 0)

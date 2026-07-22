@@ -6,7 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Windows;
 using IOPath = System.IO.Path;
 
@@ -52,9 +51,6 @@ namespace CoilTrainingUI
                 MessageBox.Show(ex.Message, "AI 판정 수락", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
-
-        private void ApplyPredictionsToLabelsCurrentImage_Click(object sender, RoutedEventArgs e)
-            => AcceptPredictionBoxesForCurrentImage();
 
         private void AcceptPredictionBoxes_Click(object sender, RoutedEventArgs e)
             => AcceptPredictionBoxesForCurrentImage();
@@ -217,46 +213,6 @@ namespace CoilTrainingUI
 
         private void PreLabelBatchFromPredictions_Click(object sender, RoutedEventArgs e)
             => ApplyPredictionsToLabelsFilteredImages_Click(sender, e);
-
-        private void MigrateLegacyStates_Click(object sender, RoutedEventArgs e)
-        {
-            var imagePaths = _images.Select(item => item.ProcessedPath)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            int legacyCount = imagePaths.Count(path =>
-                !_reviewRepository.HasReviewFile(path) && File.Exists(ImageStateService.GetStatePath(path)));
-            if (legacyCount == 0)
-            {
-                MessageBox.Show("마이그레이션할 기존 state.json이 없습니다.", "Legacy Migration");
-                return;
-            }
-
-            if (MessageBox.Show(
-                    $"변환 예정: {legacyCount}개\n\n" +
-                    "기존 state.json은 수정하지 않고 *.state.v1.backup.json으로 백업한 뒤 " +
-                    "새 *.review.json을 생성합니다.",
-                    "Legacy Review Migration",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question) != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            ReviewMigrationReport report = _reviewMigrationService.Migrate(imagePaths);
-            string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
-            RefreshAllImagesFromTrainingInbox(selectedPath, _currentBatchRoot);
-
-            var message = new StringBuilder()
-                .AppendLine($"요청: {report.Requested}")
-                .AppendLine($"기존 state 발견: {report.LegacyFound}")
-                .AppendLine($"변환 성공: {report.Converted}")
-                .AppendLine($"이미 변환됨: {report.AlreadyMigrated}")
-                .AppendLine($"모호하여 검수 중으로 변환: {report.Ambiguous}")
-                .AppendLine($"실패: {report.Failed}");
-            foreach (string failure in report.Failures.Take(10))
-                message.AppendLine("- " + failure);
-            MessageBox.Show(message.ToString().TrimEnd(), "Legacy Review Migration");
-        }
 
         private void ShowReviewQueue_Click(object sender, RoutedEventArgs e)
         {

@@ -71,10 +71,6 @@
                                     Width="170"
                                     IsReadOnly="True"
                                     Binding="{Binding CreatedAtText}"/>
-                <DataGridTextColumn Header="검수 상태"
-                                    Width="90"
-                                    IsReadOnly="True"
-                                    Binding="{Binding ReviewStatusText}"/>
                 <DataGridTemplateColumn Header="숨김"
                                         Width="60">
                     <DataGridTemplateColumn.CellTemplate>
@@ -104,6 +100,9 @@
                    Margin="0,10,0,0"
                    ItemHeight="34"
                    ItemWidth="160">
+            <Button Content="배치 폴더 열기"
+                    Margin="0,0,8,8"
+                    Click="OpenInboxFolder_Click"/>
             <Button Content="배치 불러오기..."
                     Margin="0,0,8,8"
                     Click="ImportBatch_Click"/>

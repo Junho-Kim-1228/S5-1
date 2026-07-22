@@ -3,6 +3,7 @@ using CoilTrainingUI.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -97,6 +98,28 @@ namespace CoilTrainingUI
             BatchGrid.SelectedItem = target;
             BatchGrid.ScrollIntoView(target);
         }
+
+        private void OpenInboxFolder_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Directory.CreateDirectory(_inboxRoot);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = _inboxRoot,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"배치 폴더를 열지 못했습니다.\n{ex.Message}",
+                    "배치 폴더 열기",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
         private async void ImportBatch_Click(object sender, RoutedEventArgs e)
         {
             string? selectedBatchFolder = TrySelectFolder("Import batch folder", _inboxRoot);

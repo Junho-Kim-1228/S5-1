@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CS8601;CS8618</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\CoilTrainingUI\Models\Review\ReviewState.cs" Link="Shared\ReviewState.cs" />
+    <Compile Include="..\CoilTrainingUI\Models\InferenceBatch\InferenceBatchDtos.cs" Link="Shared\InferenceBatchDtos.cs" />
+    <Compile Include="..\CoilTrainingUI\Services\Batch\InferenceBatchSchemaParser.cs" Link="Shared\InferenceBatchSchemaParser.cs" />
+    <Compile Include="..\CoilTrainingUI\Services\State\ImageStateService.cs" Link="Shared\ImageStateService.cs" />
+    <Compile Include="..\CoilTrainingUI\Services\Review\LegacyReviewConverter.cs" Link="Shared\LegacyReviewConverter.cs" />
+    <Compile Include="..\CoilTrainingUI\Services\Review\LegacyReviewMigrationService.cs" Link="Shared\LegacyReviewMigrationService.cs" />
+    <Compile Include="..\CoilTrainingUI\Services\Review\ReviewRepository.cs" Link="Shared\ReviewRepository.cs" />
+    <Compile Include="..\..\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\Configuration\PipelinePackageConfig.cs" Link="Shared\PipelinePackageConfig.cs" />
+    <Compile Include="..\..\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\Interface\InferenceContextInfo.cs" Link="Shared\InferenceContextInfo.cs" />
+    <Compile Include="..\..\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\Interface\InferenceContextFactory.cs" Link="Shared\InferenceContextFactory.cs" />
+  </ItemGroup>
+</Project>

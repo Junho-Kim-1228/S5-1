@@ -104,7 +104,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Configuration\RuntimePathSettingsStore.cs" />
+    <Compile Include="Configuration\PipelinePackageConfig.cs" />
     <Compile Include="Interface\BatchExporter.cs" />
+    <Compile Include="Interface\InferenceContextInfo.cs" />
+    <Compile Include="Interface\InferenceContextFactory.cs" />
     <Compile Include="Interface\OnnxModelTester.cs" />
     <Compile Include="Logging\CsvLogger.cs" />
     <Compile Include="Preprocess\ImageProcessor.cs" />

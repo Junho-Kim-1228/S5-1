@@ -177,7 +177,7 @@ namespace CoilInspectionApp
             this.buttonSelectPackage.Name = "buttonSelectPackage";
             this.buttonSelectPackage.Size = new System.Drawing.Size(52, 22);
             this.buttonSelectPackage.TabIndex = 10;
-            this.buttonSelectPackage.Text = "변경";
+            this.buttonSelectPackage.Text = "선택";
             this.buttonSelectPackage.UseVisualStyleBackColor = true;
             this.buttonSelectPackage.Click += new System.EventHandler(this.buttonSelectPackage_Click);
             //

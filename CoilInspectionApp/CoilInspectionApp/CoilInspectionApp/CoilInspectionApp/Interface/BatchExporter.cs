@@ -9,8 +9,9 @@ namespace CoilInspectionApp
     // 데이터 모델 클래스들
     public class InferJson
     {
-        public int schema_version { get; set; } = 1;
+        public int schema_version { get; set; } = 2;
         public string image_id { get; set; }
+        public string inference_context_id { get; set; }
         public ImageSize image_size { get; set; }
         public YoloInfo yolo { get; set; } = new YoloInfo();
         public AnomaInfo anoma { get; set; } = new AnomaInfo();
@@ -22,6 +23,8 @@ namespace CoilInspectionApp
     {
         public bool executed { get; set; }
         public string skipped_reason { get; set; }
+        public float? confidence_threshold { get; set; }
+        public string model_sha256 { get; set; }
         public List<Detection> detections { get; set; } = new List<Detection>();
     }
     public class Detection
@@ -34,16 +37,19 @@ namespace CoilInspectionApp
     {
         public bool executed { get; set; }
         public float score { get; set; }
+        public float? score_threshold { get; set; }
+        public string model_sha256 { get; set; }
         public string decision { get; set; }
     }
     public class FinalInfo { public bool is_defect { get; set; } public List<string> reason { get; set; } = new List<string>(); }
 
     public class ManifestJson
     {
-        public int schema_version { get; set; } = 2;
+        public int schema_version { get; set; } = 3;
         public string batch_type { get; set; } = "inference";
         public string batch_id { get; set; }
         public string created_at { get; set; }
+        public InferenceContextInfo inference_context { get; set; }
         public List<ManifestItem> items { get; set; } = new List<ManifestItem>();
     }
 
@@ -59,6 +65,8 @@ namespace CoilInspectionApp
     {
         private readonly string _baseOutputDir;
         private readonly string _workingDir;
+        private readonly InferenceContextInfo _inferenceContext;
+        private readonly string _pipelineSnapshotJson;
         private string _currentBatchDir;
         private ManifestJson _currentManifest;
 
@@ -73,9 +81,14 @@ namespace CoilInspectionApp
             public string ProcessedImagePath { get; set; }
         }
 
-        public BatchExporter(string baseOutputDir)
+        public BatchExporter(
+            string baseOutputDir,
+            InferenceContextInfo inferenceContext,
+            string pipelineSnapshotJson)
         {
             _baseOutputDir = baseOutputDir;
+            _inferenceContext = inferenceContext ?? throw new ArgumentNullException(nameof(inferenceContext));
+            _pipelineSnapshotJson = pipelineSnapshotJson ?? "";
             if (!Directory.Exists(_baseOutputDir)) Directory.CreateDirectory(_baseOutputDir);
             _workingDir = Path.Combine(_baseOutputDir, "_working", "current_session");
         }
@@ -91,8 +104,10 @@ namespace CoilInspectionApp
             _currentManifest = new ManifestJson
             {
                 batch_id = "current_session",
-                created_at = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss")
+                created_at = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"),
+                inference_context = _inferenceContext
             };
+            SaveManifest();
         }
 
         public void StartOrResumeBatch()
@@ -100,6 +115,8 @@ namespace CoilInspectionApp
             _currentBatchDir = _workingDir;
             EnsureBatchDirectories();
             _currentManifest = LoadManifestOrCreate("current_session");
+            EnsureCompatibleInferenceContext();
+            SaveManifest();
         }
 
         public void AddResult(
@@ -128,20 +145,26 @@ namespace CoilInspectionApp
             if (processedImg != null && !processedImg.Empty())
                 Cv2.ImWrite(Path.Combine(_currentBatchDir, relProcessedPath), processedImg);
 
+            InferenceContextInfo resultContext = GetContextForNewResult();
             var inferData = new InferJson
             {
                 image_id = imageId,
+                inference_context_id = resultContext.context_id ?? "",
                 image_size = new ImageSize { w = processedImg.Width, h = processedImg.Height },
                 yolo = new YoloInfo
                 {
                     executed = yoloExecuted,
                     skipped_reason = yoloSkippedReason,
+                    confidence_threshold = resultContext.yolo?.confidence_threshold,
+                    model_sha256 = resultContext.yolo?.model_sha256 ?? "",
                     detections = detections ?? new List<Detection>()
                 },
                 anoma = new AnomaInfo
                 {
                     executed = anomaExecuted,
                     score = anomaScore,
+                    score_threshold = resultContext.anoma?.score_threshold,
+                    model_sha256 = resultContext.anoma?.model_sha256 ?? "",
                     decision = anomaDecision ?? ""
                 },
                 final = new FinalInfo { is_defect = isDefect, reason = reasons }
@@ -235,6 +258,7 @@ namespace CoilInspectionApp
 
             string manifestPath = Path.Combine(exportDir, "meta", "manifest.json");
             File.WriteAllText(manifestPath, JsonConvert.SerializeObject(_currentManifest, Newtonsoft.Json.Formatting.Indented));
+            WritePipelineSnapshot(Path.Combine(exportDir, "meta"));
 
             string flagPath = Path.Combine(exportDir, "meta", "DONE.flag");
             File.WriteAllText(flagPath, "READY_FOR_TRAINING_UI");
@@ -251,6 +275,66 @@ namespace CoilInspectionApp
             EnsureBatchDirectories();
             string manifestPath = Path.Combine(_currentBatchDir, "meta", "manifest.json");
             File.WriteAllText(manifestPath, JsonConvert.SerializeObject(_currentManifest, Newtonsoft.Json.Formatting.Indented));
+            WritePipelineSnapshot(Path.Combine(_currentBatchDir, "meta"));
+        }
+
+        private void EnsureCompatibleInferenceContext()
+        {
+            _currentManifest.schema_version = 3;
+
+            if (_currentManifest.inference_context == null)
+            {
+                if (_currentManifest.items.Count == 0)
+                {
+                    _currentManifest.inference_context = _inferenceContext;
+                }
+                else
+                {
+                    _currentManifest.inference_context = new InferenceContextInfo
+                    {
+                        status = "unknown",
+                        reason = "legacy_resumed_without_inference_context"
+                    };
+                }
+                return;
+            }
+
+            if (_currentManifest.items.Count == 0)
+            {
+                _currentManifest.inference_context = _inferenceContext;
+                return;
+            }
+
+            string existingId = _currentManifest.inference_context.context_id ?? "";
+            string currentId = _inferenceContext.context_id ?? "";
+            if (!string.IsNullOrWhiteSpace(existingId) &&
+                !string.Equals(existingId, currentId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "현재 작업 배치는 다른 추론 패키지로 시작되었습니다. 배치를 먼저 마감한 뒤 패키지를 변경하세요.");
+            }
+        }
+
+        private void WritePipelineSnapshot(string metaDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(_pipelineSnapshotJson) ||
+                !string.Equals(_currentManifest?.inference_context?.status, "recorded", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(metaDirectory);
+            File.WriteAllText(Path.Combine(metaDirectory, "pipeline_snapshot.json"), _pipelineSnapshotJson);
+        }
+
+        private InferenceContextInfo GetContextForNewResult()
+        {
+            return string.Equals(
+                    _currentManifest?.inference_context?.status,
+                    "recorded",
+                    StringComparison.OrdinalIgnoreCase)
+                ? _currentManifest.inference_context
+                : _inferenceContext;
         }
 
         private void EnsureBatchDirectories()
