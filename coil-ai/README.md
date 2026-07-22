@@ -137,6 +137,8 @@ YOLO model resolution order:
 Notes:
 
 - The `.pt` files under `assets/weights/` are intentionally local-only.
+- A bare official detection model ID such as `yolo26m.pt` is downloaded on the
+  first run and cached under `assets/weights/`.
 - `yolo/models/` is for custom YAML-based experiments.
 - If you later use a custom model YAML, keep the CLI the same and pass the YAML path via `--model`.
 
@@ -212,6 +214,28 @@ python scripts/train_yolo.py `
   --model "assets/weights/yolov8l.pt" `
   --epochs 150 --imgsz 1024 --batch 4 --device 0
 ```
+
+For the PCB small-defect comparison, the existing `pcb_v1_aug2` workspace
+already augments all defect classes (`--augment-class all`) without augmenting
+normal images. Train the recommended YOLO26 medium checkpoint as follows:
+
+```powershell
+.\.venv_train\Scripts\Activate.ps1
+
+python scripts\train_yolo.py `
+  --workspace "datasets\yolo\pcb_v1_aug2" `
+  --out "outputs\yolo\pcb_v1_yolo26m_p1280" `
+  --model "yolo26m.pt" `
+  --epochs 100 `
+  --imgsz 1280 `
+  --batch 4 `
+  --device auto `
+  --seed 42
+```
+
+The first run downloads `yolo26m.pt` into `assets/weights`. YOLO26 validation
+and ONNX export use its one-to-many head (`end2end=False`) so the exported
+tensor keeps the traditional YOLO layout expected by the inspection app.
 
 Run the Dinomaly comparison directly from `coil-ai` after activating
 `.venv_dinomaly`:

@@ -4,11 +4,17 @@ from pathlib import Path
 from common.exceptions import ExportError
 
 
-def export_yolo_to_onnx(model, out_path: Path, *, imgsz: int = 640) -> Path:
+def export_yolo_to_onnx(
+    model,
+    out_path: Path,
+    *,
+    imgsz: int = 640,
+    end2end: bool = False,
+) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        exported = model.export(format="onnx", imgsz=imgsz)
+        exported = model.export(format="onnx", imgsz=imgsz, end2end=end2end)
         exported_path = Path(str(exported)).resolve()
 
         if not exported_path.exists():

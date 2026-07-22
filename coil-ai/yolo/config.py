@@ -1,10 +1,14 @@
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from common.exceptions import CoilAIError
 from common.path_utils import get_project_root, resolve_path
+
+
+OFFICIAL_DETECTION_WEIGHT_PATTERN = re.compile(r"^yolo(?:v?\d+)[nslmx]\.pt$", re.IGNORECASE)
 
 
 def _resolve_model_path(model: str | None) -> Path:
@@ -21,6 +25,12 @@ def _resolve_model_path(model: str | None) -> Path:
         candidate = candidate.resolve(strict=False)
         if candidate.exists() and candidate.stat().st_size > 0:
             return candidate
+
+        # Let Ultralytics download official detection checkpoints directly into
+        # the project-local weights directory when a bare model ID is supplied.
+        if requested == Path(requested.name) and OFFICIAL_DETECTION_WEIGHT_PATTERN.fullmatch(requested.name):
+            return (project_root / "assets" / "weights" / requested.name).resolve(strict=False)
+
         raise CoilAIError(f"YOLO weights/model not found: {candidate}")
 
     candidates = [
@@ -34,7 +44,8 @@ def _resolve_model_path(model: str | None) -> Path:
             return candidate.resolve(strict=False)
 
     raise CoilAIError(
-        "No YOLO weights found. Pass --model or place yolov8n.pt / yolov8l.pt under assets/weights."
+        "No YOLO weights found. Pass an official model ID such as yolo26m.pt, "
+        "or place a local checkpoint under assets/weights."
     )
 
 

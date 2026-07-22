@@ -86,6 +86,12 @@ def run_yolo_training(
         log_info(logger, "Workers: %s", config.workers)
         log_info(logger, "Val confidence: %s", config.conf_val)
         log_info(logger, "Augmentation: %s", config.augmentation)
+        use_one_to_many_head = config.variant.startswith("yolo26")
+        if use_one_to_many_head:
+            log_info(
+                logger,
+                "YOLO26 compatibility: end2end=False for validation and legacy ONNX output",
+            )
         log_info(
             logger,
             "Workspace counts: train_images=%s val_images=%s train_labels=%s val_labels=%s",
@@ -98,19 +104,25 @@ def run_yolo_training(
 
         model_obj = YOLO(str(config.weights))
         artifacts_dir = out_path / "artifacts"
-        train_results = model_obj.train(
-            data=str(data_yaml),
-            epochs=config.epochs,
-            imgsz=config.imgsz,
-            batch=config.batch,
-            device=config.device,
-            workers=config.workers,
-            plots=False,
-            project=str(artifacts_dir),
-            name="train",
-            exist_ok=True,
-            verbose=True,
+        train_kwargs = {
+            "data": str(data_yaml),
+            "epochs": config.epochs,
+            "imgsz": config.imgsz,
+            "batch": config.batch,
+            "device": config.device,
+            "workers": config.workers,
+            "plots": False,
+            "project": str(artifacts_dir),
+            "name": "train",
+            "exist_ok": True,
+            "verbose": True,
             **config.augmentation,
+        }
+        if use_one_to_many_head:
+            train_kwargs["end2end"] = False
+
+        train_results = model_obj.train(
+            **train_kwargs,
         )
 
         best_weights = _resolve_best_weights(train_results, artifacts_dir)
@@ -129,11 +141,18 @@ def run_yolo_training(
         }
         if config.conf_val is not None:
             val_kwargs["conf"] = config.conf_val
+        if use_one_to_many_head:
+            val_kwargs["end2end"] = False
         val_results = eval_model.val(**val_kwargs)
         metrics = extract_yolo_metrics(val_results)
 
         log_step(logger, "export onnx")
-        export_yolo_to_onnx(eval_model, export_path, imgsz=config.imgsz)
+        export_yolo_to_onnx(
+            eval_model,
+            export_path,
+            imgsz=config.imgsz,
+            end2end=False,
+        )
         log_progress(logger, 100)
 
         summary = build_train_summary(
@@ -156,6 +175,7 @@ def run_yolo_training(
                 "workers": config.workers,
                 "conf_val": config.conf_val,
                 "augmentation": config.augmentation,
+                "end2end": False,
                 "train_save_dir": str(train_results.save_dir) if hasattr(train_results, "save_dir") else None,
                 "best_weights": str(best_weights) if best_weights else None,
             },
