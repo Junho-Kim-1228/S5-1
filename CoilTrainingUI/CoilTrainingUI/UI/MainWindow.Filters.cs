@@ -1,7 +1,5 @@
-using System;
 using CoilTrainingUI.Models;
-using CoilTrainingUI.Services;
-using System.Collections.Generic;
+using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
@@ -22,31 +20,22 @@ namespace CoilTrainingUI
 
         private void ImageFilterCheckBox_Changed(object sender, RoutedEventArgs e)
         {
-            if (!IsLoaded)
+            if (!IsLoaded || _suppressFilterRefresh)
                 return;
-            if (_suppressFilterRefresh)
-                return;
-
             ApplyImageFilters();
         }
 
         private void BatchFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (!IsLoaded)
+            if (!IsLoaded || _suppressFilterRefresh)
                 return;
-            if (_suppressFilterRefresh)
-                return;
-
             ApplyImageFilters();
         }
 
         private void ImageNameFilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (!IsLoaded)
+            if (!IsLoaded || _suppressFilterRefresh)
                 return;
-            if (_suppressFilterRefresh)
-                return;
-
             ApplyImageFilters();
         }
 
@@ -70,10 +59,8 @@ namespace CoilTrainingUI
 
         private void ImageItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            if (_suppressFilterRefresh)
-                return;
-
-            ApplyImageFilters();
+            if (!_suppressFilterRefresh)
+                ApplyImageFilters();
         }
 
         private void ApplyImageFilters()
@@ -101,30 +88,23 @@ namespace CoilTrainingUI
                 && PassBatchFilter(item)
                 && PassStatusFilter(item)
                 && PassDefectTypeFilter(item)
-                && PassReviewPriorityFilter(item)
+                && PassReviewStateFilter(item)
                 && PassDataQualityFilter(item);
         }
 
         private bool PassImageNameFilter(ImageItem item)
         {
             string keyword = (ImageNameFilterTextBox.Text ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(keyword))
-                return true;
-
-            string fileName = item.FileName ?? "";
-            return fileName.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0;
+            return string.IsNullOrWhiteSpace(keyword) ||
+                   (item.FileName ?? "").Contains(keyword, StringComparison.OrdinalIgnoreCase);
         }
 
         private bool PassBatchFilter(ImageItem item)
         {
             string? selectedBatchName = BatchFilterComboBox.SelectedItem as string;
-            if (string.IsNullOrWhiteSpace(selectedBatchName) ||
-                string.Equals(selectedBatchName, AllBatchFilterLabel, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return string.Equals(item.BatchName, selectedBatchName, StringComparison.OrdinalIgnoreCase);
+            return string.IsNullOrWhiteSpace(selectedBatchName) ||
+                   string.Equals(selectedBatchName, AllBatchFilterLabel, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(item.BatchName, selectedBatchName, StringComparison.OrdinalIgnoreCase);
         }
 
         private void RefreshBatchFilterOptions()
@@ -143,16 +123,16 @@ namespace CoilTrainingUI
             {
                 _batchFilterOptions.Clear();
                 _batchFilterOptions.Add(AllBatchFilterLabel);
-                foreach (var batchName in batchNames)
+                foreach (string batchName in batchNames)
                     _batchFilterOptions.Add(batchName);
 
-                string selectionToUse = !string.IsNullOrWhiteSpace(previousSelection) &&
-                                        _batchFilterOptions.Any(option =>
-                                            string.Equals(option, previousSelection, StringComparison.OrdinalIgnoreCase))
+                BatchFilterComboBox.SelectedItem = !string.IsNullOrWhiteSpace(previousSelection) &&
+                                                   _batchFilterOptions.Any(option => string.Equals(
+                                                       option,
+                                                       previousSelection,
+                                                       StringComparison.OrdinalIgnoreCase))
                     ? previousSelection
                     : AllBatchFilterLabel;
-
-                BatchFilterComboBox.SelectedItem = selectionToUse;
             }
             finally
             {
@@ -166,20 +146,19 @@ namespace CoilTrainingUI
             bool includeConfirmedDefect = IsChecked(StatusConfirmedDefectCheckBox);
             bool includeAiNormal = IsChecked(StatusAiNormalCheckBox);
             bool includeAiDefect = IsChecked(StatusAiDefectCheckBox);
-
-            bool hasAnyFilter = includeConfirmedNormal || includeConfirmedDefect || includeAiNormal || includeAiDefect;
-            if (!hasAnyFilter)
+            if (!(includeConfirmedNormal || includeConfirmedDefect || includeAiNormal || includeAiDefect))
                 return true;
 
-            if (includeConfirmedNormal && item.IsConfirmedNormal)
+            if (includeConfirmedNormal && item.IsReviewConfirmedNormal)
                 return true;
-            if (includeConfirmedDefect && item.IsConfirmedDefect)
-                return true;
-            if (includeAiNormal && !item.IsConfirmedDefect && item.HasAiInfer && !item.AiIsDefect)
-                return true;
-            if (includeAiDefect && !item.IsConfirmedDefect && item.HasAiInfer && item.AiIsDefect)
+            if (includeConfirmedDefect && item.IsReviewConfirmedDefect)
                 return true;
 
+            bool lacksFinalDecision = !item.IsReviewConfirmedNormal && !item.IsReviewConfirmedDefect;
+            if (includeAiNormal && lacksFinalDecision && item.HasAiInfer && !item.AiAnomaDefect)
+                return true;
+            if (includeAiDefect && lacksFinalDecision && item.HasAiInfer && item.AiAnomaDefect)
+                return true;
             return false;
         }
 
@@ -189,47 +168,39 @@ namespace CoilTrainingUI
             bool includeDent = IsChecked(DefectTypeDentCheckBox);
             bool includeLoose = IsChecked(DefectTypeLooseCheckBox);
             bool includeNoLabel = IsChecked(DefectTypeNoLabelCheckBox);
-
-            bool hasAnyFilter = includeNormal || includeDent || includeLoose || includeNoLabel;
-            if (!hasAnyFilter)
+            if (!(includeNormal || includeDent || includeLoose || includeNoLabel))
                 return true;
 
-            int totalGtLabels = item.GtDentCount + item.GtLooseCount + item.GtOtherCount;
-            bool isConfirmedNormal = item.IsConfirmedNormal;
-            bool isDentOnly = item.GtDentCount > 0 && item.GtLooseCount == 0 && item.GtOtherCount == 0;
-            bool isLooseOnly = item.GtLooseCount > 0 && item.GtDentCount == 0 && item.GtOtherCount == 0;
-            bool isConfirmedDefectWithoutGtLabel = item.IsConfirmedDefect && totalGtLabels == 0;
-
-            if (includeNormal && isConfirmedNormal)
+            int totalBoxes = item.GtDentCount + item.GtLooseCount + item.GtOtherCount;
+            if (includeNormal && item.IsReviewConfirmedNormal)
                 return true;
-            if (includeDent && isDentOnly)
+            if (includeDent && item.GtDentCount > 0)
                 return true;
-            if (includeLoose && isLooseOnly)
+            if (includeLoose && item.GtLooseCount > 0)
                 return true;
-            if (includeNoLabel && isConfirmedDefectWithoutGtLabel)
+            if (includeNoLabel && item.IsReviewConfirmedDefect && totalBoxes == 0)
                 return true;
-
             return false;
         }
 
-        private bool PassReviewPriorityFilter(ImageItem item)
+        private bool PassReviewStateFilter(ImageItem item)
         {
-            bool includeNeedsReview = IsChecked(ReviewNeedsCheckBox);
-            bool includeAutoCandidate = IsChecked(ReviewAutoCandidateCheckBox);
-            bool includeDone = IsChecked(ReviewDoneCheckBox);
+            bool includeUnreviewed = IsChecked(ReviewUnreviewedCheckBox);
+            bool includeReviewing = IsChecked(ReviewReviewingCheckBox);
+            bool includeConfirmedNormal = IsChecked(ReviewConfirmedNormalCheckBox);
+            bool includeConfirmedDefect = IsChecked(ReviewConfirmedDefectCheckBox);
+            bool includeExcluded = IsChecked(ReviewExcludedCheckBox);
+            if (!(includeUnreviewed || includeReviewing || includeConfirmedNormal ||
+                  includeConfirmedDefect || includeExcluded))
+            {
+                return true;
+            }
 
-            bool hasAnyFilter = includeNeedsReview || includeAutoCandidate || includeDone;
-            if (!hasAnyFilter)
-                return true;
-
-            if (includeNeedsReview && item.NeedsReview)
-                return true;
-            if (includeAutoCandidate && item.AutoApproveCandidate)
-                return true;
-            if (includeDone && item.ReviewDone)
-                return true;
-
-            return false;
+            return (includeUnreviewed && item.IsReviewUnreviewed) ||
+                   (includeReviewing && item.IsReviewing) ||
+                   (includeConfirmedNormal && item.IsReviewConfirmedNormal) ||
+                   (includeConfirmedDefect && item.IsReviewConfirmedDefect) ||
+                   (includeExcluded && item.IsReviewExcluded);
         }
 
         private bool PassDataQualityFilter(ImageItem item)
@@ -239,106 +210,79 @@ namespace CoilTrainingUI
             bool includeInferParseFailed = IsChecked(QualityInferParseFailedCheckBox);
             bool includeMissingState = IsChecked(QualityMissingStateCheckBox);
             bool includeMissingRaw = IsChecked(QualityMissingRawCheckBox);
+            if (!(includeHealthy || includeMissingInfer || includeInferParseFailed ||
+                  includeMissingState || includeMissingRaw))
+            {
+                return true;
+            }
 
-            bool hasAnyFilter = includeHealthy || includeMissingInfer || includeInferParseFailed || includeMissingState || includeMissingRaw;
-            if (!hasAnyFilter)
-                return true;
-
-            if (includeHealthy && IsDataQualityHealthy(item))
-                return true;
-            if (includeMissingInfer && item.RequiresInfer && !item.HasInferFile)
-                return true;
-            if (includeInferParseFailed && item.InferParseFailed)
-                return true;
-            if (includeMissingState && !item.HasStateFile)
-                return true;
-            if (includeMissingRaw && !item.HasRawFile)
-                return true;
-
-            return false;
+            return (includeHealthy && IsDataQualityHealthy(item)) ||
+                   (includeMissingInfer && item.RequiresInfer && !item.HasInferFile) ||
+                   (includeInferParseFailed && item.InferParseFailed) ||
+                   (includeMissingState && !item.HasStateFile) ||
+                   (includeMissingRaw && !item.HasRawFile);
         }
 
         private static bool IsDataQualityHealthy(ImageItem item)
         {
-            if (!item.HasStateFile)
+            if (!item.HasStateFile || item.NeedsLegacyMigration)
                 return false;
             if (item.RequiresInfer && !item.HasInferFile)
                 return false;
-            if (item.InferParseFailed)
-                return false;
-            return true;
+            return !item.InferParseFailed;
         }
 
-        private static bool IsChecked(CheckBox checkBox)
-            => checkBox.IsChecked == true;
+        private static bool IsChecked(CheckBox checkBox) => checkBox.IsChecked == true;
 
         private void RefreshSummaryCounts()
         {
             var uniqueImages = _images
-                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .Where(item => !string.IsNullOrWhiteSpace(item.ProcessedPath))
                 .GroupBy(item => item.ProcessedPath, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
 
             int total = uniqueImages.Count;
             int visible = _imageCollectionView?.Cast<object>().OfType<ImageItem>().Count() ?? total;
-
-            int defect = uniqueImages.Count(item => item.IsConfirmedDefect);
-            int normal = uniqueImages.Count(item => item.IsConfirmedNormal);
-
-            TotalCountText.Text = $"총 {total}개";
-            VisibleCountText.Text = $"필터 후 {visible}개";
-            NormalCountText.Text = $"정상 {normal}개";
-            DefectCountText.Text = $"불량 이미지 {defect}개";
-            UpdateBatchReviewStatuses(uniqueImages);
-        }
-
-        private void UpdateBatchReviewStatuses(IReadOnlyList<ImageItem> images)
-        {
-            if (images == null || images.Count == 0)
-                return;
-
-            string inboxRoot = GetTrainingInboxRoot();
-            var statuses = images
-                .Where(item => !string.IsNullOrWhiteSpace(item.BatchKey))
-                .GroupBy(item => item.BatchKey, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.All(item => item.ReviewDone) ? "reviewed" : "review_needed",
-                    StringComparer.OrdinalIgnoreCase);
-            BatchRegistryService.SetReviewStatuses(inboxRoot, statuses);
+            TotalCountText.Text = $"전체 {total}";
+            VisibleCountText.Text = $"필터 후 {visible}";
+            UnreviewedCountText.Text = $"미검수 {uniqueImages.Count(item => item.IsReviewUnreviewed)}";
+            ReviewingCountText.Text = $"검수 중 {uniqueImages.Count(item => item.IsReviewing)}";
+            ConfirmedNormalCountText.Text = $"정상 확정 {uniqueImages.Count(item => item.IsReviewConfirmedNormal)}";
+            ConfirmedDefectCountText.Text = $"불량 확정 {uniqueImages.Count(item => item.IsReviewConfirmedDefect)}";
+            ExcludedCountText.Text = $"학습 제외 {uniqueImages.Count(item => item.IsReviewExcluded)}";
+            AnomaTrainEligibleCountText.Text = $"Anoma 학습 {uniqueImages.Count(item => item.AnomaTrainingEligible)}";
+            AnomaEvalEligibleCountText.Text = $"Anoma 평가 {uniqueImages.Count(item => item.AnomaEvaluationEligible)}";
+            YoloPositiveEligibleCountText.Text = $"YOLO 양성 {uniqueImages.Count(item => item.YoloPositiveEligible)}";
+            YoloExcludedNoBoxCountText.Text =
+                $"YOLO 박스 없는 불량 제외 {uniqueImages.Count(item => item.YoloExcludedNoBoxDefect)}";
         }
 
         private void MarkFilteredAbnormal_Click(object sender, RoutedEventArgs e)
         {
             var visibleItems = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
                 .OfType<ImageItem>()
-                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.ProcessedPath))
+                .Where(item => !string.IsNullOrWhiteSpace(item.ProcessedPath))
                 .ToList();
-
             if (visibleItems.Count == 0)
             {
-                MessageBox.Show(
-                    "현재 필터 결과에 해당하는 이미지가 없습니다.",
-                    "Filtered -> Abnormal",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                MessageBox.Show("현재 필터 결과에 해당하는 이미지가 없습니다.", "Filtered -> Abnormal");
                 return;
             }
 
-            var confirm = MessageBox.Show(
-                $"현재 필터 결과 {visibleItems.Count}개 이미지를 모두 Abnormal로 확정할까요?",
-                "Filtered -> Abnormal",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (confirm != MessageBoxResult.Yes)
+            if (MessageBox.Show(
+                    $"현재 필터 결과 {visibleItems.Count}개 이미지를 모두 불량으로 확정할까요?",
+                    "Filtered -> Abnormal",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
                 return;
+            }
 
             _suppressFilterRefresh = true;
             try
             {
-                foreach (var item in visibleItems)
+                foreach (ImageItem item in visibleItems)
                     ApplyAnomalyDecisionToItem(item, isNormal: false, refreshSummary: false);
             }
             finally
@@ -349,12 +293,7 @@ namespace CoilTrainingUI
             ApplyImageFilters();
             EnsureSelectedImageVisible();
             SyncAnomalyRadioFromSelectedItem();
-
-            MessageBox.Show(
-                $"{visibleItems.Count}개 이미지를 Abnormal로 확정했습니다.",
-                "Filtered -> Abnormal",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            MessageBox.Show($"{visibleItems.Count}개 이미지를 불량으로 확정했습니다.", "Filtered -> Abnormal");
         }
     }
 }

@@ -103,6 +103,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Configuration\RuntimePathSettingsStore.cs" />
     <Compile Include="Interface\BatchExporter.cs" />
     <Compile Include="Interface\OnnxModelTester.cs" />
     <Compile Include="Logging\CsvLogger.cs" />

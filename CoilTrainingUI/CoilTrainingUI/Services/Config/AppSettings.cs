@@ -11,7 +11,6 @@ namespace CoilTrainingUI.Services
         public string BatchLibraryRoot { get; set; } = "";
         public string AiProjectRoot { get; set; } = "coil-ai-runtime";
         public WorkspaceSection Workspace { get; set; } = new();
-        public FusionSection Fusion { get; set; } = new();
         public YoloInferSection YoloInfer { get; set; } = new();
         public AnomaInferSection AnomaInfer { get; set; } = new();
 
@@ -29,12 +28,6 @@ namespace CoilTrainingUI.Services
             public double YoloAugmentFactor { get; set; } = 2.0;
         }
 
-        public class FusionSection
-        {
-            public string Rule { get; set; } = "AND";
-            public double YoloThreshold { get; set; } = 0.25;
-            public double AnomaThreshold { get; set; } = 0.5;
-        }
     }
 
     public static class AppSettingsLoader

@@ -1,6 +1,7 @@
 using CoilTrainingUI.Models;
-using CoilTrainingUI.Models.InferenceBatch;
+using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Review;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -27,24 +28,35 @@ namespace CoilTrainingUI
         private void UpdatePredictionFeatureUiState()
         {
             bool predictionAvailableInBatch = _currentBatchHasAnyInfer;
-            bool predictionWasEnabled = ShowPredictionCheckBox.IsEnabled;
 
             ShowPredictionCheckBox.IsEnabled = predictionAvailableInBatch;
             if (!predictionAvailableInBatch)
                 ShowPredictionCheckBox.IsChecked = false;
-            else if (!predictionWasEnabled)
-                ShowPredictionCheckBox.IsChecked = true;
 
             PreLabelBatchMenuItem.IsEnabled = predictionAvailableInBatch;
-            AutoApproveSafeMenuItem.IsEnabled = predictionAvailableInBatch;
             ShowReviewQueueMenuItem.IsEnabled = _images.Count > 0;
 
+            var selectedReviewItem = ImageListBox.SelectedItem as ImageItem;
             bool canApplyCurrentImage =
                 predictionAvailableInBatch &&
-                ImageListBox.SelectedItem is ImageItem item &&
-                item.HasAiInfer;
+                selectedReviewItem != null &&
+                selectedReviewItem.HasAiInfer;
 
             ApplyPredictionsMenuItem.IsEnabled = canApplyCurrentImage;
+            AcceptAiDecisionMenuItem.IsEnabled =
+                canApplyCurrentImage &&
+                selectedReviewItem != null &&
+                _predictionByImagePath.TryGetValue(selectedReviewItem.ProcessedPath, out var selectedPrediction) &&
+                selectedPrediction.HasAnomaDecision;
+            AcceptAiDecisionButton.IsEnabled = AcceptAiDecisionMenuItem.IsEnabled;
+            bool canAcceptBoxes = canApplyCurrentImage &&
+                                  selectedReviewItem != null &&
+                                  (selectedReviewItem.AiAnomaDefect || selectedReviewItem.IsReviewConfirmedDefect);
+            ApplyPredictionsMenuItem.IsEnabled = canAcceptBoxes;
+            AcceptPredictionBoxesButton.IsEnabled = canAcceptBoxes;
+            ConfirmBoxesButton.IsEnabled = ImageListBox.SelectedItem is ImageItem selectedItem &&
+                                           selectedItem.IsReviewConfirmedDefect;
+            ExcludeReviewButton.IsEnabled = ImageListBox.SelectedItem is ImageItem;
         }
 
         private void RenderPredictionOverlays(string imagePath)
@@ -60,16 +72,11 @@ namespace CoilTrainingUI
             if (!File.Exists(inferJsonPath))
                 return;
 
-            InferResultDto infer;
-            try
-            {
-                infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
-            }
-            catch (Exception ex)
-            {
-                Trace.WriteLine($"Prediction overlay parse failed: {inferJsonPath}, {ex.Message}");
+            PredictionSnapshot prediction = _predictionByImagePath.TryGetValue(imagePath, out var cached)
+                ? cached
+                : _predictionReader.Read(inferJsonPath);
+            if (prediction.ParseFailed || !prediction.HasAnomaDecision || !prediction.AnomaIsDefect)
                 return;
-            }
 
             double canvasWidth = ImageCanvas.Width;
             double canvasHeight = ImageCanvas.Height;
@@ -77,15 +84,12 @@ namespace CoilTrainingUI
             if (canvasWidth <= 1 || canvasHeight <= 1)
                 return;
 
-            foreach (var detection in infer.Yolo.Detections)
+            foreach (var detection in prediction.YoloBoxes)
             {
-                if (detection.BboxXywhNorm == null || detection.BboxXywhNorm.Length != 4)
-                    continue;
-
-                var cx = detection.BboxXywhNorm[0];
-                var cy = detection.BboxXywhNorm[1];
-                var bw = detection.BboxXywhNorm[2];
-                var bh = detection.BboxXywhNorm[3];
+                var cx = detection.X;
+                var cy = detection.Y;
+                var bw = detection.Width;
+                var bh = detection.Height;
 
                 if (bw <= 0 || bh <= 0)
                     continue;

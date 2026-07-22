@@ -1,6 +1,8 @@
 ﻿using CoilTrainingUI.Managers;
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Review;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Collections.ObjectModel;
@@ -13,7 +15,6 @@ using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
-using System.Windows.Threading;
 
 
 namespace CoilTrainingUI
@@ -22,27 +23,27 @@ namespace CoilTrainingUI
     {
         private bool _isLoadingImage;
 
-        private YoloLabelService _yoloService;
         private BoundingBoxManager _bboxManager;
         private readonly InferenceBatchImportService _inferenceBatchImportService = new();
         private readonly BatchLibraryService _batchLibraryService = new();
+        private readonly BatchImportService _batchImportService;
         private readonly BatchMergeService _batchMergeService = new();
         private CanvasInteractionManager _canvasInteractionManager;
         private ImageStateManager _imageStateManager;
-        private AnomalyStateService _anomalyService;
-        private readonly ImageStateService _stateService = new();
+        private readonly ReviewRepository _reviewRepository = new();
+        private readonly PredictionReader _predictionReader = new();
+        private readonly ReviewWorkflowService _reviewWorkflow = new();
+        private readonly ReviewProjectionService _reviewProjection = new();
+        private readonly LegacyReviewMigrationService _reviewMigrationService;
+        private readonly TrainingDatasetSelector _trainingDatasetSelector;
         private readonly TrainingDatasetValidator _datasetValidator;
-        private readonly BatchPredictionReviewService _predictionReviewService;
 
         private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, PredictionSnapshot> _predictionByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private const string PredictionOverlayTag = "__prediction_overlay";
         private const string AllBatchFilterLabel = "(전체 배치)";
         private string? _currentBatchRoot;
         private bool _currentBatchHasAnyInfer;
-
-        private DispatcherTimer _labelSaveDebounceTimer;
-        private string? _pendingSaveImagePath;
-        private const int LabelSaveDebounceMs = 300;
 
         // 항상 원본은 유지
         private BitmapSource? _rawBitmap;
@@ -53,6 +54,7 @@ namespace CoilTrainingUI
         private const int ImageListWheelDeltaStep = 240;
 
         private string? _currentImagePath;
+        private ReviewState _currentReviewState = new();
         private string _activeDrawClass = "dent";
         private bool _suppressClassComboBoxChange;
 
@@ -104,6 +106,16 @@ namespace CoilTrainingUI
         {
             if (e.Source is Rectangle)
                 return;
+            if (!string.IsNullOrWhiteSpace(_currentImagePath) &&
+                _reviewRepository.Load(_currentImagePath).State.Decision == ImageReviewDecision.ConfirmedNormal)
+            {
+                MessageBox.Show(
+                    "정상 확정 이미지에는 박스를 추가할 수 없습니다. 먼저 불량으로 확정하세요.",
+                    "박스 편집",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
 
             // 🔥 이전 선택 완전 해제
             _bboxManager.ClearSelection();
@@ -145,9 +157,6 @@ namespace CoilTrainingUI
             ClassComboBox.IsEnabled = true;
             SetClassComboBoxSelection(bbox.ClassName);
             
-            RequestSaveLabelsDebounced(currentImagePath);
-
-
             SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
             SyncGtSummaryForImage(currentImagePath);
             RefreshSummaryCounts();
@@ -196,7 +205,6 @@ namespace CoilTrainingUI
             if (!string.IsNullOrEmpty(currentImagePath))
             {
                 SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
-                RequestSaveLabelsDebounced(currentImagePath);
             }
         }
 
@@ -260,7 +268,6 @@ namespace CoilTrainingUI
             // ✅ 삭제 반영 저장
             SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
 
-            RequestSaveLabelsDebounced(currentImagePath);
             RefreshSummaryCounts();
 
         }
@@ -289,8 +296,6 @@ namespace CoilTrainingUI
             // ✅ 상태는 ImageStateManager 기준으로 갱신
             SyncGtSummaryForImage(currentImagePath);
 
-            RequestSaveLabelsDebounced(currentImagePath);
-
             // ✅ 클래스 변경 반영 저장
             SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
 
@@ -298,49 +303,22 @@ namespace CoilTrainingUI
 
         private void SaveLabelsToStateJson(string imagePath, bool markManualYoloDecision = false)
         {
-            // 혹시 캔버스 변경이 남아있다면 확정(드래그 종료 등에서 호출하므로 안전)
             _bboxManager.ForceUpdateAll(ImageCanvas.Width, ImageCanvas.Height);
-
-            var state = _stateService.Load(imagePath);
-
-            state.Labels.Clear();
-
-            var boxes = _imageStateManager.GetLabels(imagePath);
-            foreach (var b in boxes)
-            {
-                state.Labels.Add(new LabelDto
+            var boxes = _imageStateManager.GetLabels(imagePath)
+                .Select(box => new ReviewBox
                 {
-                    ClassName = b.ClassName,
-                    X = b.X,
-                    Y = b.Y,
-                    Width = b.Width,
-                    Height = b.Height,
-                    Source = "manual",
-                    InferConf = null
-                });
-            }
+                    ClassName = box.ClassName,
+                    X = box.X,
+                    Y = box.Y,
+                    Width = box.Width,
+                    Height = box.Height,
+                    Source = "manual"
+                })
+                .ToList();
 
-            if (markManualYoloDecision)
-            {
-                // 박스 편집만으로 이미지 정상/불량 판정을 확정하지 않는다.
-                state.HasManualYoloDecision = true;
-                if (state.IsManualAnomalyDecision)
-                {
-                    state.ReviewStatus = ReviewStatus.ReviewDone;
-                    state.ReviewReasons.Clear();
-                    state.ReviewedAt = DateTime.UtcNow;
-                    state.DecisionSource = "manual";
-                }
-                else
-                {
-                    state.ReviewStatus = ReviewStatus.ReviewNeeded;
-                    state.ReviewReasons = new List<string> { "bbox_edited_pending_confirmation" };
-                    state.ReviewedAt = null;
-                    state.DecisionSource = "";
-                }
-            }
-
-            _stateService.Save(imagePath, state);
+            var loaded = LoadReviewForExplicitEdit(imagePath);
+            _currentReviewState = _reviewWorkflow.ReplaceBoxesAfterEdit(loaded.State, boxes);
+            _reviewRepository.Save(imagePath, _currentReviewState);
             SyncGtSummaryForImage(imagePath);
         }
 
@@ -369,10 +347,12 @@ namespace CoilTrainingUI
         public MainWindow()
         {
             InitializeComponent();
+            _batchImportService = new BatchImportService(_batchLibraryService);
+            _reviewMigrationService = new LegacyReviewMigrationService(_reviewRepository);
+            _trainingDatasetSelector = new TrainingDatasetSelector(_reviewRepository);
             _batchFilterOptions.Add(AllBatchFilterLabel);
             BatchFilterComboBox.ItemsSource = _batchFilterOptions;
             BatchFilterComboBox.SelectedItem = AllBatchFilterLabel;
-            _yoloService = new YoloLabelService(_classToId);
             _bboxManager = new BoundingBoxManager(ImageCanvas);
             SetActiveDrawClass(_activeDrawClass);
             SetClassComboBoxSelection(_activeDrawClass);
@@ -383,25 +363,9 @@ namespace CoilTrainingUI
                 _bboxManager
             );
             _imageStateManager = new ImageStateManager();
-            _anomalyService = new AnomalyStateService();
-            _datasetValidator = new TrainingDatasetValidator(_stateService);
-            _predictionReviewService = new BatchPredictionReviewService(_stateService);
+            _datasetValidator = new TrainingDatasetValidator(_reviewRepository, _trainingDatasetSelector);
             UpdateDataSourceUiState();
 
-            //타이머 초기화   
-            _labelSaveDebounceTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(LabelSaveDebounceMs)
-            };
-            _labelSaveDebounceTimer.Tick += (s, e) =>
-            {
-                _labelSaveDebounceTimer.Stop();
-
-                if (_isLoadingImage) return;
-                if (string.IsNullOrEmpty(_pendingSaveImagePath)) return;
-
-                SaveLabelsToStateJson(_pendingSaveImagePath);
-            };
             _images.CollectionChanged += Images_CollectionChanged;
             InitializeImageCollectionView();
             RefreshSummaryCounts();

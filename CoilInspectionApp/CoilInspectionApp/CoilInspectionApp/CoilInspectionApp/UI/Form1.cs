@@ -1,5 +1,6 @@
 ﻿using CoilInspectionApp.Interface;
 using CoilInspectionApp.Logging;
+using CoilInspectionApp.Configuration;
 using CoilInspectionApp.Preprocess;
 using CoilInspectionApp.UI;
 using CoilInspectionApp.Watcher;
@@ -21,19 +22,23 @@ namespace CoilInspectionApp
     {
         private DirectoryWatcher _dw;
         private readonly CsvLogger _logger = new CsvLogger();
-        private readonly OnnxModelTester _modelTester = new OnnxModelTester();
+        private OnnxModelTester _modelTester = new OnnxModelTester();
         private readonly List<InspectionResultViewModel> _results = new List<InspectionResultViewModel>();
         private readonly object _batchExporterLock = new object();
         private readonly ContextMenuStrip _resultContextMenu = new ContextMenuStrip();
         private readonly ToolStripMenuItem _retryInferenceMenuItem = new ToolStripMenuItem("추론 재시도");
+        private readonly RuntimePathSettingsStore _runtimePathSettingsStore = new RuntimePathSettingsStore();
         private StatisticsForm _statisticsForm;
         private BatchExporter _batchExporter;
         private MaskRuntimeRunner _maskRuntimeRunner;
         private PipelinePackageConfig _config;
         private string _inputPath = "";
         private string _packagePath = "";
+        private string _exportBasePath = "";
         private string _maskPythonExe = "";
         private string _maskRuntimePath = "";
+        private RuntimePathSettings _runtimePathSettings = new RuntimePathSettings();
+        private bool _servicesInitialized;
         private volatile bool _isPreprocessing;
         private volatile bool _preprocessAgainRequested;
         private bool _isClosingBatch;
@@ -115,40 +120,70 @@ namespace CoilInspectionApp
         {
             try
             {
-                _inputPath = ResolveConfiguredPath(ConfigurationManager.AppSettings["InputDir"], @"C:\InspectionTest\input");
-                _packagePath = ResolvePackagePath(ConfigurationManager.AppSettings["InferencePackagePath"], @".\InferencePackage");
+                _runtimePathSettings = _runtimePathSettingsStore.Load();
+                _inputPath = ResolveSavedOrConfiguredPath(
+                    _runtimePathSettings.InputDirectory,
+                    ConfigurationManager.AppSettings["InputDir"],
+                    @"C:\InspectionTest\input");
+                _packagePath = ResolveSavedPackagePath(
+                    _runtimePathSettings.InferencePackageDirectory,
+                    ConfigurationManager.AppSettings["InferencePackagePath"],
+                    @".\InferencePackage");
+                _exportBasePath = ResolveSavedOrConfiguredPath(
+                    _runtimePathSettings.ExportBaseDirectory,
+                    ConfigurationManager.AppSettings["ExportBasePath"],
+                    @"C:\InspectionTest\TrainingBatches");
                 _maskPythonExe = ResolveConfiguredExecutable(ConfigurationManager.AppSettings["MaskPythonExe"], "python");
                 _maskRuntimePath = ResolveMaskRuntimePath(ConfigurationManager.AppSettings["MaskRuntimePath"], @".\mask-runtime");
-                string exportBasePath = ResolveConfiguredPath(ConfigurationManager.AppSettings["ExportBasePath"], @"C:\InspectionTest\TrainingBatches");
 
                 _config = LoadPipelinePackageOrThrow(_packagePath);
-                LoadRequiredModelsOrThrow(_packagePath, _config);
-                _maskRuntimeRunner = new MaskRuntimeRunner(_maskPythonExe, _maskRuntimePath);
-
-                Directory.CreateDirectory(_inputPath);
-
-                _batchExporter = new BatchExporter(exportBasePath);
-                _batchExporter.StartOrResumeBatch();
-                RestoreSessionState();
-                UpdateStaticUi();
-
-                _dw = new DirectoryWatcher();
-                _dw.OnFileCreated += filePath =>
-                {
-                    MarkInputReceived();
-                    PostToUi(() => RegisterIncomingFile(filePath));
-                };
-                _dw.OnFileDeleted += filePath => PostToUi(() => RemoveIncomingFile(filePath));
-                _dw.StartWatch(_inputPath);
-                RegisterExistingInputFiles();
-
-                if (_results.Count > 0 && System.Threading.Interlocked.Read(ref _lastInputReceivedTicks) <= 0)
-                    MarkInputReceived();
+                LoadRequiredModelsOrThrow(_modelTester, _packagePath, _config);
+                InitializeOperationalServices();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"초기화 오류: {ex.Message}", "CoilInspectionApp", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            finally
+            {
+                UpdateStaticUi();
+            }
+        }
+
+        private void InitializeOperationalServices()
+        {
+            if (_servicesInitialized)
+                return;
+
+            _maskRuntimeRunner = new MaskRuntimeRunner(_maskPythonExe, _maskRuntimePath);
+            Directory.CreateDirectory(_inputPath);
+
+            _batchExporter = new BatchExporter(_exportBasePath);
+            _batchExporter.StartOrResumeBatch();
+            RestoreSessionState();
+
+            StartInputWatcher(_inputPath);
+            _servicesInitialized = true;
+            RegisterExistingInputFiles();
+
+            if (_results.Count > 0 && System.Threading.Interlocked.Read(ref _lastInputReceivedTicks) <= 0)
+                MarkInputReceived();
+        }
+
+        private void StartInputWatcher(string path)
+        {
+            var nextWatcher = new DirectoryWatcher();
+            nextWatcher.OnFileCreated += filePath =>
+            {
+                MarkInputReceived();
+                PostToUi(() => RegisterIncomingFile(filePath));
+            };
+            nextWatcher.OnFileDeleted += filePath => PostToUi(() => RemoveIncomingFile(filePath));
+            nextWatcher.StartWatch(path);
+
+            DirectoryWatcher previousWatcher = _dw;
+            _dw = nextWatcher;
+            previousWatcher?.Dispose();
         }
 
         private void PostToUi(Action action)
@@ -190,6 +225,28 @@ namespace CoilInspectionApp
 
             string normalized = value.Replace('/', '\\');
             return Path.GetFullPath(Path.Combine(Application.StartupPath, normalized));
+        }
+
+        private static string ResolveSavedOrConfiguredPath(
+            string savedValue,
+            string configuredValue,
+            string fallbackValue)
+        {
+            if (!string.IsNullOrWhiteSpace(savedValue))
+                return ResolveConfiguredPath(savedValue, fallbackValue);
+
+            return ResolveConfiguredPath(configuredValue, fallbackValue);
+        }
+
+        private static string ResolveSavedPackagePath(
+            string savedValue,
+            string configuredValue,
+            string fallbackValue)
+        {
+            if (!string.IsNullOrWhiteSpace(savedValue))
+                return ResolveConfiguredPath(savedValue, fallbackValue);
+
+            return ResolvePackagePath(configuredValue, fallbackValue);
         }
 
         private static string ResolveConfiguredExecutable(string configuredValue, string fallbackValue)
@@ -280,11 +337,24 @@ namespace CoilInspectionApp
             if (config.pipeline == null)
                 throw new InvalidOperationException("pipeline.json missing pipeline section.");
 
+            string pipelineMode = (config.pipeline.mode ?? "").Trim();
+            if (!string.Equals(pipelineMode, "anoma_then_yolo", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("pipeline.mode must be anoma_then_yolo.");
+
+            if (config.pipeline.skip_yolo_when_stage1_normal != true)
+                throw new InvalidOperationException("pipeline.skip_yolo_when_stage1_normal must be true.");
+
             return config;
         }
 
-        private void LoadRequiredModelsOrThrow(string packagePath, PipelinePackageConfig config)
+        private static void LoadRequiredModelsOrThrow(
+            OnnxModelTester modelTester,
+            string packagePath,
+            PipelinePackageConfig config)
         {
+            if (modelTester == null)
+                throw new ArgumentNullException(nameof(modelTester));
+
             if (config.RequiresAnoma)
             {
                 if (config.anoma == null || string.IsNullOrWhiteSpace(config.anoma.model))
@@ -294,7 +364,7 @@ namespace CoilInspectionApp
                 if (!File.Exists(anomaPath))
                     throw new FileNotFoundException("anoma model not found.", anomaPath);
 
-                _modelTester.LoadAnomaModel(anomaPath);
+                modelTester.LoadAnomaModel(anomaPath);
             }
 
             if (config.RequiresYolo)
@@ -306,7 +376,7 @@ namespace CoilInspectionApp
                 if (!File.Exists(yoloPath))
                     throw new FileNotFoundException("yolo model not found.", yoloPath);
 
-                _modelTester.LoadYoloModel(yoloPath);
+                modelTester.LoadYoloModel(yoloPath);
             }
         }
 
@@ -1240,8 +1310,216 @@ namespace CoilInspectionApp
             }
         }
 
+        private bool CanChangeRuntimePath(string pathName)
+        {
+            bool hasCurrentBatchData = _results.Count > 0 || (_batchExporter?.HasCurrentItems ?? false);
+            if (_isClosingBatch || _isPreprocessing || _isInferring || hasCurrentBatchData)
+            {
+                MessageBox.Show(
+                    $"{pathName}은(는) 현재 배치가 비어 있을 때만 변경할 수 있습니다.\n" +
+                    "진행 중인 처리를 완료하고 배치를 마감한 뒤 다시 시도하세요.",
+                    "경로 변경",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string SelectFolderPath(string description, string currentPath, bool allowNewFolder)
+        {
+            using (var dialog = new FolderBrowserDialog
+            {
+                Description = description,
+                SelectedPath = Directory.Exists(currentPath) ? currentPath : Application.StartupPath,
+                ShowNewFolderButton = allowNewFolder
+            })
+            {
+                return dialog.ShowDialog() == DialogResult.OK
+                    ? Path.GetFullPath(dialog.SelectedPath)
+                    : "";
+            }
+        }
+
+        private void PersistRuntimePathSettings()
+        {
+            try
+            {
+                _runtimePathSettings.InputDirectory = _inputPath;
+                _runtimePathSettings.InferencePackageDirectory = _packagePath;
+                _runtimePathSettings.ExportBaseDirectory = _exportBasePath;
+                _runtimePathSettingsStore.Save(_runtimePathSettings);
+            }
+            catch (Exception ex)
+            {
+                LogException(ex);
+                MessageBox.Show(
+                    $"현재 실행에는 경로가 적용됐지만 사용자 설정을 저장하지 못했습니다.\n{ex.Message}",
+                    "경로 설정 저장",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+        }
+
+        private void buttonSelectInput_Click(object sender, EventArgs e)
+        {
+            if (!CanChangeRuntimePath("입력 폴더"))
+                return;
+
+            string selectedPath = SelectFolderPath("입력 이미지 폴더 선택", _inputPath, allowNewFolder: true);
+            if (string.IsNullOrWhiteSpace(selectedPath) ||
+                string.Equals(selectedPath, _inputPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string previousPath = _inputPath;
+            try
+            {
+                Directory.CreateDirectory(selectedPath);
+                _inputPath = selectedPath;
+                if (_servicesInitialized)
+                    StartInputWatcher(_inputPath);
+
+                System.Threading.Interlocked.Exchange(ref _lastInputReceivedTicks, 0);
+                PersistRuntimePathSettings();
+                UpdateStaticUi();
+
+                if (_servicesInitialized)
+                    RegisterExistingInputFiles();
+            }
+            catch (Exception ex)
+            {
+                _inputPath = previousPath;
+                LogException(ex);
+                MessageBox.Show(
+                    $"입력 폴더를 변경하지 못했습니다.\n{ex.Message}",
+                    "입력 폴더 변경",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                UpdateStaticUi();
+            }
+        }
+
+        private void buttonSelectPackage_Click(object sender, EventArgs e)
+        {
+            if (!CanChangeRuntimePath("추론 패키지"))
+                return;
+
+            string selectedPath = SelectFolderPath("InferencePackage 폴더 선택", _packagePath, allowNewFolder: false);
+            if (string.IsNullOrWhiteSpace(selectedPath))
+                return;
+
+            OnnxModelTester candidateTester = null;
+            bool packageApplied = false;
+            try
+            {
+                PipelinePackageConfig candidateConfig = LoadPipelinePackageOrThrow(selectedPath);
+                candidateTester = new OnnxModelTester();
+                LoadRequiredModelsOrThrow(candidateTester, selectedPath, candidateConfig);
+
+                OnnxModelTester previousTester = _modelTester;
+                _modelTester = candidateTester;
+                candidateTester = null;
+                _config = candidateConfig;
+                _packagePath = selectedPath;
+                previousTester?.Dispose();
+                packageApplied = true;
+
+                PersistRuntimePathSettings();
+                InitializeOperationalServices();
+                UpdateStaticUi();
+
+                MessageBox.Show(
+                    "추론 패키지를 검증하고 적용했습니다.\n새 입력부터 선택한 모델을 사용합니다.",
+                    "패키지 변경",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                candidateTester?.Dispose();
+                LogException(ex);
+                MessageBox.Show(
+                    packageApplied
+                        ? $"패키지는 적용됐지만 실행 서비스 초기화에 실패했습니다.\n{ex.Message}"
+                        : $"패키지 검증에 실패해 기존 패키지를 유지합니다.\n{ex.Message}",
+                    "패키지 변경",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                UpdateStaticUi();
+            }
+        }
+
+        private void buttonSelectBatch_Click(object sender, EventArgs e)
+        {
+            if (!CanChangeRuntimePath("배치 출력 폴더"))
+                return;
+
+            string selectedPath = SelectFolderPath("배치 출력 폴더 선택", _exportBasePath, allowNewFolder: true);
+            if (string.IsNullOrWhiteSpace(selectedPath) ||
+                string.Equals(selectedPath, _exportBasePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(selectedPath);
+                BatchExporter candidateExporter = null;
+                if (_servicesInitialized)
+                {
+                    candidateExporter = new BatchExporter(selectedPath);
+                    candidateExporter.StartOrResumeBatch();
+
+                    if (candidateExporter.HasCurrentItems)
+                    {
+                        DialogResult resume = MessageBox.Show(
+                            "선택한 출력 폴더에 마감되지 않은 현재 배치가 있습니다.\n이 배치를 이어서 불러올까요?",
+                            "배치 출력 변경",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Question);
+                        if (resume != DialogResult.Yes)
+                            return;
+                    }
+                }
+
+                _exportBasePath = selectedPath;
+                if (candidateExporter != null)
+                {
+                    _batchExporter = candidateExporter;
+                    RestoreSessionState();
+                }
+
+                if (_statisticsForm != null && !_statisticsForm.IsDisposed)
+                    _statisticsForm.Close();
+
+                PersistRuntimePathSettings();
+                UpdateStaticUi();
+                RefreshResultList(selectFirst: true);
+                StartAutomaticInferenceIfNeeded();
+            }
+            catch (Exception ex)
+            {
+                LogException(ex);
+                MessageBox.Show(
+                    $"배치 출력 폴더를 변경하지 못했습니다.\n{ex.Message}",
+                    "배치 출력 변경",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                UpdateStaticUi();
+            }
+        }
+
         private void buttonRefreshInput_Click(object sender, EventArgs e)
         {
+            if (!_servicesInitialized)
+            {
+                MessageBox.Show("유효한 추론 패키지를 먼저 선택하세요.");
+                return;
+            }
+
             RefreshInputListFromFolder();
         }
 
@@ -1257,7 +1535,7 @@ namespace CoilInspectionApp
 
         private void buttonOpenBatch_Click(object sender, EventArgs e)
         {
-            OpenFolderPath(_batchExporter?.ExportBaseDirectory);
+            OpenFolderPath(_exportBasePath);
         }
 
         private void buttonStatistics_Click(object sender, EventArgs e)
@@ -1381,6 +1659,9 @@ namespace CoilInspectionApp
         {
             _autoCloseTimer.Stop();
             _autoCloseTimer.Dispose();
+            _dw?.Dispose();
+            _dw = null;
+            _modelTester?.Dispose();
             _resultContextMenu.Dispose();
             SaveSessionState();
             ClearDisplayImage();
@@ -1784,7 +2065,9 @@ namespace CoilInspectionApp
             labelValuePackage.Text = _packagePath;
             if (_batchExporter == null)
             {
-                labelValueBatch.Text = "-";
+                labelValueBatch.Text = string.IsNullOrWhiteSpace(_exportBasePath)
+                    ? "-"
+                    : _exportBasePath + " (초기화 대기)";
             }
             else if (!string.IsNullOrWhiteSpace(_batchExporter.LastExportDirectory))
             {
@@ -1792,8 +2075,15 @@ namespace CoilInspectionApp
             }
             else
             {
-                labelValueBatch.Text = _batchExporter.ExportBaseDirectory + " (배치 마감 시 생성)";
+                labelValueBatch.Text = _exportBasePath + " (배치 마감 시 생성)";
             }
+
+            buttonOpenInput.Enabled = Directory.Exists(_inputPath);
+            buttonOpenPackage.Enabled = Directory.Exists(_packagePath);
+            buttonOpenBatch.Enabled = Directory.Exists(_exportBasePath);
+            buttonRefreshInput.Enabled = _servicesInitialized;
+            buttonStatistics.Enabled = _servicesInitialized;
+            button2.Enabled = _servicesInitialized;
         }
 
         private void ClearSelectionDetails()

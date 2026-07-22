@@ -1,4 +1,6 @@
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Models.Review;
+using CoilTrainingUI.Services.Review;
 using System;
 using System.IO;
 using System.Linq;
@@ -39,13 +41,14 @@ namespace CoilTrainingUI
                 _bboxManager.ClearAll();
                 _imageStateManager.ClearLabels(imagePath);
 
-                var state = _stateService.Load(imagePath);
+                var review = _reviewRepository.Load(imagePath);
+                _currentReviewState = review.State.Clone();
 
-                if (state.Labels.Count > 0)
+                if (_currentReviewState.Boxes.Count > 0)
                 {
                     var mutable = _imageStateManager.GetMutableLabels(imagePath);
 
-                    foreach (var label in state.Labels)
+                    foreach (var label in _currentReviewState.Boxes)
                     {
                         mutable.Add(new BoundingBox
                         {
@@ -57,30 +60,23 @@ namespace CoilTrainingUI
                         });
                     }
                 }
-                else if (!state.HasManualYoloDecision)
-                {
-                    _yoloService.Load(imagePath, _imageStateManager.GetMutableLabels(imagePath));
-                }
 
                 foreach (var bbox in _imageStateManager.GetLabels(imagePath))
                     _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
 
                 UpdatePredictionOverlayVisibility(imagePath);
 
-                bool isNormal = state.HasConfirmedAnomalyDecision
-                    ? state.IsNormal == true
-                    : true;
+                bool isNormal = _currentReviewState.Decision == ImageReviewDecision.ConfirmedNormal;
                 _imageStateManager.SetNormal(imagePath, isNormal);
 
                 if (ImageListBox.SelectedItem is ImageItem item)
                 {
-                    item.IsNormal = isNormal;
                     UpdateGtSummaryForImageItem(item, imagePath);
 
-                    item.HasConfirmedDecision = state.HasConfirmedAnomalyDecision;
-                    bool hasConfirmedImageDecision = state.HasConfirmedAnomalyDecision;
-                    NormalRadio.IsChecked = hasConfirmedImageDecision ? isNormal : false;
-                    AbnormalRadio.IsChecked = hasConfirmedImageDecision ? !isNormal : false;
+                    NormalRadio.IsChecked = _currentReviewState.Decision == ImageReviewDecision.ConfirmedNormal;
+                    AbnormalRadio.IsChecked = _currentReviewState.Decision == ImageReviewDecision.ConfirmedDefect;
+                    YoloBackgroundCheckBox.IsChecked = _currentReviewState.UseAsYoloBackground;
+                    YoloBackgroundCheckBox.IsEnabled = _currentReviewState.Decision == ImageReviewDecision.ConfirmedNormal;
                 }
 
                 UpdateMainImageDisplayFromToggle();

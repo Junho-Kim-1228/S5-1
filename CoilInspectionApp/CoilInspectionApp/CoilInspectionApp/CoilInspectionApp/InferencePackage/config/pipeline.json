@@ -32,14 +32,9 @@
   },
   "anoma": {
     "model": "models/anoma.onnx",
-    "mode": "crop",
-    "input_size": 640,
-    "score_thres": 13.412755966186523,
-    "crop_padding_px": 8
-  },
-  "fusion": {
-    "rule": "AND",
-    "yolo_conf_thres": 0.25,
-    "anoma_score_thres": 13.412755966186523
+    "mode": "stretch",
+    "input_size": 448,
+    "score_thres": 0.035877570509910583,
+    "crop_padding_px": 0
   }
 }

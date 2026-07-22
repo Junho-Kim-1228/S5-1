@@ -139,8 +139,8 @@ def find_image_files(raw_root: Path) -> List[Path]:
 
 
 def should_use_sample(meta: dict) -> bool:
-    review_status = meta.get("ReviewStatus", "")
-    return review_status != "review_needed"
+    review_status = str(meta.get("ReviewStatus", "")).strip().lower()
+    return review_status == "review_done"
 
 
 def convert_labels_to_yolo_lines(meta: dict, class_map: Dict[str, int]) -> List[str]:
@@ -183,34 +183,69 @@ def copy_or_link(src: Path, dst: Path, use_copy: bool) -> None:
         shutil.copy2(src, dst)
 
 
-def build_sample_records(raw_root: Path, class_map: Dict[str, int]) -> List[dict]:
+def build_sample_records(raw_root: Path, class_map: Dict[str, int]) -> Tuple[List[dict], dict]:
     records: List[dict] = []
     image_files = find_image_files(raw_root)
+    exclusion_stats = {
+        "source_image_count": len(image_files),
+        "missing_metadata": 0,
+        "invalid_metadata": 0,
+        "excluded_review_status": 0,
+        "excluded_invalid_is_normal": 0,
+        "excluded_defect_without_boxes": 0,
+        "excluded_normal_with_boxes": 0,
+        "excluded_invalid_labels": 0,
+    }
 
     for image_path in image_files:
         json_path = image_to_state_json_path(image_path)
 
         if not json_path.exists():
             print(f"[WARN] Missing metadata JSON for image: {image_path}")
+            exclusion_stats["missing_metadata"] += 1
             continue
 
         try:
             meta = load_json(json_path)
         except Exception as e:
             print(f"[WARN] Failed to read JSON: {json_path} | {e}")
+            exclusion_stats["invalid_metadata"] += 1
             continue
 
         if not should_use_sample(meta):
+            exclusion_stats["excluded_review_status"] += 1
+            continue
+
+        is_normal = meta.get("IsNormal")
+        if not isinstance(is_normal, bool):
+            print(f"[WARN] IsNormal must be a boolean: {json_path}")
+            exclusion_stats["excluded_invalid_is_normal"] += 1
+            continue
+
+        labels = meta.get("Labels", [])
+        if not isinstance(labels, list):
+            print(f"[WARN] Labels must be an array: {json_path}")
+            exclusion_stats["excluded_invalid_labels"] += 1
+            continue
+
+        label_count = len(labels)
+        if not is_normal and label_count == 0:
+            print(f"[INFO] YOLO excluded defect without boxes: {image_path}")
+            exclusion_stats["excluded_defect_without_boxes"] += 1
+            continue
+        if is_normal and label_count > 0:
+            print(f"[WARN] YOLO excluded normal image with boxes: {image_path}")
+            exclusion_stats["excluded_normal_with_boxes"] += 1
             continue
 
         try:
             yolo_lines = convert_labels_to_yolo_lines(meta, class_map)
         except Exception as e:
             print(f"[WARN] Failed to convert labels: {json_path} | {e}")
+            exclusion_stats["excluded_invalid_labels"] += 1
             continue
 
-        label_count = len(meta.get("Labels", []))
-        is_defect = label_count > 0
+        is_defect = not is_normal
 
         relative_source = image_path.relative_to(raw_root)
         output_stem = build_unique_output_stem(relative_source)
@@ -242,7 +277,7 @@ def build_sample_records(raw_root: Path, class_map: Dict[str, int]) -> List[dict
             }
         )
 
-    return records
+    return records, exclusion_stats
 
 
 def limit_background_records(records: List[dict], max_background: int | None, seed: int) -> List[dict]:
@@ -563,6 +598,7 @@ def write_manifest(
     oversample_factor: float,
     augment_class: str | None,
     augment_factor: float,
+    exclusion_stats: dict,
 ) -> None:
     manifest = {
         "meta": {
@@ -589,6 +625,7 @@ def write_manifest(
             "train_defect_count": sum(1 for r in train_records if r["is_defect"]),
             "val_normal_count": sum(1 for r in val_records if not r["is_defect"]),
             "val_defect_count": sum(1 for r in val_records if r["is_defect"]),
+            **exclusion_stats,
         },
         "train": [
             {
@@ -679,7 +716,7 @@ def main() -> int:
     ensure_dir(out_root)
     clear_output_dirs(out_root)
 
-    records = build_sample_records(raw_root, CLASS_MAP)
+    records, exclusion_stats = build_sample_records(raw_root, CLASS_MAP)
     source_total_count = len(records)
     source_normal_count = sum(1 for r in records if not r["is_defect"])
     source_defect_count = sum(1 for r in records if r["is_defect"])
@@ -737,6 +774,7 @@ def main() -> int:
         oversample_factor=args.oversample_factor,
         augment_class=args.augment_class,
         augment_factor=args.augment_factor,
+        exclusion_stats=exclusion_stats,
     )
 
     total_count = len(records)
@@ -751,6 +789,14 @@ def main() -> int:
     print(f"[INFO] source total        : {source_total_count}")
     print(f"[INFO] source normal       : {source_normal_count}")
     print(f"[INFO] source defect       : {source_defect_count}")
+    print(
+        "[INFO] excluded defect without boxes: "
+        f"{exclusion_stats['excluded_defect_without_boxes']}"
+    )
+    print(
+        "[INFO] excluded by review status     : "
+        f"{exclusion_stats['excluded_review_status']}"
+    )
     print(f"[INFO] max background      : {args.max_background}")
     print(f"[INFO] oversample class    : {args.oversample_class}")
     print(f"[INFO] oversample factor   : {args.oversample_factor}")

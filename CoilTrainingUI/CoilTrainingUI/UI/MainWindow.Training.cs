@@ -1,5 +1,7 @@
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Review;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -44,17 +46,6 @@ namespace CoilTrainingUI
         private TrainingPipelineMode _trainingPipelineMode = TrainingPipelineMode.AnomaThenYolo;
         private YoloTrainingMode _yoloTrainingMode = YoloTrainingMode.Fresh;
         private string _yoloFineTuneWeightsPath = "";
-
-        private void RequestSaveLabelsDebounced(string imagePath)
-        {
-            if (_isLoadingImage) return;
-            if (string.IsNullOrEmpty(imagePath)) return;
-
-            _pendingSaveImagePath = imagePath;
-
-            _labelSaveDebounceTimer.Stop();
-            _labelSaveDebounceTimer.Start();
-        }
 
         private void TrainPipelineAnomaThenYolo_Click(object sender, RoutedEventArgs e)
         {
@@ -209,7 +200,19 @@ namespace CoilTrainingUI
                 string runRoot = ResolveRunRoot(trainingInputs);
                 Directory.CreateDirectory(runRoot);
 
-                var imagePaths = trainingInputs
+                TrainingDatasetSelection selection = _trainingDatasetSelector.Select(trainingInputs);
+                var anomaTrainingInputs = trainAnoma
+                    ? selection.AnomaInputs.ToList()
+                    : new List<TrainingImageInput>();
+                var yoloTrainingInputs = trainYolo
+                    ? selection.YoloInputs.ToList()
+                    : new List<TrainingImageInput>();
+                var effectiveTrainingInputs = anomaTrainingInputs
+                    .Concat(yoloTrainingInputs)
+                    .GroupBy(input => input.ImagePath, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .ToList();
+                var imagePaths = effectiveTrainingInputs
                     .Select(input => input.ImagePath)
                     .Where(path => !string.IsNullOrWhiteSpace(path))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -223,7 +226,7 @@ namespace CoilTrainingUI
 
                 progressWindow.UpdateProgress(5, "학습 데이터 검증 중...");
                 var validation = await Task.Run(() =>
-                    _datasetValidator.Validate(trainingInputs, requireAnomaNormals: trainAnoma));
+                    _datasetValidator.Validate(selection, trainAnoma, trainYolo));
                 if (!validation.IsValid)
                 {
                     MessageBox.Show(
@@ -235,30 +238,30 @@ namespace CoilTrainingUI
                     return;
                 }
 
-                var anomaTrainingInputs = trainAnoma
-                    ? trainingInputs.ToList()
-                    : new List<TrainingImageInput>();
+                progressWindow.AppendLog(
+                    $"[DATASET] candidates={selection.TotalCandidates}, " +
+                    $"anoma={anomaTrainingInputs.Count}, yolo={yoloTrainingInputs.Count}, " +
+                    $"yolo_excluded_defect_without_boxes={selection.ExcludedDefectWithoutBoxes}, " +
+                    $"unreviewed_or_reviewing={selection.ExcludedUnreviewedOrReviewing}, " +
+                    $"user_excluded={selection.ExcludedByUser}, " +
+                    $"legacy_migration_required={selection.ExcludedLegacyMigrationRequired}");
 
                 var anomaImagePaths = anomaTrainingInputs
                     .Select(input => input.ImagePath)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                int totalImages = trainAnoma ? anomaImagePaths.Count : imagePaths.Count;
-                var normalImagePaths = anomaTrainingInputs
+                int totalImages = imagePaths.Count;
+                var normalImagePaths = effectiveTrainingInputs
                     .Select(input => input.ImagePath)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Where(path =>
-                    {
-                        var state = _stateService.Load(path);
-                        return state.HasConfirmedAnomalyDecision && state.IsNormal == true;
-                    })
+                    .Where(path => _reviewRepository.Load(path).State.Decision == ImageReviewDecision.ConfirmedNormal)
                     .ToList();
                 int normalImages = normalImagePaths.Count;
 
                 EnsureEnoughWorkspaceDiskSpace(
                     runRoot,
                     trainAnoma ? anomaImagePaths : imagePaths,
-                    normalImagePaths);
+                    trainAnoma ? normalImagePaths : Array.Empty<string>());
 
                 string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 string runDir = IOPath.Combine(runRoot, $"run_{stamp}_{GetTrainingPipelineModeToken(pipelineMode)}");
@@ -268,14 +271,13 @@ namespace CoilTrainingUI
                 string stagedRawRoot = IOPath.Combine(runDir, "staged_raw");
                 string anomaStagedRawRoot = IOPath.Combine(runDir, "anoma_staged_raw");
                 progressWindow.UpdateProgress(15, "학습 raw 입력 staging 중...");
-                int stagedImageCount = await Task.Run(() => StageTrainingInputsForPython(
-                    trainingInputs,
-                    stagedRawRoot
-                ));
+                int stagedImageCount = trainYolo
+                    ? await Task.Run(() => StageTrainingInputsForPython(yoloTrainingInputs, stagedRawRoot))
+                    : 0;
 
-                if (stagedImageCount == 0)
+                if (trainYolo && stagedImageCount == 0)
                 {
-                    MessageBox.Show("staged raw 입력 생성 결과가 비었습니다.");
+                    MessageBox.Show("YOLO staged raw 입력 생성 결과가 비었습니다.");
                     return;
                 }
 
@@ -489,7 +491,7 @@ namespace CoilTrainingUI
                     settings: settings,
                     totalImages: totalImages,
                     normalImages: normalImages,
-                    sourceBatches: (trainAnoma ? anomaTrainingInputs : trainingInputs)
+                    sourceBatches: effectiveTrainingInputs
                         .Select(input => input.BatchKey)
                         .Where(batchKey => !string.IsNullOrWhiteSpace(batchKey))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -613,6 +615,7 @@ namespace CoilTrainingUI
             Directory.CreateDirectory(stagedRawRoot);
 
             var usedRelativePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var stagedStateWriter = new ImageStateService();
             int stagedCount = 0;
 
             foreach (var input in trainingInputs)
@@ -644,8 +647,35 @@ namespace CoilTrainingUI
 
                 File.Copy(input.ImagePath, destImagePath, overwrite: true);
 
-                var state = _stateService.Load(input.ImagePath);
-                _stateService.Save(destImagePath, state);
+                ReviewStateLoadResult load = _reviewRepository.Load(input.ImagePath);
+                if (!load.HasReviewFile || load.IsLegacyProjection || load.ParseFailed ||
+                    load.State.Decision is not (ImageReviewDecision.ConfirmedNormal or ImageReviewDecision.ConfirmedDefect))
+                {
+                    throw new InvalidDataException(
+                        $"확정된 새 검수 상태만 staging할 수 있습니다: {IOPath.GetFileName(input.ImagePath)}");
+                }
+
+                ReviewState review = load.State;
+                var stagedState = new ImageStateDto
+                {
+                    IsNormal = review.Decision == ImageReviewDecision.ConfirmedNormal,
+                    HasManualAnomalyDecision = true,
+                    HasManualYoloDecision = review.BoxReview is BoxReviewDecision.Confirmed or BoxReviewDecision.NotApplicable,
+                    ReviewStatus = ReviewStatus.ReviewDone,
+                    DecisionSource = review.DecisionSource.ToString(),
+                    ReviewedAt = review.DecisionConfirmedAtUtc,
+                    Labels = review.Boxes.Select(box => new LabelDto
+                    {
+                        ClassName = box.ClassName,
+                        X = box.X,
+                        Y = box.Y,
+                        Width = box.Width,
+                        Height = box.Height,
+                        Source = box.Source,
+                        InferConf = box.PredictionConfidence
+                    }).ToList()
+                };
+                stagedStateWriter.Save(destImagePath, stagedState);
                 stagedCount++;
             }
 
@@ -689,75 +719,12 @@ namespace CoilTrainingUI
             TrainingPipelineMode pipelineMode,
             AnomaInferenceCalibration? anomaCalibration = null)
         {
-            int anomaInputSize = anomaCalibration?.InputSize ?? settings.AnomaInfer.InputSize;
-            double anomaScoreThreshold = anomaCalibration?.ScoreThreshold ?? settings.AnomaInfer.ScoreThres;
-            var requiredModels = new List<string>();
-            if (RequiresAnomaTraining(pipelineMode))
-                requiredModels.Add("anoma");
-            if (RequiresYoloTraining(pipelineMode))
-                requiredModels.Add("yolo");
-
-            var pipelineObj = new Dictionary<string, object?>
-            {
-                ["schema_version"] = 2,
-                ["pipeline"] = new
-                {
-                    mode = GetTrainingPipelineModeToken(pipelineMode),
-                    display_name = GetTrainingPipelineDisplayName(pipelineMode),
-                    stage1 = pipelineMode == TrainingPipelineMode.YoloOnly ? "yolo" : "anoma",
-                    stage2 = pipelineMode == TrainingPipelineMode.AnomaThenYolo ? "yolo" : null,
-                    skip_yolo_when_stage1_normal = pipelineMode == TrainingPipelineMode.AnomaThenYolo,
-                    required_models = requiredModels
-                },
-                ["input"] = new
-                {
-                    image_format = "bmp"
-                },
-                ["output"] = new
-                {
-                    format = "json",
-                    schema = "detections_v1"
-                }
-            };
-
-            if (RequiresYoloTraining(pipelineMode))
-            {
-                pipelineObj["yolo"] = new
-                {
-                    model = "models/yolo.onnx",
-                    imgsz = settings.YoloInfer.ImgSz,
-                    letterbox = settings.YoloInfer.Letterbox,
-                    conf_thres = settings.YoloInfer.ConfThres,
-                    iou_thres = settings.YoloInfer.IouThres,
-                    max_det = settings.YoloInfer.MaxDet,
-                    class_map = new { dent = 0, loose = 1 }
-                };
-            }
-
-            if (RequiresAnomaTraining(pipelineMode))
-            {
-                pipelineObj["anoma"] = new
-                {
-                    model = "models/anoma.onnx",
-                    mode = settings.AnomaInfer.Mode,
-                    input_size = anomaInputSize,
-                    score_thres = anomaScoreThreshold,
-                    crop_padding_px = settings.AnomaInfer.CropPaddingPx
-                };
-            }
-
-            if (pipelineMode == TrainingPipelineMode.AnomaThenYolo)
-            {
-                // 현재 추론 UI 호환을 위해 fusion 섹션은 유지한다.
-                pipelineObj["fusion"] = new
-                {
-                    rule = settings.Fusion.Rule,
-                    yolo_conf_thres = settings.Fusion.YoloThreshold,
-                    anoma_score_thres = anomaScoreThreshold
-                };
-            }
-
-            return pipelineObj;
+            return InferencePipelineConfigBuilder.Build(
+                settings,
+                GetTrainingPipelineModeToken(pipelineMode),
+                GetTrainingPipelineDisplayName(pipelineMode),
+                anomaCalibration?.InputSize,
+                anomaCalibration?.ScoreThreshold);
         }
 
         private RunManifestMetadata? TryLoadRunManifestMetadata(string runDir)
@@ -914,11 +881,20 @@ namespace CoilTrainingUI
 
             if (pipelineMode == TrainingPipelineMode.AnomaThenYolo)
             {
-                Require(root, "fusion");
-                var fusion = root.GetProperty("fusion");
-                Require(fusion, "rule");
-                Require(fusion, "yolo_conf_thres");
-                Require(fusion, "anoma_score_thres");
+                Require(pipelineSection, "stage2");
+                Require(pipelineSection, "skip_yolo_when_stage1_normal");
+                if (!string.Equals(
+                        pipelineSection.GetProperty("mode").GetString(),
+                        "anoma_then_yolo",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("pipeline.json mode must be anoma_then_yolo.");
+                }
+                if (pipelineSection.GetProperty("skip_yolo_when_stage1_normal").ValueKind != JsonValueKind.True)
+                {
+                    throw new InvalidOperationException(
+                        "pipeline.json skip_yolo_when_stage1_normal must be true.");
+                }
             }
         }
 

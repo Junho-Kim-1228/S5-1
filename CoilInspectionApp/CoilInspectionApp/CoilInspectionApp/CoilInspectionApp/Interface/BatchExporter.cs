@@ -65,6 +65,7 @@ namespace CoilInspectionApp
         public string CurrentBatchDirectory => _currentBatchDir;
         public string ExportBaseDirectory => _baseOutputDir;
         public string LastExportDirectory { get; private set; }
+        public bool HasCurrentItems => _currentManifest != null && _currentManifest.items.Count > 0;
 
         public sealed class PreparedImagePaths
         {

@@ -1,6 +1,8 @@
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.InferenceBatch;
+using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Review;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -414,29 +416,17 @@ namespace CoilTrainingUI
             string? currentSelectedImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
 
             var skipped = new List<string>();
-            var loadedImagePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             _suppressFilterRefresh = true;
             try
             {
                 _images.Clear();
                 _inferJsonByImagePath.Clear();
+                _predictionByImagePath.Clear();
 
-                var scanResult = _batchLibraryService.Scan(inboxRoot, includeHidden: false);
-                skipped.AddRange(scanResult.Skipped);
-
-                foreach (var batch in scanResult.Batches)
-                {
-                    try
-                    {
-                        string manifestPath = IOPath.Combine(batch.BatchRoot, "meta", "manifest.json");
-                        var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
-                        AppendImagesFromBatch(batch.BatchRoot, manifest, loadedImagePaths);
-                    }
-                    catch (Exception ex)
-                    {
-                        skipped.Add($"{batch.BatchId}: manifest 로드 실패 ({ex.Message})");
-                    }
-                }
+                var loadResult = _batchImportService.LoadLibrary(inboxRoot, includeHidden: false);
+                skipped.AddRange(loadResult.Skipped);
+                foreach (var record in loadResult.Images)
+                    AppendImageRecord(record);
             }
             finally
             {
@@ -456,7 +446,6 @@ namespace CoilTrainingUI
             ApplyImageFilters();
             RefreshSummaryCounts();
             UpdateDataSourceUiState();
-            ActivateReviewQueueFilter(selectFirst: false);
 
             if (_images.Count == 0)
             {
@@ -498,107 +487,56 @@ namespace CoilTrainingUI
             }
         }
 
-        private void AppendImagesFromBatch(
-            string batchFolder,
-            ManifestDto manifest,
-            HashSet<string> loadedImagePaths)
+        private void AppendImageRecord(BatchImageRecord record)
         {
-            string batchName = !string.IsNullOrWhiteSpace(manifest.BatchId)
-                ? manifest.BatchId.Trim()
-                : IOPath.GetFileName(batchFolder.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar));
+            PredictionSnapshot prediction = _predictionReader.Read(record.InferJsonPath);
+            ReviewStateLoadResult review = _reviewRepository.Load(record.ProcessedPath);
+            TrainingEligibility eligibility = _trainingDatasetSelector.Evaluate(review);
+            ImageReviewProjection projection = _reviewProjection.Create(review, prediction, eligibility);
+            var gtCounts = CountDefectClasses(review.State.Boxes.Select(box => box.ClassName));
 
-            foreach (var item in manifest.Items)
+            _imageStateManager.EnsureImage(record.ProcessedPath);
+            _inferJsonByImagePath[record.ProcessedPath] = record.InferJsonPath;
+            _predictionByImagePath[record.ProcessedPath] = prediction;
+            if (prediction.HasFile)
+                _currentBatchHasAnyInfer = true;
+
+            _images.Add(new ImageItem
             {
-                string imagePath;
-                try
-                {
-                    imagePath = InferenceBatchPathResolver.ResolveBatchProcessedImagePath(batchFolder, item);
-                }
-                catch (Exception ex)
-                {
-                    Trace.WriteLine(
-                        $"Skip image item in {batchFolder} (id={item.Id}): processed_image 확인 실패 ({ex.Message})");
-                    continue;
-                }
-
-                if (!loadedImagePaths.Add(imagePath))
-                    continue;
-
-                string? rawImagePath = InferenceBatchPathResolver.ResolveBatchRawImagePath(batchFolder, item);
-                string inferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batchFolder, item);
-                bool itemRequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batchFolder, manifest, item);
-                var aiMeta = InferMetaEvaluator.Evaluate(inferJsonPath);
-
-                if (aiMeta.HasAiInfer)
-                {
-                    var predictionTarget = new BatchPredictionApplyTarget
-                    {
-                        ImagePath = imagePath,
-                        InferJsonPath = inferJsonPath,
-                        RequiresInfer = itemRequiresInfer
-                    };
-                    _predictionReviewService.PreLabelBatch(
-                        new[] { predictionTarget },
-                        overwriteExistingLabels: false);
-                    _predictionReviewService.AutoApproveSafeNormals(
-                        new[] { predictionTarget });
-                }
-
-                var state = _stateService.Load(imagePath);
-                if (state.HasManualYoloDecision
-                    && !state.HasConfirmedAnomalyDecision
-                    && string.Equals(state.ReviewStatus, ReviewStatus.ReviewDone, StringComparison.OrdinalIgnoreCase))
-                {
-                    state.ReviewStatus = ReviewStatus.ReviewNeeded;
-                    state.ReviewReasons = new List<string> { "bbox_edited_pending_confirmation" };
-                    state.ReviewedAt = null;
-                    state.DecisionSource = "";
-                    _stateService.Save(imagePath, state);
-                }
-                bool hasGtLabel = state.HasManualYoloDecision && state.Labels.Count > 0;
-                bool isNormal = state.HasConfirmedAnomalyDecision
-                    ? state.IsNormal == true
-                    : true;
-                var gtCounts = CountDefectClasses(state.Labels.Select(l => l.ClassName));
-                string reviewStatus = DetermineReviewStatus(state, aiMeta, itemRequiresInfer);
-
-                _imageStateManager.EnsureImage(imagePath);
-                _inferJsonByImagePath[imagePath] = inferJsonPath;
-                if (aiMeta.HasInferFile)
-                    _currentBatchHasAnyInfer = true;
-
-                _images.Add(new ImageItem
-                {
-                    FileName = IOPath.GetFileName(imagePath),
-                    BatchName = batchName,
-                    BatchKey = BatchLibraryService.GetBatchKey(batchFolder),
-                    ProcessedPath = imagePath,
-                    RawPath = rawImagePath,
-                    RequiresInfer = itemRequiresInfer,
-                    HasInferFile = aiMeta.HasInferFile,
-                    InferParseFailed = aiMeta.InferParseFailed,
-                    HasStateFile = _stateService.HasState(imagePath),
-                    HasLabel = hasGtLabel,
-                    IsNormal = isNormal,
-                    HasConfirmedDecision = state.HasConfirmedAnomalyDecision,
-                    HasAiInfer = aiMeta.HasAiInfer,
-                    AiYoloDefect = aiMeta.HasYoloDefect,
-                    AiAnomaDefect = !aiMeta.IsAnomaNormal,
-                    AiConsensusHighConfidence = aiMeta.IsConsensusHighConfidence,
-                    AiYoloMaxConf = aiMeta.YoloMaxConf,
-                    AiAnomaScore = aiMeta.AnomaScore,
-                    AiDentCount = aiMeta.DentCount,
-                    AiLooseCount = aiMeta.LooseCount,
-                    AiOtherCount = aiMeta.OtherCount,
-                    GtDentCount = gtCounts.Dent,
-                    GtLooseCount = gtCounts.Loose,
-                    GtOtherCount = gtCounts.Other,
-                    ReviewStatus = reviewStatus,
-                    ReviewReasonText = BuildReviewReasonPreview(state.ReviewReasons),
-                    DecisionSource = ResolveDecisionSource(state)
-                });
-
-            }
+                FileName = IOPath.GetFileName(record.ProcessedPath),
+                BatchName = record.BatchId,
+                BatchKey = record.BatchKey,
+                ProcessedPath = record.ProcessedPath,
+                RawPath = record.RawPath,
+                RequiresInfer = record.RequiresInfer,
+                HasInferFile = prediction.HasFile,
+                InferParseFailed = prediction.ParseFailed,
+                HasStateFile = review.HasReviewFile,
+                HasAiInfer = prediction.HasAnomaDecision,
+                AiAnomaDefect = prediction.AnomaIsDefect,
+                GtDentCount = gtCounts.Dent,
+                GtLooseCount = gtCounts.Loose,
+                GtOtherCount = gtCounts.Other,
+                DecisionStatusKey = projection.DecisionStatusKey,
+                UserDecisionText = projection.DecisionText,
+                UserDecisionSourceText = projection.DecisionSourceText,
+                BoxReviewStatusText = projection.BoxStatusText,
+                AiAnomaSummaryText = projection.AiAnomaText,
+                AiYoloSummaryText = projection.AiYoloText,
+                TrainingEligibilityText = projection.TrainingEligibilityText,
+                TrainingExclusionReasonText = projection.ExclusionReasonText,
+                NeedsLegacyMigration = projection.NeedsMigration,
+                IsReviewUnreviewed = projection.IsUnreviewed,
+                IsReviewing = projection.IsReviewing,
+                IsReviewConfirmedNormal = projection.IsConfirmedNormal,
+                IsReviewConfirmedDefect = projection.IsConfirmedDefect,
+                IsReviewExcluded = projection.IsExcluded,
+                AnomaTrainingEligible = eligibility.AnomaTraining,
+                AnomaEvaluationEligible = eligibility.AnomaEvaluation,
+                YoloPositiveEligible = eligibility.YoloPositive,
+                YoloBackgroundEligible = eligibility.YoloBackground,
+                YoloExcludedNoBoxDefect = eligibility.YoloExcludedDefectWithoutBoxes
+            });
         }
 
         private static bool PathsEqual(string a, string b)
@@ -615,56 +553,6 @@ namespace CoilTrainingUI
             {
                 return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
             }
-        }
-
-        private static string DetermineReviewStatus(ImageStateDto state, InferMetaSummary aiMeta, bool requiresInfer)
-        {
-            if (state.HasConfirmedAnomalyDecision)
-                return ReviewStatus.ReviewDone;
-
-            string normalized = NormalizeReviewStatus(state.ReviewStatus);
-            if (state.HasManualYoloDecision
-                && string.Equals(normalized, ReviewStatus.ReviewDone, StringComparison.OrdinalIgnoreCase))
-            {
-                return ReviewStatus.ReviewNeeded;
-            }
-            if (!string.Equals(normalized, ReviewStatus.None, StringComparison.OrdinalIgnoreCase))
-                return normalized;
-
-            if (aiMeta.InferParseFailed)
-                return ReviewStatus.ReviewNeeded;
-
-            if (requiresInfer && !aiMeta.HasInferFile)
-                return ReviewStatus.ReviewNeeded;
-
-            if (!aiMeta.HasAiInfer)
-                return ReviewStatus.None;
-
-            return aiMeta.IsConsensusHighConfidence
-                ? ReviewStatus.AutoCandidate
-                : ReviewStatus.ReviewNeeded;
-        }
-
-        private static string NormalizeReviewStatus(string? reviewStatus)
-        {
-            var normalized = (reviewStatus ?? "").Trim().ToLowerInvariant();
-            return normalized switch
-            {
-                "review_needed" => ReviewStatus.ReviewNeeded,
-                "auto_candidate" => ReviewStatus.AutoCandidate,
-                "review_done" => ReviewStatus.ReviewDone,
-                _ => ReviewStatus.None
-            };
-        }
-
-        private static string BuildReviewReasonPreview(IReadOnlyList<string>? reasons)
-        {
-            if (reasons == null || reasons.Count == 0)
-                return "";
-
-            return string.Join(", ", reasons
-                .Where(reason => !string.IsNullOrWhiteSpace(reason))
-                .Take(3));
         }
 
     }

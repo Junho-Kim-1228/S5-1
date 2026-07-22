@@ -1,484 +1,303 @@
 using CoilTrainingUI.Models;
-using CoilTrainingUI.Models.InferenceBatch;
+using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Review;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows;
-using System.Windows.Controls;
 using IOPath = System.IO.Path;
 
 namespace CoilTrainingUI
 {
     public partial class MainWindow : Window
     {
-        private void PreLabelBatchFromPredictions_Click(object sender, RoutedEventArgs e)
+        private ReviewStateLoadResult LoadReviewForExplicitEdit(string imagePath)
         {
-            if (_images.Count == 0)
+            ReviewStateLoadResult load = _reviewRepository.Load(imagePath);
+            if (load.IsLegacyProjection)
             {
-                MessageBox.Show("처리할 이미지가 없습니다.", "Pre-label Batch", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
+                ReviewMigrationReport report = _reviewMigrationService.Migrate(new[] { imagePath });
+                if (report.Converted != 1 && report.AlreadyMigrated != 1)
+                    throw new InvalidOperationException("기존 state.json을 안전하게 마이그레이션하지 못했습니다.");
+                load = _reviewRepository.Load(imagePath);
             }
 
-            var confirm = MessageBox.Show(
-                "현재 로드된 이미지 전체에 대해 infer 예측을 기반으로 사전 라벨링을 수행할까요?\n기존 수동 GT는 기본적으로 유지됩니다.",
-                "Pre-label Batch",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question
-            );
-
-            if (confirm != MessageBoxResult.Yes)
-                return;
-
-            var preferredImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
-            var targets = BuildBatchPredictionTargets();
-            var summary = _predictionReviewService.PreLabelBatch(targets, overwriteExistingLabels: false);
-
-            RefreshAllImagesFromTrainingInbox(preferredImagePath, _currentBatchRoot);
-
-            MessageBox.Show(
-                BuildBatchReviewSummaryMessage("Batch Pre-label 완료", summary),
-                "Pre-label Batch",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information
-            );
+            if (load.ParseFailed)
+                throw new InvalidDataException("검수 상태 파일을 읽을 수 없습니다: " + load.Message);
+            return load;
         }
 
-        private void AutoApproveSafeNormals_Click(object sender, RoutedEventArgs e)
+        private void AcceptAiDecision_Click(object sender, RoutedEventArgs e)
         {
-            if (_images.Count == 0)
+            if (!TryGetSelectedReviewContext(out var item, out var prediction))
+                return;
+            if (!prediction.HasAnomaDecision || prediction.ParseFailed)
             {
-                MessageBox.Show("처리할 이미지가 없습니다.", "Auto-Approve Safe Normals", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("수락할 Anoma 판정이 없습니다.", "AI 판정 수락");
+                return;
+            }
+
+            try
+            {
+                ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                ReviewState next = _reviewWorkflow.AcceptAiDecision(current, prediction);
+                _reviewRepository.Save(item.ProcessedPath, next);
+                ReloadAfterExplicitReviewChange(item, reloadCanvas: true);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "AI 판정 수락", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void ApplyPredictionsToLabelsCurrentImage_Click(object sender, RoutedEventArgs e)
+            => AcceptPredictionBoxesForCurrentImage();
+
+        private void AcceptPredictionBoxes_Click(object sender, RoutedEventArgs e)
+            => AcceptPredictionBoxesForCurrentImage();
+
+        private void AcceptPredictionBoxesForCurrentImage()
+        {
+            if (!TryGetSelectedReviewContext(out var item, out var prediction))
+                return;
+            if (!prediction.HasFile || prediction.ParseFailed)
+            {
+                MessageBox.Show("수락할 YOLO 예측 결과가 없습니다.", "AI 박스 수락");
                 return;
             }
 
             var confirm = MessageBox.Show(
-                "YOLO/Anoma 판정이 일치하고 신뢰도 기준을 만족한 정상 이미지만 자동으로 정상 확정할까요?\n" +
-                $"- YOLO Defect conf >= {PredictionConsensusPolicy.YoloDefectMinConf:0.00}\n" +
-                $"- Anoma anomaly score >= {PredictionConsensusPolicy.AnomaAnomalyMinScore:0.00}\n" +
-                $"- Anoma normal score <= {PredictionConsensusPolicy.AnomaNormalMaxScore:0.00}",
-                "Auto-Approve Safe Normals",
+                $"AI 예측 박스 {prediction.YoloDetectionCount}개로 현재 확정 박스를 교체할까요?\n" +
+                "이 작업은 사용자 동작으로 기록되며, 이후 박스를 수정할 수 있습니다.",
+                "AI 박스 전체 수락",
                 MessageBoxButton.YesNo,
-                MessageBoxImage.Question
-            );
-
+                MessageBoxImage.Question);
             if (confirm != MessageBoxResult.Yes)
                 return;
 
-            var preferredImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
-            var targets = BuildBatchPredictionTargets();
-            var summary = _predictionReviewService.AutoApproveSafeNormals(targets);
+            try
+            {
+                ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                ReviewState next = _reviewWorkflow.AcceptPredictionBoxes(current, prediction);
+                _reviewRepository.Save(item.ProcessedPath, next);
+                ReloadAfterExplicitReviewChange(item, reloadCanvas: true);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "AI 박스 수락", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
 
-            RefreshAllImagesFromTrainingInbox(preferredImagePath, _currentBatchRoot);
+        private void ConfirmBoxes_Click(object sender, RoutedEventArgs e)
+        {
+            if (ImageListBox.SelectedItem is not ImageItem item)
+                return;
 
-            MessageBox.Show(
-                BuildBatchReviewSummaryMessage("Auto-Approve 완료", summary),
-                "Auto-Approve Safe Normals",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information
-            );
+            try
+            {
+                _bboxManager.ForceUpdateAll(ImageCanvas.Width, ImageCanvas.Height);
+                var boxes = _imageStateManager.GetLabels(item.ProcessedPath)
+                    .Select(box => new ReviewBox
+                    {
+                        ClassName = box.ClassName,
+                        X = box.X,
+                        Y = box.Y,
+                        Width = box.Width,
+                        Height = box.Height,
+                        Source = "manual"
+                    })
+                    .ToList();
+                ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                ReviewState edited = _reviewWorkflow.ReplaceBoxesAfterEdit(current, boxes);
+                ReviewState confirmed = _reviewWorkflow.ConfirmBoxes(edited);
+                _reviewRepository.Save(item.ProcessedPath, confirmed);
+                ShowPredictionCheckBox.IsChecked = false;
+                ReloadAfterExplicitReviewChange(item, reloadCanvas: true);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "박스 검수 완료", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void ExcludeFromTraining_Click(object sender, RoutedEventArgs e)
+        {
+            if (ImageListBox.SelectedItem is not ImageItem item)
+                return;
+            if (MessageBox.Show(
+                    $"{item.FileName}을 모든 학습 데이터에서 제외할까요?",
+                    "학습 제외",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                _reviewRepository.Save(item.ProcessedPath, _reviewWorkflow.Exclude(current, "사용자 학습 제외"));
+                ReloadAfterExplicitReviewChange(item, reloadCanvas: false);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "학습 제외", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void YoloBackgroundCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingImage || ImageListBox.SelectedItem is not ImageItem item)
+                return;
+
+            try
+            {
+                ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                ReviewState next = _reviewWorkflow.SetYoloBackground(
+                    current,
+                    YoloBackgroundCheckBox.IsChecked == true);
+                _reviewRepository.Save(item.ProcessedPath, next);
+                ReloadAfterExplicitReviewChange(item, reloadCanvas: false);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "YOLO 정상 배경", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SyncAnomalyRadioFromSelectedItem();
+            }
+        }
+
+        private void ApplyPredictionsToLabelsFilteredImages_Click(object sender, RoutedEventArgs e)
+        {
+            var targets = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
+                .OfType<ImageItem>()
+                .Where(item => _predictionByImagePath.TryGetValue(item.ProcessedPath, out var prediction) &&
+                               prediction.HasFile && !prediction.ParseFailed &&
+                               (prediction.AnomaIsDefect || item.IsReviewConfirmedDefect))
+                .ToList();
+            if (targets.Count == 0)
+            {
+                MessageBox.Show("필터 결과에 사용 가능한 YOLO 예측이 없습니다.");
+                return;
+            }
+
+            if (MessageBox.Show(
+                    $"필터된 이미지 {targets.Count}개의 AI 예측 박스를 명시적으로 수락할까요?",
+                    "필터된 AI 박스 수락",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            int saved = 0;
+            var failures = new List<string>();
+            foreach (var item in targets)
+            {
+                try
+                {
+                    var prediction = _predictionByImagePath[item.ProcessedPath];
+                    ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+                    _reviewRepository.Save(item.ProcessedPath, _reviewWorkflow.AcceptPredictionBoxes(current, prediction));
+                    saved++;
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{item.FileName}: {ex.Message}");
+                }
+            }
+
+            string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
+            RefreshAllImagesFromTrainingInbox(selectedPath, _currentBatchRoot);
+            MessageBox.Show($"저장 {saved}개 / 실패 {failures.Count}개" +
+                            (failures.Count > 0 ? "\n" + string.Join("\n", failures.Take(10)) : ""));
+        }
+
+        private void PreLabelBatchFromPredictions_Click(object sender, RoutedEventArgs e)
+            => ApplyPredictionsToLabelsFilteredImages_Click(sender, e);
+
+        private void MigrateLegacyStates_Click(object sender, RoutedEventArgs e)
+        {
+            var imagePaths = _images.Select(item => item.ProcessedPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            int legacyCount = imagePaths.Count(path =>
+                !_reviewRepository.HasReviewFile(path) && File.Exists(ImageStateService.GetStatePath(path)));
+            if (legacyCount == 0)
+            {
+                MessageBox.Show("마이그레이션할 기존 state.json이 없습니다.", "Legacy Migration");
+                return;
+            }
+
+            if (MessageBox.Show(
+                    $"변환 예정: {legacyCount}개\n\n" +
+                    "기존 state.json은 수정하지 않고 *.state.v1.backup.json으로 백업한 뒤 " +
+                    "새 *.review.json을 생성합니다.",
+                    "Legacy Review Migration",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            ReviewMigrationReport report = _reviewMigrationService.Migrate(imagePaths);
+            string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
+            RefreshAllImagesFromTrainingInbox(selectedPath, _currentBatchRoot);
+
+            var message = new StringBuilder()
+                .AppendLine($"요청: {report.Requested}")
+                .AppendLine($"기존 state 발견: {report.LegacyFound}")
+                .AppendLine($"변환 성공: {report.Converted}")
+                .AppendLine($"이미 변환됨: {report.AlreadyMigrated}")
+                .AppendLine($"모호하여 검수 중으로 변환: {report.Ambiguous}")
+                .AppendLine($"실패: {report.Failed}");
+            foreach (string failure in report.Failures.Take(10))
+                message.AppendLine("- " + failure);
+            MessageBox.Show(message.ToString().TrimEnd(), "Legacy Review Migration");
         }
 
         private void ShowReviewQueue_Click(object sender, RoutedEventArgs e)
         {
-            ActivateReviewQueueFilter(selectFirst: true);
-        }
-
-        private void ActivateReviewQueueFilter(bool selectFirst)
-        {
             _suppressFilterRefresh = true;
             try
             {
-                StatusConfirmedNormalCheckBox.IsChecked = false;
-                StatusConfirmedDefectCheckBox.IsChecked = false;
-                StatusAiNormalCheckBox.IsChecked = false;
-                StatusAiDefectCheckBox.IsChecked = false;
-
-                DefectTypeNormalCheckBox.IsChecked = false;
-                DefectTypeDentCheckBox.IsChecked = false;
-                DefectTypeLooseCheckBox.IsChecked = false;
-                DefectTypeNoLabelCheckBox.IsChecked = false;
-
-                QualityHealthyCheckBox.IsChecked = false;
-                QualityMissingInferCheckBox.IsChecked = false;
-                QualityInferParseFailedCheckBox.IsChecked = false;
-                QualityMissingStateCheckBox.IsChecked = false;
-                QualityMissingRawCheckBox.IsChecked = false;
-
-                ReviewNeedsCheckBox.IsChecked = true;
-                ReviewAutoCandidateCheckBox.IsChecked = false;
-                ReviewDoneCheckBox.IsChecked = false;
+                ReviewUnreviewedCheckBox.IsChecked = true;
+                ReviewReviewingCheckBox.IsChecked = true;
+                ReviewConfirmedNormalCheckBox.IsChecked = false;
+                ReviewConfirmedDefectCheckBox.IsChecked = false;
+                ReviewExcludedCheckBox.IsChecked = false;
             }
             finally
             {
                 _suppressFilterRefresh = false;
             }
-
-            ApplyImageFilters();
-
-            if (!selectFirst)
-                return;
-
-            var firstVisible = _imageCollectionView?.Cast<object>()
-                .OfType<ImageItem>()
-                .FirstOrDefault();
-            if (firstVisible != null)
-            {
-                ImageListBox.SelectedItem = firstVisible;
-                ImageListBox.ScrollIntoView(firstVisible);
-            }
-        }
-
-        private void ApplyPredictionsToLabelsCurrentImage_Click(object sender, RoutedEventArgs e)
-        {
-            if (ImageListBox.SelectedItem is not ImageItem item || string.IsNullOrWhiteSpace(item.ProcessedPath))
-            {
-                MessageBox.Show(
-                    "현재 선택된 이미지가 없습니다.",
-                    "Apply Predictions to Labels",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information
-                );
-                return;
-            }
-
-            string imagePath = item.ProcessedPath;
-
-            if (!item.HasAiInfer)
-            {
-                MessageBox.Show(
-                    "현재 이미지에는 사용할 예측(infer.json)이 없습니다.",
-                    "Apply Predictions to Labels",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information
-                );
-                return;
-            }
-
-            if (!string.Equals(_currentImagePath, imagePath, StringComparison.OrdinalIgnoreCase))
-                LoadImage(imagePath);
-
-            if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath))
-            {
-                MessageBox.Show(
-                    "현재 이미지에 연결된 infer.json이 없습니다.",
-                    "Apply Predictions to Labels",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information
-                );
-                return;
-            }
-
-            InferResultDto infer;
-            try
-            {
-                infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"infer.json 로드 실패:\n{inferJsonPath}\n{ex.Message}",
-                    "Apply Predictions to Labels",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-                return;
-            }
-
-            var predictionBoxes = ConvertDetectionsToGtBoxes(infer.Yolo?.Detections);
-            if (predictionBoxes.Count == 0)
-            {
-                string anomaDecision = infer.Anoma?.Decision ?? "(none)";
-                MessageBox.Show(
-                    $"YOLO 예측 박스가 0개라서 GT로 복사할 수 없습니다.\nAnoma decision: {anomaDecision}",
-                    "Apply Predictions to Labels",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information
-                );
-                return;
-            }
-
-            int existingGtCount = _imageStateManager.GetLabels(imagePath).Count;
-            if (existingGtCount > 0)
-            {
-                var overwrite = MessageBox.Show(
-                    $"현재 이미지에 GT 라벨이 {existingGtCount}개 있습니다.\n기존 GT를 삭제하고 예측을 적용할까요?",
-                    "Apply Predictions to Labels",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question
-                );
-
-                if (overwrite != MessageBoxResult.Yes)
-                    return;
-
-                _imageStateManager.ClearLabels(imagePath);
-                _bboxManager.ClearAll();
-                RenderPredictionOverlays(imagePath);
-            }
-
-            var mutableLabels = _imageStateManager.GetMutableLabels(imagePath);
-            foreach (var bbox in predictionBoxes)
-            {
-                mutableLabels.Add(bbox);
-                _bboxManager.AddFromModel(bbox, ImageCanvas.Width, ImageCanvas.Height);
-            }
-
-            ApplyAnomalyDecisionToItem(item, isNormal: false, refreshSummary: false);
-            UpdatePredictionOverlayVisibility(imagePath);
-
-            SyncGtSummaryForImage(imagePath);
-            RefreshSummaryCounts();
-
-            SaveLabelsToStateJson(imagePath, markManualYoloDecision: true);
-            RequestSaveLabelsDebounced(imagePath);
-
-            MessageBox.Show(
-                $"예측 박스 {predictionBoxes.Count}개를 GT 라벨로 적용했습니다.",
-                "Apply Predictions to Labels",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information
-            );
-        }
-
-        private void ApplyPredictionsToLabelsFilteredImages_Click(object sender, RoutedEventArgs e)
-        {
-            var visibleItems = (_imageCollectionView?.Cast<object>() ?? _images.Cast<object>())
-                .OfType<ImageItem>()
-                .Where(item => item != null && !string.IsNullOrWhiteSpace(item.ProcessedPath))
-                .ToList();
-
-            if (visibleItems.Count == 0)
-            {
-                MessageBox.Show(
-                    "현재 필터 결과에 해당하는 이미지가 없습니다.",
-                    "Batch Apply Predictions to Labels",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-                return;
-            }
-
-            var confirm = MessageBox.Show(
-                $"현재 필터 결과 {visibleItems.Count}개 이미지에 대해 AI YOLO 예측 박스를 GT Boxes로 일괄 적용할까요?\n" +
-                "기존 GT Boxes가 있으면 예측 박스로 덮어쓰고, 박스가 적용된 이미지는 Abnormal로 확정됩니다.",
-                "Batch Apply Predictions to Labels",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (confirm != MessageBoxResult.Yes)
-                return;
-
-            string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
-            var appliedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int appliedImages = 0;
-            int appliedBoxes = 0;
-            int overwrittenImages = 0;
-            int skippedMissingInfer = 0;
-            int skippedNoBoxes = 0;
-            int parseFailed = 0;
-
-            foreach (ImageItem item in visibleItems)
-            {
-                string imagePath = item.ProcessedPath;
-                if (!_inferJsonByImagePath.TryGetValue(imagePath, out var inferJsonPath)
-                    || string.IsNullOrWhiteSpace(inferJsonPath)
-                    || !File.Exists(inferJsonPath))
-                {
-                    skippedMissingInfer++;
-                    continue;
-                }
-
-                InferResultDto infer;
-                try
-                {
-                    infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
-                }
-                catch
-                {
-                    parseFailed++;
-                    continue;
-                }
-
-                var predictionBoxes = ConvertDetectionsToGtBoxes(infer.Yolo?.Detections);
-                if (predictionBoxes.Count == 0)
-                {
-                    skippedNoBoxes++;
-                    continue;
-                }
-
-                ImageStateDto state = _stateService.Load(imagePath);
-                state.Labels ??= new List<LabelDto>();
-                if (state.Labels.Count > 0)
-                    overwrittenImages++;
-
-                state.Labels.Clear();
-                foreach (DetectionDto detection in infer.Yolo?.Detections ?? new List<DetectionDto>())
-                {
-                    if (!TryConvertDetectionToBoundingBox(detection, out var bbox))
-                        continue;
-
-                    state.Labels.Add(new LabelDto
-                    {
-                        ClassName = bbox.ClassName,
-                        X = bbox.X,
-                        Y = bbox.Y,
-                        Width = bbox.Width,
-                        Height = bbox.Height,
-                        Source = "auto_infer",
-                        InferConf = detection.Conf
-                    });
-                }
-
-                if (state.Labels.Count == 0)
-                {
-                    skippedNoBoxes++;
-                    continue;
-                }
-
-                state.IsNormal = false;
-                state.HasManualAnomalyDecision = true;
-                state.HasManualYoloDecision = true;
-                state.ReviewStatus = ReviewStatus.ReviewDone;
-                state.ReviewReasons.Clear();
-                state.ReviewedAt = DateTime.UtcNow;
-                state.DecisionSource = "manual";
-                _stateService.Save(imagePath, state);
-
-                _imageStateManager.SetNormal(imagePath, isNormal: false);
-                _imageStateManager.ClearLabels(imagePath);
-                var mutableLabels = _imageStateManager.GetMutableLabels(imagePath);
-                foreach (BoundingBox bbox in predictionBoxes)
-                    mutableLabels.Add(bbox);
-
-                item.IsNormal = false;
-                item.HasStateFile = true;
-                UpdateGtSummaryForImageItem(item, imagePath);
-
-                appliedImages++;
-                appliedBoxes += state.Labels.Count;
-                appliedPaths.Add(imagePath);
-            }
-
-            if (!string.IsNullOrWhiteSpace(selectedPath) && appliedPaths.Contains(selectedPath))
-                LoadImage(selectedPath);
-
             ApplyImageFilters();
             EnsureSelectedImageVisible();
-            RefreshSummaryCounts();
-
-            MessageBox.Show(
-                "필터된 이미지 예측 박스 일괄 적용 완료\n" +
-                $"- 적용 이미지: {appliedImages}\n" +
-                $"- 적용 박스: {appliedBoxes}\n" +
-                $"- 기존 GT 덮어쓴 이미지: {overwrittenImages}\n" +
-                $"- infer 없음 스킵: {skippedMissingInfer}\n" +
-                $"- 예측 박스 없음 스킵: {skippedNoBoxes}\n" +
-                $"- infer 파싱 실패: {parseFailed}",
-                "Batch Apply Predictions to Labels",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
         }
 
-        private IReadOnlyList<BatchPredictionApplyTarget> BuildBatchPredictionTargets()
+        private bool TryGetSelectedReviewContext(out ImageItem item, out PredictionSnapshot prediction)
         {
-            return _images
-                .Select(item =>
-                {
-                    _inferJsonByImagePath.TryGetValue(item.ProcessedPath, out var inferJsonPath);
-                    return new BatchPredictionApplyTarget
-                    {
-                        ImagePath = item.ProcessedPath,
-                        InferJsonPath = inferJsonPath ?? "",
-                        RequiresInfer = item.RequiresInfer
-                    };
-                })
-                .ToList();
-        }
-
-        private static string BuildBatchReviewSummaryMessage(string title, BatchPredictionApplySummary summary)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine(title);
-            sb.AppendLine($"- 대상 이미지: {summary.TotalTargets}");
-            sb.AppendLine($"- 사전 라벨링 적용: {summary.PreLabeled}");
-            sb.AppendLine($"- 자동 정상 확정: {summary.AutoApprovedNormals}");
-            sb.AppendLine($"- 검수 필요 표시: {summary.MarkedReviewNeeded}");
-            sb.AppendLine($"- 자동 확정 후보 표시: {summary.MarkedAutoCandidate}");
-            sb.AppendLine($"- 수동 확정이라 스킵: {summary.SkippedManual}");
-            sb.AppendLine($"- infer 없음 스킵: {summary.SkippedMissingInfer}");
-            sb.AppendLine($"- infer 파싱 실패: {summary.ParseFailed}");
-            return sb.ToString().TrimEnd();
-        }
-
-        private List<BoundingBox> ConvertDetectionsToGtBoxes(IReadOnlyList<DetectionDto>? detections)
-        {
-            var boxes = new List<BoundingBox>();
-            if (detections == null)
-                return boxes;
-
-            foreach (var detection in detections)
-            {
-                if (TryConvertDetectionToBoundingBox(detection, out var bbox))
-                    boxes.Add(bbox);
-            }
-
-            return boxes;
-        }
-
-        private bool TryConvertDetectionToBoundingBox(DetectionDto detection, out BoundingBox bbox)
-        {
-            bbox = new BoundingBox();
-
-            if (detection.BboxXywhNorm == null || detection.BboxXywhNorm.Length != 4)
+            item = null!;
+            prediction = new PredictionSnapshot();
+            if (ImageListBox.SelectedItem is not ImageItem selected)
                 return false;
-
-            double cx = detection.BboxXywhNorm[0];
-            double cy = detection.BboxXywhNorm[1];
-            double bw = detection.BboxXywhNorm[2];
-            double bh = detection.BboxXywhNorm[3];
-
-            if (!IsFinite(cx) || !IsFinite(cy) || !IsFinite(bw) || !IsFinite(bh))
-                return false;
-
-            if (bw <= 0 || bh <= 0)
-                return false;
-
-            double left = Math.Clamp(cx - (bw / 2.0), 0.0, 1.0);
-            double right = Math.Clamp(cx + (bw / 2.0), 0.0, 1.0);
-            double top = Math.Clamp(cy - (bh / 2.0), 0.0, 1.0);
-            double bottom = Math.Clamp(cy + (bh / 2.0), 0.0, 1.0);
-
-            double width = right - left;
-            double height = bottom - top;
-            if (width <= 0 || height <= 0)
-                return false;
-
-            string className = NormalizeClassName(detection.ClassName);
-
-            bbox = new BoundingBox
-            {
-                ClassName = className,
-                X = (left + right) / 2.0,
-                Y = (top + bottom) / 2.0,
-                Width = width,
-                Height = height
-            };
-
+            item = selected;
+            _predictionByImagePath.TryGetValue(item.ProcessedPath, out prediction!);
+            prediction ??= new PredictionSnapshot();
             return true;
         }
 
-        private string NormalizeClassName(string? className)
+        private void ReloadAfterExplicitReviewChange(ImageItem item, bool reloadCanvas)
         {
-            if (string.IsNullOrWhiteSpace(className))
-                return "dent";
-
-            string normalized = className.Trim().ToLowerInvariant();
-            return _classToId.ContainsKey(normalized) ? normalized : "dent";
+            UpdateGtSummaryForImageItem(item, item.ProcessedPath);
+            if (reloadCanvas && string.Equals(_currentImagePath, item.ProcessedPath, StringComparison.OrdinalIgnoreCase))
+                LoadImage(item.ProcessedPath);
+            else
+                SyncAnomalyRadioFromSelectedItem();
+            ApplyImageFilters();
         }
-
-        private static bool IsFinite(double value)
-            => !double.IsNaN(value) && !double.IsInfinity(value);
 
         private string? TrySelectFolder(string description, string? initialPath = null)
         {
@@ -493,26 +312,14 @@ namespace CoilTrainingUI
             try
             {
                 dialog = Activator.CreateInstance(folderDialogType);
-                if (dialog == null)
-                    return null;
-
+                if (dialog == null) return null;
                 folderDialogType.GetProperty("Description")?.SetValue(dialog, description);
-
                 if (!string.IsNullOrWhiteSpace(initialPath) && Directory.Exists(initialPath))
                     folderDialogType.GetProperty("SelectedPath")?.SetValue(dialog, initialPath);
-
-                var showMethod = folderDialogType.GetMethod("ShowDialog", Type.EmptyTypes);
-                if (showMethod == null)
-                {
-                    MessageBox.Show("폴더 선택 대화상자 ShowDialog를 찾을 수 없습니다.");
-                    return null;
-                }
-
-                var showResult = showMethod.Invoke(dialog, null);
-                if (!Equals(showResult?.ToString(), "OK"))
-                    return null;
-
-                return folderDialogType.GetProperty("SelectedPath")?.GetValue(dialog) as string;
+                var showResult = folderDialogType.GetMethod("ShowDialog", Type.EmptyTypes)?.Invoke(dialog, null);
+                return Equals(showResult?.ToString(), "OK")
+                    ? folderDialogType.GetProperty("SelectedPath")?.GetValue(dialog) as string
+                    : null;
             }
             catch (Exception ex)
             {
@@ -521,30 +328,21 @@ namespace CoilTrainingUI
             }
             finally
             {
-                if (dialog is IDisposable disposable)
-                    disposable.Dispose();
+                if (dialog is IDisposable disposable) disposable.Dispose();
             }
         }
 
-        private void UpdateDataSourceUiState()
-        {
-            UpdatePredictionFeatureUiState();
-        }
+        private void UpdateDataSourceUiState() => UpdatePredictionFeatureUiState();
 
         private void TryRestoreLastLoadedBatch()
-        {
-            RefreshAllImagesFromTrainingInbox(preferredImagePath: null, preferredBatchRoot: null);
-        }
+            => RefreshAllImagesFromTrainingInbox(preferredImagePath: null, preferredBatchRoot: null);
 
         private static bool IsPathUnderRoot(string path, string rootPath)
         {
-            var fullPath = IOPath.GetFullPath(path)
-                .TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)
-                + IOPath.DirectorySeparatorChar;
-            var fullRoot = IOPath.GetFullPath(rootPath)
-                .TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar)
-                + IOPath.DirectorySeparatorChar;
-
+            string fullPath = IOPath.GetFullPath(path)
+                .TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar) + IOPath.DirectorySeparatorChar;
+            string fullRoot = IOPath.GetFullPath(rootPath)
+                .TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar) + IOPath.DirectorySeparatorChar;
             return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
         }
     }

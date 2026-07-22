@@ -13,11 +13,16 @@ namespace CoilTrainingUI.Converters
             if (value is not ImageItem item)
                 return Brushes.White;
 
-            // 확정 불량(수동/GT)은 빨간색 계열
-            if (item.HasLabel || !item.IsNormal)
+            if (item.IsReviewExcluded)
+                return new SolidColorBrush(Color.FromRgb(225, 225, 225));
+            if (item.IsReviewConfirmedDefect)
                 return new SolidColorBrush(Color.FromRgb(255, 220, 220));
+            if (item.IsReviewConfirmedNormal)
+                return new SolidColorBrush(Color.FromRgb(220, 255, 225));
+            if (item.IsReviewing)
+                return new SolidColorBrush(Color.FromRgb(220, 240, 255));
 
-            return Brushes.White;
+            return new SolidColorBrush(Color.FromRgb(255, 247, 220));
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)

@@ -23,12 +23,15 @@ namespace CoilInspectionApp
             this.labelBatch = new System.Windows.Forms.Label();
             this.labelValuePackage = new System.Windows.Forms.Label();
             this.labelPackage = new System.Windows.Forms.Label();
+            this.buttonSelectPackage = new System.Windows.Forms.Button();
             this.buttonOpenPackage = new System.Windows.Forms.Button();
             this.labelValueInput = new System.Windows.Forms.Label();
+            this.buttonSelectInput = new System.Windows.Forms.Button();
             this.buttonOpenInput = new System.Windows.Forms.Button();
             this.labelInput = new System.Windows.Forms.Label();
             this.labelValuePipeline = new System.Windows.Forms.Label();
             this.labelPipeline = new System.Windows.Forms.Label();
+            this.buttonSelectBatch = new System.Windows.Forms.Button();
             this.buttonOpenBatch = new System.Windows.Forms.Button();
             this.listViewResults = new System.Windows.Forms.ListView();
             this.columnHeaderNo = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
@@ -115,12 +118,15 @@ namespace CoilInspectionApp
             this.groupBoxBatch.Controls.Add(this.labelBatch);
             this.groupBoxBatch.Controls.Add(this.labelValuePackage);
             this.groupBoxBatch.Controls.Add(this.labelPackage);
+            this.groupBoxBatch.Controls.Add(this.buttonSelectPackage);
             this.groupBoxBatch.Controls.Add(this.buttonOpenPackage);
             this.groupBoxBatch.Controls.Add(this.labelValueInput);
+            this.groupBoxBatch.Controls.Add(this.buttonSelectInput);
             this.groupBoxBatch.Controls.Add(this.buttonOpenInput);
             this.groupBoxBatch.Controls.Add(this.labelInput);
             this.groupBoxBatch.Controls.Add(this.labelValuePipeline);
             this.groupBoxBatch.Controls.Add(this.labelPipeline);
+            this.groupBoxBatch.Controls.Add(this.buttonSelectBatch);
             this.groupBoxBatch.Controls.Add(this.buttonOpenBatch);
             this.groupBoxBatch.Location = new System.Drawing.Point(12, 12);
             this.groupBoxBatch.Name = "groupBoxBatch";
@@ -134,7 +140,7 @@ namespace CoilInspectionApp
             this.labelValueBatch.AutoEllipsis = true;
             this.labelValueBatch.Location = new System.Drawing.Point(101, 110);
             this.labelValueBatch.Name = "labelValueBatch";
-            this.labelValueBatch.Size = new System.Drawing.Size(397, 48);
+            this.labelValueBatch.Size = new System.Drawing.Size(312, 48);
             this.labelValueBatch.TabIndex = 7;
             this.labelValueBatch.Text = "-";
             // 
@@ -152,7 +158,7 @@ namespace CoilInspectionApp
             this.labelValuePackage.AutoEllipsis = true;
             this.labelValuePackage.Location = new System.Drawing.Point(101, 70);
             this.labelValuePackage.Name = "labelValuePackage";
-            this.labelValuePackage.Size = new System.Drawing.Size(397, 36);
+            this.labelValuePackage.Size = new System.Drawing.Size(312, 36);
             this.labelValuePackage.TabIndex = 5;
             this.labelValuePackage.Text = "-";
             // 
@@ -165,13 +171,23 @@ namespace CoilInspectionApp
             this.labelPackage.TabIndex = 4;
             this.labelPackage.Text = "패키지 경로 :";
             //
+            // buttonSelectPackage
+            //
+            this.buttonSelectPackage.Location = new System.Drawing.Point(419, 68);
+            this.buttonSelectPackage.Name = "buttonSelectPackage";
+            this.buttonSelectPackage.Size = new System.Drawing.Size(52, 22);
+            this.buttonSelectPackage.TabIndex = 10;
+            this.buttonSelectPackage.Text = "변경";
+            this.buttonSelectPackage.UseVisualStyleBackColor = true;
+            this.buttonSelectPackage.Click += new System.EventHandler(this.buttonSelectPackage_Click);
+            //
             // buttonOpenPackage
             //
-            this.buttonOpenPackage.Location = new System.Drawing.Point(504, 68);
+            this.buttonOpenPackage.Location = new System.Drawing.Point(477, 68);
             this.buttonOpenPackage.Name = "buttonOpenPackage";
-            this.buttonOpenPackage.Size = new System.Drawing.Size(28, 22);
-            this.buttonOpenPackage.TabIndex = 10;
-            this.buttonOpenPackage.Text = "...";
+            this.buttonOpenPackage.Size = new System.Drawing.Size(55, 22);
+            this.buttonOpenPackage.TabIndex = 11;
+            this.buttonOpenPackage.Text = "열기";
             this.buttonOpenPackage.UseVisualStyleBackColor = true;
             this.buttonOpenPackage.Click += new System.EventHandler(this.buttonOpenPackage_Click);
             // 
@@ -180,17 +196,27 @@ namespace CoilInspectionApp
             this.labelValueInput.AutoEllipsis = true;
             this.labelValueInput.Location = new System.Drawing.Point(101, 44);
             this.labelValueInput.Name = "labelValueInput";
-            this.labelValueInput.Size = new System.Drawing.Size(397, 18);
+            this.labelValueInput.Size = new System.Drawing.Size(312, 18);
             this.labelValueInput.TabIndex = 3;
             this.labelValueInput.Text = "-";
             // 
+            // buttonSelectInput
+            //
+            this.buttonSelectInput.Location = new System.Drawing.Point(419, 40);
+            this.buttonSelectInput.Name = "buttonSelectInput";
+            this.buttonSelectInput.Size = new System.Drawing.Size(52, 22);
+            this.buttonSelectInput.TabIndex = 8;
+            this.buttonSelectInput.Text = "선택";
+            this.buttonSelectInput.UseVisualStyleBackColor = true;
+            this.buttonSelectInput.Click += new System.EventHandler(this.buttonSelectInput_Click);
+            //
             // buttonOpenInput
             // 
-            this.buttonOpenInput.Location = new System.Drawing.Point(504, 40);
+            this.buttonOpenInput.Location = new System.Drawing.Point(477, 40);
             this.buttonOpenInput.Name = "buttonOpenInput";
-            this.buttonOpenInput.Size = new System.Drawing.Size(28, 22);
+            this.buttonOpenInput.Size = new System.Drawing.Size(55, 22);
             this.buttonOpenInput.TabIndex = 9;
-            this.buttonOpenInput.Text = "...";
+            this.buttonOpenInput.Text = "열기";
             this.buttonOpenInput.UseVisualStyleBackColor = true;
             this.buttonOpenInput.Click += new System.EventHandler(this.buttonOpenInput_Click);
             // 
@@ -221,13 +247,23 @@ namespace CoilInspectionApp
             this.labelPipeline.TabIndex = 0;
             this.labelPipeline.Text = "파이프라인 :";
             // 
+            // buttonSelectBatch
+            //
+            this.buttonSelectBatch.Location = new System.Drawing.Point(419, 106);
+            this.buttonSelectBatch.Name = "buttonSelectBatch";
+            this.buttonSelectBatch.Size = new System.Drawing.Size(52, 22);
+            this.buttonSelectBatch.TabIndex = 12;
+            this.buttonSelectBatch.Text = "선택";
+            this.buttonSelectBatch.UseVisualStyleBackColor = true;
+            this.buttonSelectBatch.Click += new System.EventHandler(this.buttonSelectBatch_Click);
+            //
             // buttonOpenBatch
             // 
-            this.buttonOpenBatch.Location = new System.Drawing.Point(504, 106);
+            this.buttonOpenBatch.Location = new System.Drawing.Point(477, 106);
             this.buttonOpenBatch.Name = "buttonOpenBatch";
-            this.buttonOpenBatch.Size = new System.Drawing.Size(28, 22);
-            this.buttonOpenBatch.TabIndex = 8;
-            this.buttonOpenBatch.Text = "...";
+            this.buttonOpenBatch.Size = new System.Drawing.Size(55, 22);
+            this.buttonOpenBatch.TabIndex = 13;
+            this.buttonOpenBatch.Text = "열기";
             this.buttonOpenBatch.UseVisualStyleBackColor = true;
             this.buttonOpenBatch.Click += new System.EventHandler(this.buttonOpenBatch_Click);
             // 
@@ -657,12 +693,15 @@ namespace CoilInspectionApp
         private System.Windows.Forms.Label labelBatch;
         private System.Windows.Forms.Label labelValuePackage;
         private System.Windows.Forms.Label labelPackage;
+        private System.Windows.Forms.Button buttonSelectPackage;
         private System.Windows.Forms.Button buttonOpenPackage;
         private System.Windows.Forms.Label labelValueInput;
+        private System.Windows.Forms.Button buttonSelectInput;
         private System.Windows.Forms.Button buttonOpenInput;
         private System.Windows.Forms.Label labelInput;
         private System.Windows.Forms.Label labelValuePipeline;
         private System.Windows.Forms.Label labelPipeline;
+        private System.Windows.Forms.Button buttonSelectBatch;
         private System.Windows.Forms.Button buttonOpenBatch;
         private System.Windows.Forms.ListView listViewResults;
         private System.Windows.Forms.ColumnHeader columnHeaderNo;

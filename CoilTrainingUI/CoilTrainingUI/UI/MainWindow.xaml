@@ -66,21 +66,21 @@
             </MenuItem>
 
             <MenuItem Header="Review">
+                <MenuItem x:Name="AcceptAiDecisionMenuItem"
+                          Header="현재 이미지 Anoma 판정 수락"
+                          Click="AcceptAiDecision_Click"/>
                 <MenuItem x:Name="ApplyPredictionsMenuItem"
-                          Header="현재 이미지 예측 박스 적용"
+                          Header="현재 이미지 AI 박스 전체 수락"
                           Click="ApplyPredictionsToLabelsCurrentImage_Click"/>
-                <MenuItem Header="필터된 이미지 예측 박스 일괄 적용"
-                          Click="ApplyPredictionsToLabelsFilteredImages_Click"/>
                 <Separator/>
                 <MenuItem x:Name="PreLabelBatchMenuItem"
-                          Header="배치 예측값으로 사전 라벨링"
-                          Click="PreLabelBatchFromPredictions_Click"/>
-                <MenuItem x:Name="AutoApproveSafeMenuItem"
-                          Header="안전 정상 자동 확정"
-                          Click="AutoApproveSafeNormals_Click"/>
+                          Header="필터된 이미지 AI 박스 전체 수락"
+                          Click="ApplyPredictionsToLabelsFilteredImages_Click"/>
                 <MenuItem x:Name="ShowReviewQueueMenuItem"
-                          Header="검수 필요 목록 보기"
+                          Header="미검수·검수 중 목록 보기"
                           Click="ShowReviewQueue_Click"/>
+                <MenuItem Header="기존 state.json 안전 마이그레이션..."
+                          Click="MigrateLegacyStates_Click"/>
                 <MenuItem Header="필터된 이미지 일괄 불량 처리"
                           Click="MarkFilteredAbnormal_Click"/>
             </MenuItem>
@@ -149,10 +149,23 @@
                                DockPanel.Dock="Top"/>
 
                     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10" Background="#444">
-                        <TextBlock x:Name="TotalCountText" Text="Total: 0" Foreground="White" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                        <TextBlock x:Name="VisibleCountText" Text="Visible: 0" Foreground="#D0D0D0" FontSize="12" Margin="0,0,0,2"/>
-                        <TextBlock x:Name="NormalCountText" Text="Normal: 0" Foreground="#A0FFA0" FontSize="12"/>
-                        <TextBlock x:Name="DefectCountText" Text="Defect: 0" Foreground="#FFA0A0" FontSize="12"/>
+                        <TextBlock x:Name="TotalCountText" Text="전체 0" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="VisibleCountText" Text="필터 후 0" Foreground="#D0D0D0" FontSize="11"/>
+                        <WrapPanel Margin="0,3,0,0">
+                            <TextBlock x:Name="UnreviewedCountText" Text="미검수 0" Foreground="#FFD166" FontSize="11" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="ReviewingCountText" Text="검수 중 0" Foreground="#7FDBFF" FontSize="11"/>
+                        </WrapPanel>
+                        <WrapPanel>
+                            <TextBlock x:Name="ConfirmedNormalCountText" Text="정상 확정 0" Foreground="#A0FFA0" FontSize="11" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="ConfirmedDefectCountText" Text="불량 확정 0" Foreground="#FFA0A0" FontSize="11"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="ExcludedCountText" Text="학습 제외 0" Foreground="#C0C0C0" FontSize="11"/>
+                        <WrapPanel Margin="0,3,0,0">
+                            <TextBlock x:Name="AnomaTrainEligibleCountText" Text="Anoma 학습 0" Foreground="#A0FFA0" FontSize="11" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="AnomaEvalEligibleCountText" Text="Anoma 평가 0" Foreground="#FFB3B3" FontSize="11"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="YoloPositiveEligibleCountText" Text="YOLO 양성 0" Foreground="#80C8FF" FontSize="11"/>
+                        <TextBlock x:Name="YoloExcludedNoBoxCountText" Text="YOLO 박스 없는 불량 제외 0" Foreground="#FFCC80" FontSize="11"/>
                         <Button x:Name="RefreshImageListButton"
                                 Style="{StaticResource SidebarIconButtonStyle}"
                                 HorizontalAlignment="Right"
@@ -240,22 +253,34 @@
                                           Unchecked="ImageFilterCheckBox_Changed"/>
                             </WrapPanel>
 
-                            <TextBlock Text="검수 우선순위" Foreground="#D0D0D0" FontSize="12" Margin="6,0,6,0"/>
+                            <TextBlock Text="사용자 검수 상태" Foreground="#D0D0D0" FontSize="12" Margin="6,0,6,0"/>
                             <WrapPanel Margin="6,2,6,6">
-                                <CheckBox x:Name="ReviewNeedsCheckBox"
-                                          Content="검수 필요"
+                                <CheckBox x:Name="ReviewUnreviewedCheckBox"
+                                          Content="미검수"
                                           Foreground="White"
                                           Margin="0,0,8,4"
                                           Checked="ImageFilterCheckBox_Changed"
                                           Unchecked="ImageFilterCheckBox_Changed"/>
-                                <CheckBox x:Name="ReviewAutoCandidateCheckBox"
-                                          Content="자동 확정 후보"
+                                <CheckBox x:Name="ReviewReviewingCheckBox"
+                                          Content="검수 중"
                                           Foreground="White"
                                           Margin="0,0,8,4"
                                           Checked="ImageFilterCheckBox_Changed"
                                           Unchecked="ImageFilterCheckBox_Changed"/>
-                                <CheckBox x:Name="ReviewDoneCheckBox"
-                                          Content="확정 완료"
+                                <CheckBox x:Name="ReviewConfirmedNormalCheckBox"
+                                          Content="정상 확정"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="ReviewConfirmedDefectCheckBox"
+                                          Content="불량 확정"
+                                          Foreground="White"
+                                          Margin="0,0,8,4"
+                                          Checked="ImageFilterCheckBox_Changed"
+                                          Unchecked="ImageFilterCheckBox_Changed"/>
+                                <CheckBox x:Name="ReviewExcludedCheckBox"
+                                          Content="학습 제외"
                                           Foreground="White"
                                           Margin="0,0,8,4"
                                           Checked="ImageFilterCheckBox_Changed"
@@ -324,8 +349,7 @@
                                         </Style>
                                     </Border.Style>
 
-                                    <StackPanel Orientation="Vertical">
-
+                                    <StackPanel Orientation="Vertical" Margin="4">
                                         <TextBlock Text="{Binding FileName}"
                                                    Foreground="#171717"
                                                    FontWeight="Bold"
@@ -335,52 +359,27 @@
                                         <TextBlock Text="{Binding BatchName, StringFormat='배치  {0}'}"
                                                    FontSize="10"
                                                    Foreground="#888888"
-                                                   Margin="0,1,0,5"/>
-
-                                        <Grid Margin="0,0,0,4">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding DisplayDecisionText}"
-                                                       FontSize="13"
-                                                       FontWeight="Bold"
-                                                       Foreground="{Binding DisplayDecisionStatus, Converter={StaticResource SimpleStatusColorConverter}}"/>
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{Binding DecisionSourceText}"
-                                                       FontSize="11"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#2563A8"/>
-                                        </Grid>
-
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
-                                            <TextBlock Text="신뢰도  " FontSize="11" Foreground="#666666"/>
-                                            <TextBlock Text="{Binding ConfidenceStatusText}"
-                                                       FontSize="11"
-                                                       FontWeight="Bold"
-                                                       ToolTip="임시 기준: 정상 Anoma ≤ 11.5, 불량 Anoma ≥ 15.0 및 YOLO ≥ 0.75"
-                                                       Foreground="{Binding ConfidenceStatusText, Converter={StaticResource SimpleStatusColorConverter}}"/>
-                                        </StackPanel>
-
-                                        <TextBlock Text="{Binding AiEvidenceText}"
-                                                   FontSize="11"
-                                                   Foreground="#444444"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   Margin="0,0,0,2"/>
-
-                                        <TextBlock FontSize="11" Foreground="#606060" Margin="0,0,0,2">
-                                            <Run Text="1차 이상 탐지 "/>
-                                            <Run Text="{Binding AiStage1StatusText, Mode=OneWay}" FontWeight="SemiBold"/>
-                                            <Run Text="  ·  2차 결함 검출 "/>
-                                            <Run Text="{Binding AiStage2StatusText, Mode=OneWay}" FontWeight="SemiBold"/>
-                                        </TextBlock>
-
-                                        <TextBlock FontSize="11" TextTrimming="CharacterEllipsis">
-                                            <Run Text="{Binding ReviewStatusText, Mode=OneWay}" FontWeight="Bold"/>
+                                                   Margin="0,1,0,4"/>
+                                        <TextBlock Text="{Binding AiAnomaSummaryText}" FontSize="11" Foreground="#444444"/>
+                                        <TextBlock Text="{Binding AiYoloSummaryText}" FontSize="11" Foreground="#444444"/>
+                                        <TextBlock Margin="0,3,0,0" FontSize="12">
+                                            <Run Text="사용자  "/>
+                                            <Run Text="{Binding UserDecisionText}" FontWeight="Bold"/>
                                             <Run Text="  ·  "/>
-                                            <Run Text="{Binding ReviewGuideText, Mode=OneWay}"/>
+                                            <Run Text="{Binding UserDecisionSourceText}"/>
                                         </TextBlock>
-
+                                        <TextBlock FontSize="11">
+                                            <Run Text="박스  "/>
+                                            <Run Text="{Binding BoxReviewStatusText}" FontWeight="SemiBold"/>
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="#1B5E20">
+                                            <Run Text="학습  "/>
+                                            <Run Text="{Binding TrainingEligibilityText}" FontWeight="SemiBold"/>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding TrainingExclusionReasonText}"
+                                                   FontSize="10"
+                                                   Foreground="#A33A00"
+                                                   TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                 </Border>
 
@@ -473,18 +472,47 @@
                     </GroupBox>
 
                     <StackPanel Grid.Column="3" VerticalAlignment="Center">
-                        <CheckBox x:Name="ShowPredictionCheckBox"
-                                  Content="AI 예측 박스 표시"
-                                  IsChecked="True"
-                                  Checked="ShowPredictionCheckBox_Checked"
-                                  Unchecked="ShowPredictionCheckBox_Unchecked"/>
+                        <WrapPanel>
+                            <Button x:Name="AcceptAiDecisionButton"
+                                    Content="Anoma 판정 수락"
+                                    Padding="8,4"
+                                    Margin="0,0,6,5"
+                                    Click="AcceptAiDecision_Click"/>
+                            <Button x:Name="AcceptPredictionBoxesButton"
+                                    Content="AI 박스 수락"
+                                    Padding="8,4"
+                                    Margin="0,0,6,5"
+                                    Click="AcceptPredictionBoxes_Click"/>
+                            <Button x:Name="ConfirmBoxesButton"
+                                    Content="박스 검수 완료"
+                                    Padding="8,4"
+                                    Margin="0,0,6,5"
+                                    Click="ConfirmBoxes_Click"/>
+                            <Button x:Name="ExcludeReviewButton"
+                                    Content="학습 제외"
+                                    Padding="8,4"
+                                    Margin="0,0,0,5"
+                                    Click="ExcludeFromTraining_Click"/>
+                        </WrapPanel>
 
-                        <CheckBox x:Name="ShowRawCheckBox"
-                                  Content="Show RAW"
-                                  Margin="0,6,0,0"
-                                  IsChecked="False"
-                                  Checked="ShowRawCheckBox_Checked"
-                                  Unchecked="ShowRawCheckBox_Unchecked"/>
+                        <WrapPanel>
+                            <CheckBox x:Name="YoloBackgroundCheckBox"
+                                      Content="YOLO 정상 배경으로 사용"
+                                      Margin="0,0,14,0"
+                                      Checked="YoloBackgroundCheckBox_Changed"
+                                      Unchecked="YoloBackgroundCheckBox_Changed"/>
+                            <CheckBox x:Name="ShowPredictionCheckBox"
+                                      Content="AI 예측 박스 표시"
+                                      Margin="0,0,14,0"
+                                      IsChecked="False"
+                                      Checked="ShowPredictionCheckBox_Checked"
+                                      Unchecked="ShowPredictionCheckBox_Unchecked"/>
+                            <CheckBox x:Name="ShowRawCheckBox"
+                                      Content="Show RAW"
+                                      IsChecked="False"
+                                      Checked="ShowRawCheckBox_Checked"
+                                      Unchecked="ShowRawCheckBox_Unchecked"/>
+                        </WrapPanel>
                     </StackPanel>
                 </Grid>
             </Border>

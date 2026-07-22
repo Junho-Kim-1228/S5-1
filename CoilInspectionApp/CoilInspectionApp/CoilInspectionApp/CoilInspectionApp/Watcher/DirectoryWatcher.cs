@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace CoilInspectionApp.Watcher
 {
-    public class DirectoryWatcher
+    public class DirectoryWatcher : IDisposable
     {
         private FileSystemWatcher _watcher;
         private static readonly string[] SupportedExtensions = { ".jpg", ".jpeg", ".png", ".bmp" };
@@ -46,6 +46,21 @@ namespace CoilInspectionApp.Watcher
 
             // 감시 시작
             _watcher.EnableRaisingEvents = true;
+        }
+
+        public void StopWatch()
+        {
+            if (_watcher == null)
+                return;
+
+            _watcher.EnableRaisingEvents = false;
+            _watcher.Dispose();
+            _watcher = null;
+        }
+
+        public void Dispose()
+        {
+            StopWatch();
         }
     }
 }

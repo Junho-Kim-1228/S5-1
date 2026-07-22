@@ -1,6 +1,8 @@
-using System;
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Review;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -14,92 +16,60 @@ namespace CoilTrainingUI
             int dent = 0;
             int loose = 0;
             int other = 0;
-
             foreach (var className in classNames)
             {
                 string normalized = (className ?? "").Trim().ToLowerInvariant();
-                if (normalized == "dent")
-                {
-                    dent++;
-                    continue;
-                }
-
-                if (normalized == "loose")
-                {
-                    loose++;
-                    continue;
-                }
-
-                if (!string.IsNullOrWhiteSpace(normalized))
-                    other++;
+                if (normalized == "dent") dent++;
+                else if (normalized == "loose") loose++;
+                else if (!string.IsNullOrWhiteSpace(normalized)) other++;
             }
-
             return (dent, loose, other);
         }
 
         private void UpdateGtSummaryForImageItem(ImageItem item, string imagePath)
         {
-            var boxes = _imageStateManager.GetLabels(imagePath);
-            var counts = CountDefectClasses(boxes.Select(b => b.ClassName));
-            var state = _stateService.Load(imagePath);
+            ReviewStateLoadResult review = _reviewRepository.Load(imagePath);
+            PredictionSnapshot prediction = _predictionByImagePath.TryGetValue(imagePath, out var cached)
+                ? cached
+                : _predictionReader.Read(_inferJsonByImagePath.TryGetValue(imagePath, out var path) ? path : "");
+            TrainingEligibility eligibility = _trainingDatasetSelector.Evaluate(review);
+            ImageReviewProjection projection = _reviewProjection.Create(review, prediction, eligibility);
+            var counts = CountDefectClasses(review.State.Boxes.Select(box => box.ClassName));
+
             item.GtDentCount = counts.Dent;
             item.GtLooseCount = counts.Loose;
             item.GtOtherCount = counts.Other;
-            item.HasLabel = state.HasManualYoloDecision && boxes.Count > 0;
-            item.HasConfirmedDecision = state.HasConfirmedAnomalyDecision;
-            item.HasStateFile = _stateService.HasState(imagePath);
-            item.ReviewStatus = DeriveReviewStatusForItem(item, state);
-            item.ReviewReasonText = state.ReviewReasons.Count > 0
-                ? string.Join(", ", state.ReviewReasons.Take(3))
-                : "";
-            item.DecisionSource = ResolveDecisionSource(state);
-        }
-
-        private static string ResolveDecisionSource(ImageStateDto state)
-        {
-            if (!string.IsNullOrWhiteSpace(state.DecisionSource))
-                return state.DecisionSource.Trim().ToLowerInvariant();
-            return "";
+            item.HasStateFile = review.HasReviewFile;
+            item.DecisionStatusKey = projection.DecisionStatusKey;
+            item.UserDecisionText = projection.DecisionText;
+            item.UserDecisionSourceText = projection.DecisionSourceText;
+            item.BoxReviewStatusText = projection.BoxStatusText;
+            item.AiAnomaSummaryText = projection.AiAnomaText;
+            item.AiYoloSummaryText = projection.AiYoloText;
+            item.TrainingEligibilityText = projection.TrainingEligibilityText;
+            item.TrainingExclusionReasonText = projection.ExclusionReasonText;
+            item.NeedsLegacyMigration = projection.NeedsMigration;
+            item.IsReviewUnreviewed = projection.IsUnreviewed;
+            item.IsReviewing = projection.IsReviewing;
+            item.IsReviewConfirmedNormal = projection.IsConfirmedNormal;
+            item.IsReviewConfirmedDefect = projection.IsConfirmedDefect;
+            item.IsReviewExcluded = projection.IsExcluded;
+            item.AnomaTrainingEligible = eligibility.AnomaTraining;
+            item.AnomaEvaluationEligible = eligibility.AnomaEvaluation;
+            item.YoloPositiveEligible = eligibility.YoloPositive;
+            item.YoloBackgroundEligible = eligibility.YoloBackground;
+            item.YoloExcludedNoBoxDefect = eligibility.YoloExcludedDefectWithoutBoxes;
         }
 
         private void SyncGtSummaryForImage(string imagePath)
         {
             if (string.IsNullOrWhiteSpace(imagePath))
                 return;
-
-            var item = _images.FirstOrDefault(i => i.ProcessedPath == imagePath);
-            if (item == null)
-                return;
-
-            UpdateGtSummaryForImageItem(item, imagePath);
-        }
-
-        private static string DeriveReviewStatusForItem(ImageItem item, ImageStateDto state)
-        {
-            if (state.HasConfirmedAnomalyDecision)
-                return ReviewStatus.ReviewDone;
-
-            string normalized = (state.ReviewStatus ?? "").Trim().ToLowerInvariant();
-            if (state.HasManualYoloDecision && normalized == ReviewStatus.ReviewDone)
-                return ReviewStatus.ReviewNeeded;
-
-            if (normalized == ReviewStatus.ReviewNeeded ||
-                normalized == ReviewStatus.AutoCandidate ||
-                normalized == ReviewStatus.ReviewDone)
-            {
-                return normalized;
-            }
-
-            if (item.InferParseFailed)
-                return ReviewStatus.ReviewNeeded;
-
-            if (item.RequiresInfer && !item.HasInferFile)
-                return ReviewStatus.ReviewNeeded;
-
-            if (item.HasAiInfer)
-                return item.AiConsensusHighConfidence ? ReviewStatus.AutoCandidate : ReviewStatus.ReviewNeeded;
-
-            return ReviewStatus.None;
+            var item = _images.FirstOrDefault(candidate =>
+                string.Equals(candidate.ProcessedPath, imagePath, StringComparison.OrdinalIgnoreCase));
+            if (item != null)
+                UpdateGtSummaryForImageItem(item, imagePath);
+            RefreshSummaryCounts();
         }
 
         private void ApplyAnomalyDecisionToItem(ImageItem item, bool isNormal, bool refreshSummary = true)
@@ -107,26 +77,41 @@ namespace CoilTrainingUI
             if (item == null || string.IsNullOrWhiteSpace(item.ProcessedPath))
                 return;
 
-            _imageStateManager.SetNormal(item.ProcessedPath, isNormal);
-            _anomalyService.Save(item.ProcessedPath, isNormal);
+            ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
+            ReviewState next = isNormal
+                ? _reviewWorkflow.ConfirmNormal(current, useAsYoloBackground: false)
+                : _reviewWorkflow.ConfirmDefect(current);
+            _reviewRepository.Save(item.ProcessedPath, next);
+            _currentReviewState = next;
 
             if (isNormal)
             {
                 _imageStateManager.ClearLabels(item.ProcessedPath);
                 if (string.Equals(_currentImagePath, item.ProcessedPath, StringComparison.OrdinalIgnoreCase))
                     _bboxManager.ClearAll();
-                SaveLabelsToStateJson(item.ProcessedPath, markManualYoloDecision: true);
             }
 
-            item.IsNormal = isNormal;
-            item.HasConfirmedDecision = true;
-            item.HasStateFile = true;
-            item.ReviewStatus = ReviewStatus.ReviewDone;
-            item.ReviewReasonText = "";
-            item.DecisionSource = "manual";
-
+            UpdateGtSummaryForImageItem(item, item.ProcessedPath);
+            if (string.Equals(_currentImagePath, item.ProcessedPath, StringComparison.OrdinalIgnoreCase))
+                UpdateSelectedReviewControls(next);
             if (refreshSummary)
-                RefreshSummaryCounts();
+                ApplyImageFilters();
+        }
+
+        private void UpdateSelectedReviewControls(ReviewState state)
+        {
+            _isLoadingImage = true;
+            try
+            {
+                NormalRadio.IsChecked = state.Decision == ImageReviewDecision.ConfirmedNormal;
+                AbnormalRadio.IsChecked = state.Decision == ImageReviewDecision.ConfirmedDefect;
+                YoloBackgroundCheckBox.IsChecked = state.UseAsYoloBackground;
+                YoloBackgroundCheckBox.IsEnabled = state.Decision == ImageReviewDecision.ConfirmedNormal;
+            }
+            finally
+            {
+                _isLoadingImage = false;
+            }
         }
 
         private void EnsureSelectedImageVisible()
@@ -134,10 +119,7 @@ namespace CoilTrainingUI
             if (ImageListBox.SelectedItem is ImageItem selectedItem && IsVisibleInCurrentFilter(selectedItem))
                 return;
 
-            var firstVisible = _imageCollectionView?.Cast<object>()
-                .OfType<ImageItem>()
-                .FirstOrDefault();
-
+            var firstVisible = _imageCollectionView?.Cast<object>().OfType<ImageItem>().FirstOrDefault();
             if (firstVisible != null)
             {
                 ImageListBox.SelectedItem = firstVisible;
@@ -151,25 +133,12 @@ namespace CoilTrainingUI
 
         private void SyncAnomalyRadioFromSelectedItem()
         {
-            _isLoadingImage = true;
-            try
+            if (ImageListBox.SelectedItem is not ImageItem item)
             {
-                if (ImageListBox.SelectedItem is not ImageItem item)
-                {
-                    NormalRadio.IsChecked = false;
-                    AbnormalRadio.IsChecked = false;
-                    return;
-                }
-
-                var state = _stateService.Load(item.ProcessedPath);
-                bool hasConfirmedImageDecision = state.HasConfirmedAnomalyDecision;
-                NormalRadio.IsChecked = hasConfirmedImageDecision ? item.IsNormal : false;
-                AbnormalRadio.IsChecked = hasConfirmedImageDecision ? !item.IsNormal : false;
+                UpdateSelectedReviewControls(new ReviewState());
+                return;
             }
-            finally
-            {
-                _isLoadingImage = false;
-            }
+            UpdateSelectedReviewControls(_reviewRepository.Load(item.ProcessedPath).State);
         }
     }
 }

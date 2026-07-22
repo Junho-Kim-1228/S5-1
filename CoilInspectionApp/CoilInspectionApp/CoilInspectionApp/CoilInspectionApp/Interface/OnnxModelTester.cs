@@ -13,7 +13,7 @@ namespace CoilInspectionApp.Interface
         public string Decision { get; set; } = "";
     }
 
-    public class OnnxModelTester
+    public class OnnxModelTester : IDisposable
     {
         private static readonly float[] ImagenetMean = { 0.485f, 0.456f, 0.406f };
         private static readonly float[] ImagenetStd = { 0.229f, 0.224f, 0.225f };
@@ -33,6 +33,14 @@ namespace CoilInspectionApp.Interface
         {
             _yoloSession?.Dispose();
             _yoloSession = new InferenceSession(modelPath);
+        }
+
+        public void Dispose()
+        {
+            _anomaSession?.Dispose();
+            _anomaSession = null;
+            _yoloSession?.Dispose();
+            _yoloSession = null;
         }
 
         public AnomaInferenceResult RunAnomaInference(Mat image, float threshold)
