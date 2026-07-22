@@ -1,0 +1,11 @@
+# Separate research environment for Dinomaly (Anomalib 2.x).
+# Keep this isolated from requirements-train.txt, which remains compatible
+# with the existing YOLO and PaDiM/PatchCore training pipeline.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.7.1+cu126
+torchvision==0.22.1+cu126
+anomalib>=2.5,<3.0
+onnx>=1.16,<2.0
+onnxscript>=0.1,<2.0
+onnxruntime>=1.18,<2.0
+opencv-python-headless>=4.10,<5.0

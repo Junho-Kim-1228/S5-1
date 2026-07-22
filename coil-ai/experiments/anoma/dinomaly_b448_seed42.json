@@ -1,0 +1,37 @@
+{
+  "experiment_id": "pcb_v1_dinomaly_b448_seed42",
+  "status": "selected_candidate",
+  "model": "dinomaly",
+  "encoder": "vit_base_patch14_reg4_dinov2",
+  "image_size": 448,
+  "batch_size": 8,
+  "seed": 42,
+  "max_steps": 5000,
+  "decoder_depth": 8,
+  "dropout": 0.2,
+  "learning_rate": 0.002,
+  "dataset": {
+    "train_good": 456,
+    "val_good": 114,
+    "val_defect": 166
+  },
+  "validation_metrics": {
+    "image_auroc": 0.9339463115620376,
+    "image_ap": 0.9600537796950557,
+    "best_f1": 0.8769716088328076,
+    "best_precision": 0.9205298013245033,
+    "best_recall": 0.8373493975903614,
+    "best_threshold": 0.035877570509910583
+  },
+  "confusion_matrix": {
+    "true_good": 102,
+    "false_defect": 12,
+    "true_defect": 139,
+    "false_good": 27
+  },
+  "runtime_artifacts": {
+    "onnx": "outputs/anoma/pcb_v1_dinomaly_b448/anoma.onnx",
+    "state": "outputs/anoma/pcb_v1_dinomaly_b448/dinomaly_state.pt",
+    "config": "outputs/anoma/pcb_v1_dinomaly_b448/inference_config.json"
+  }
+}

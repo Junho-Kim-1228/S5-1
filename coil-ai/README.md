@@ -158,6 +158,21 @@ python -m venv .venv_train
 pip install -r requirements-train.txt
 ```
 
+### Dinomaly Research Environment
+
+Dinomaly uses Anomalib 2.x and a newer CUDA build of PyTorch, so keep it in a
+separate environment from the existing YOLO/PaDiM/PatchCore environment:
+
+```powershell
+.\.venv_train\Scripts\python.exe -m venv .venv_dinomaly
+.\.venv_dinomaly\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dinomaly.txt
+```
+
+The first Dinomaly run downloads the pretrained DINOv2 encoder weights. The
+cache defaults to `assets/weights/huggingface` unless `HF_HOME` is already set.
+
 ## Audit Raw Training Data
 
 Before training, validate image decoding, `*.state.json` pairing, anomaly labels,
@@ -197,6 +212,31 @@ python scripts/train_yolo.py `
   --model "assets/weights/yolov8l.pt" `
   --epochs 150 --imgsz 1024 --batch 4 --device 0
 ```
+
+Run the Dinomaly comparison directly from `coil-ai` after activating
+`.venv_dinomaly`:
+
+```powershell
+python scripts/train_anoma.py `
+  --workspace "raw_data/pcb" `
+  --out "outputs/anoma/pcb_v1_dinomaly_b448" `
+  --dataset-name "pcb_v1_dinomaly_b448" `
+  --model dinomaly `
+  --image-size 448 `
+  --batch-size 8 `
+  --device auto `
+  --seed 42 `
+  --dinomaly-encoder vit_base_patch14_reg4_dinov2 `
+  --dinomaly-dropout 0.2 `
+  --dinomaly-decoder-depth 8 `
+  --dinomaly-max-steps 5000
+```
+
+Dinomaly input sizes must be divisible by the DINOv2 patch size (`14`). Use
+`--skip-export` for metric-only experiments. A successful full run keeps the
+same deployment contract as the other anomaly models: `anoma.onnx` outputs
+`anomaly_score` and `anomaly_map`, and `inference_config.json` stores the
+validation-calibrated threshold and preprocessing contract.
 
 Run the audit first. If CUDA memory is insufficient, lower the YOLO batch to
 `2`; if training is stable, try `8` for higher throughput.

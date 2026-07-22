@@ -6,6 +6,7 @@ import torch
 from anoma.config import AnomaConfig
 from anoma.exporter import export_artifacts, save_debug_artifacts, save_inference_config
 from anoma.metrics import compute_image_metrics, compute_score_distribution
+from anoma.models.dinomaly import DinomalyModel
 from anoma.models.patchcore import PatchcoreModel
 from anoma.models.padim import PadimModel
 from anoma.workspace import build_dataloaders, prepare_dataset, validate_workspace
@@ -21,6 +22,17 @@ def _resolve_device(device: str) -> str:
 
 def _build_model(config: AnomaConfig):
     device = _resolve_device(config.device)
+    if config.model == "dinomaly":
+        return DinomalyModel(
+            image_size=config.image_size,
+            device=device,
+            encoder_name=config.dinomaly_encoder,
+            bottleneck_dropout=config.dinomaly_dropout,
+            decoder_depth=config.dinomaly_decoder_depth,
+            max_steps=config.dinomaly_max_steps,
+            learning_rate=config.dinomaly_learning_rate,
+            seed=config.seed,
+        )
     if config.model == "patchcore":
         return PatchcoreModel(
             image_size=config.image_size,
@@ -74,6 +86,7 @@ def run_training(config: AnomaConfig) -> dict[str, object]:
         image_size=config.image_size,
         batch_size=config.batch_size,
         num_workers=config.num_workers,
+        shuffle_train=config.model == "dinomaly",
     )
     log_progress(40)
 

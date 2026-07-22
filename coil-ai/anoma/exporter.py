@@ -222,9 +222,21 @@ def save_inference_config(
     _write_json(
         path,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "model": str(model.model_info().get("model", "anoma")),
             "input_size": int(image_size),
+            "input_name": "image",
+            "outputs": {
+                "score": "anomaly_score",
+                "map": "anomaly_map",
+            },
+            "preprocessing": {
+                "color_space": "RGB",
+                "resize": "stretch",
+                "value_scale": "0_to_1",
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+            },
             "score_threshold": float(metrics["best_threshold"]),
             "threshold_policy": "best_f1_on_validation",
             "validation_metrics": {

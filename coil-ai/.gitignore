@@ -1,5 +1,6 @@
 .venv/
 .venv_train/
+.venv_dinomaly/
 __pycache__/
 *.py[cod]
 *.cache

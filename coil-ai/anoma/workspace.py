@@ -254,6 +254,7 @@ def build_dataloaders(
     image_size: int,
     batch_size: int,
     num_workers: int,
+    shuffle_train: bool = False,
 ) -> tuple[DataLoader, DataLoader]:
     train_dataset = AnomaImageDataset(train_samples, image_size=image_size)
     eval_dataset = AnomaImageDataset(eval_samples, image_size=image_size)
@@ -262,7 +263,7 @@ def build_dataloaders(
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=shuffle_train,
         num_workers=num_workers,
         pin_memory=pin_memory,
     )
