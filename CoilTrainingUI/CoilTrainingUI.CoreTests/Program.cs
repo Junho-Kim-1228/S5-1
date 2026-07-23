@@ -38,7 +38,8 @@ internal sealed class CoreReviewTests
             Run("projection flags match persisted state", () => ProjectionFlagsMatchState(root));
             Run("Anoma alone controls accepted AI decision", AcceptAiDecisionUsesAnomaOnly);
             Run("pipeline contract is Anoma then YOLO without fusion", PipelineContractIsCorrect);
-            Console.WriteLine($"PASS: {_passed}/13 core review tests");
+            Run("inference context mismatch is rejected", () => InferenceContextMismatchIsRejected(root));
+            Console.WriteLine($"PASS: {_passed}/14 core review tests");
         }
         finally
         {
@@ -275,6 +276,94 @@ internal sealed class CoreReviewTests
         Assert(pipeline.GetProperty("mode").GetString() == "anoma_then_yolo", "pipeline mode mismatch");
         Assert(pipeline.GetProperty("skip_yolo_when_stage1_normal").GetBoolean(), "YOLO skip flag mismatch");
         Assert(!root.TryGetProperty("fusion", out _), "legacy fusion section must not be emitted");
+    }
+
+    private void InferenceContextMismatchIsRejected(string root)
+    {
+        string inferPath = Path.Combine(root, "context_mismatch.infer.json");
+        File.WriteAllText(inferPath, JsonSerializer.Serialize(new
+        {
+            schema_version = 2,
+            image_id = "context_mismatch",
+            inference_context_id = "ctx_actual",
+            image_size = new { w = 640, h = 640 },
+            yolo = new
+            {
+                executed = false,
+                confidence_threshold = 0.25,
+                model_sha256 = "yolo_hash",
+                detections = Array.Empty<object>()
+            },
+            anoma = new
+            {
+                executed = true,
+                score = 0.9,
+                score_threshold = 0.5,
+                model_sha256 = "anoma_hash",
+                decision = "anomaly"
+            },
+            final = new { is_defect = true, reason = new[] { "stage1_abnormal" } }
+        }));
+
+        var reader = new PredictionReader();
+        PredictionSnapshot matching = reader.Read(inferPath, "ctx_actual");
+        PredictionSnapshot mismatch = reader.Read(inferPath, "ctx_expected");
+        Assert(!matching.ParseFailed && matching.HasAnomaDecision, "matching context was rejected");
+        Assert(mismatch.ParseFailed && mismatch.Error.Contains("mismatch", StringComparison.OrdinalIgnoreCase),
+            "mismatched context was accepted");
+
+        string batchRoot = Path.Combine(root, "context_mismatch_batch");
+        Directory.CreateDirectory(Path.Combine(batchRoot, "images"));
+        Directory.CreateDirectory(Path.Combine(batchRoot, "inference"));
+        Directory.CreateDirectory(Path.Combine(batchRoot, "meta"));
+        File.WriteAllBytes(Path.Combine(batchRoot, "images", "context_mismatch.bmp"), new byte[] { 0x42, 0x4D });
+        File.Copy(inferPath, Path.Combine(batchRoot, "inference", "context_mismatch.infer.json"));
+        File.WriteAllText(Path.Combine(batchRoot, "meta", "DONE.flag"), "done");
+        File.WriteAllText(Path.Combine(batchRoot, "meta", "manifest.json"), JsonSerializer.Serialize(new
+        {
+            schema_version = 3,
+            batch_type = "inference",
+            batch_id = "context_mismatch_batch",
+            created_at = "2026-01-01T00:00:00",
+            inference_context = new
+            {
+                status = "recorded",
+                context_id = "ctx_expected",
+                pipeline_mode = "anoma_then_yolo",
+                package_fingerprint = "fingerprint",
+                pipeline_sha256 = "pipeline_hash"
+            },
+            items = new[]
+            {
+                new
+                {
+                    id = "context_mismatch",
+                    processed_image = "images/context_mismatch.bmp",
+                    infer_json = "inference/context_mismatch.infer.json"
+                }
+            }
+        }));
+        BatchFolderValidationResult batchValidation = BatchFolderValidationService.Validate(batchRoot);
+        Assert(!batchValidation.IsValid &&
+               batchValidation.Message.Contains("mismatch", StringComparison.OrdinalIgnoreCase),
+            "batch validation did not reject mismatched context");
+
+        string image = NewImage(root, "context_mismatch.bmp");
+        _repository.Save(image, _workflow.ConfirmNormal(new ReviewState(), useAsYoloBackground: false));
+        var selection = new TrainingDatasetSelection { TotalCandidates = 1 };
+        selection.AnomaInputs.Add(new TrainingImageInput
+        {
+            ImagePath = image,
+            InferJsonPath = inferPath,
+            RequiresInfer = true,
+            ExpectedInferenceContextId = "ctx_expected",
+            BatchKey = "context-test"
+        });
+
+        DatasetValidationResult validation = new TrainingDatasetValidator(_repository, _selector)
+            .Validate(selection, trainAnoma: true, trainYolo: false);
+        Assert(validation.Errors.Any(error => error.Contains("mismatch", StringComparison.OrdinalIgnoreCase)),
+            "training validation did not reject mismatched context");
     }
 
     private static PredictionSnapshot DefectPrediction(params ReviewBox[] boxes) => new()

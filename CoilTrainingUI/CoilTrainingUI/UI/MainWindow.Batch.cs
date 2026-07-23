@@ -422,6 +422,7 @@ namespace CoilTrainingUI
             {
                 _images.Clear();
                 _inferJsonByImagePath.Clear();
+                _expectedInferenceContextByImagePath.Clear();
                 _predictionByImagePath.Clear();
 
                 var loadResult = _batchImportService.LoadLibrary(inboxRoot, includeHidden: false);
@@ -491,14 +492,20 @@ namespace CoilTrainingUI
 
         private void AppendImageRecord(BatchImageRecord record)
         {
-            PredictionSnapshot prediction = _predictionReader.Read(record.InferJsonPath);
+            PredictionSnapshot prediction = _predictionReader.Read(
+                record.InferJsonPath,
+                record.ExpectedInferenceContextId);
             ReviewStateLoadResult review = _reviewRepository.Load(record.ProcessedPath);
-            TrainingEligibility eligibility = _trainingDatasetSelector.Evaluate(review);
+            TrainingEligibility eligibility = EvaluateTrainingEligibility(
+                review,
+                prediction,
+                record.RequiresInfer);
             ImageReviewProjection projection = _reviewProjection.Create(review, prediction, eligibility);
             var gtCounts = CountDefectClasses(review.State.Boxes.Select(box => box.ClassName));
 
             _imageStateManager.EnsureImage(record.ProcessedPath);
             _inferJsonByImagePath[record.ProcessedPath] = record.InferJsonPath;
+            _expectedInferenceContextByImagePath[record.ProcessedPath] = record.ExpectedInferenceContextId;
             _predictionByImagePath[record.ProcessedPath] = prediction;
             if (prediction.HasFile)
                 _currentBatchHasAnyInfer = true;

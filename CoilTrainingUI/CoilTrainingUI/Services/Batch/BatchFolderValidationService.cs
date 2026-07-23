@@ -53,6 +53,15 @@ public static class BatchFolderValidationService
             manifest.BatchType,
             "inference",
             StringComparison.OrdinalIgnoreCase);
+        string expectedContextId;
+        try
+        {
+            expectedContextId = InferenceContextValidationService.GetExpectedContextId(manifest);
+        }
+        catch (Exception ex)
+        {
+            return BatchFolderValidationResult.Fail($"추론 컨텍스트 검증 실패: {ex.Message}");
+        }
         var missingFiles = new List<string>();
 
         foreach (var item in manifest.Items)
@@ -86,6 +95,21 @@ public static class BatchFolderValidationService
                         ? $"inference/{item.Id}.infer.json"
                         : item.InferJson;
                     missingFiles.Add(missingInfer);
+                }
+                else if (!string.IsNullOrWhiteSpace(expectedContextId))
+                {
+                    try
+                    {
+                        InferResultDto infer = InferenceBatchSchemaParser.ParseInferResult(inferPath);
+                        InferenceContextValidationService.ValidateInferContext(
+                            infer,
+                            expectedContextId,
+                            inferPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        missingFiles.Add($"{Path.GetFileName(inferPath)}: {ex.Message}");
+                    }
                 }
             }
         }

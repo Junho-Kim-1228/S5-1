@@ -16,6 +16,7 @@ public sealed class BatchImageRecord
     public string? RawPath { get; init; }
     public string InferJsonPath { get; init; } = "";
     public bool RequiresInfer { get; init; }
+    public string ExpectedInferenceContextId { get; init; } = "";
 }
 
 public sealed class BatchImportLoadResult
@@ -51,6 +52,7 @@ public sealed class BatchImportService
             {
                 string manifestPath = Path.Combine(batch.BatchRoot, "meta", "manifest.json");
                 ManifestDto manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+                string expectedContextId = InferenceContextValidationService.GetExpectedContextId(manifest);
                 string batchId = !string.IsNullOrWhiteSpace(manifest.BatchId)
                     ? manifest.BatchId.Trim()
                     : batch.BatchId;
@@ -72,7 +74,8 @@ public sealed class BatchImportService
                             ProcessedPath = processedPath,
                             RawPath = InferenceBatchPathResolver.ResolveBatchRawImagePath(batch.BatchRoot, item),
                             InferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batch.BatchRoot, item),
-                            RequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batch.BatchRoot, manifest, item)
+                            RequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batch.BatchRoot, manifest, item),
+                            ExpectedInferenceContextId = expectedContextId
                         });
                     }
                     catch (Exception ex)

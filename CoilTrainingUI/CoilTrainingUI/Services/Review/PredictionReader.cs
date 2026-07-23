@@ -27,7 +27,7 @@ public sealed class PredictionSnapshot
 
 public sealed class PredictionReader
 {
-    public PredictionSnapshot Read(string inferJsonPath)
+    public PredictionSnapshot Read(string inferJsonPath, string? expectedInferenceContextId = null)
     {
         if (string.IsNullOrWhiteSpace(inferJsonPath) || !File.Exists(inferJsonPath))
             return new PredictionSnapshot();
@@ -35,6 +35,10 @@ public sealed class PredictionReader
         try
         {
             InferResultDto infer = InferenceBatchSchemaParser.ParseInferResult(inferJsonPath);
+            InferenceContextValidationService.ValidateInferContext(
+                infer,
+                expectedInferenceContextId,
+                inferJsonPath);
             string decision = (infer.Anoma?.Decision ?? "").Trim().ToLowerInvariant();
             bool hasDecision = decision is "normal" or "anomaly";
             var boxes = (infer.Yolo?.Detections ?? new List<DetectionDto>())

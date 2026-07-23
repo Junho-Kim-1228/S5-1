@@ -154,7 +154,13 @@ public static class InferenceBatchSchemaParser
         if (status != "recorded")
             return;
 
-        _ = GetRequiredProperty(context, "manifest.inference_context", "context_id", path);
+        var contextIdElement = GetRequiredProperty(context, "manifest.inference_context", "context_id", path);
+        if (contextIdElement.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(contextIdElement.GetString()))
+        {
+            throw new InvalidDataException(
+                $"Invalid 'manifest.inference_context.context_id' (non-empty string expected): {path}");
+        }
         _ = GetRequiredProperty(context, "manifest.inference_context", "pipeline_mode", path);
         _ = GetRequiredProperty(context, "manifest.inference_context", "package_fingerprint", path);
         _ = GetRequiredProperty(context, "manifest.inference_context", "pipeline_sha256", path);

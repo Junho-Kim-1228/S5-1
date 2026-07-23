@@ -1,5 +1,6 @@
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.InferenceBatch;
+using CoilTrainingUI.Services.Review;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -52,6 +53,38 @@ public sealed class BatchMergeService
                 Manifest = InferenceBatchSchemaParser.ParseManifest(Path.Combine(batch.BatchRoot, "meta", "manifest.json"))
             })
             .ToList();
+
+        foreach (SourceBatchManifest source in sourceManifests)
+        {
+            source.RequiresInfer = InferenceBatchPathResolver.DetermineBatchRequiresInfer(
+                source.Batch.BatchRoot,
+                source.Manifest);
+            source.ExpectedContextId = InferenceContextValidationService.GetExpectedContextId(source.Manifest);
+        }
+
+        List<SourceBatchManifest> inferenceSources = sourceManifests
+            .Where(source => source.RequiresInfer)
+            .ToList();
+        List<string> recordedContextIds = inferenceSources
+            .Select(source => source.ExpectedContextId)
+            .Where(contextId => !string.IsNullOrWhiteSpace(contextId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        bool hasUnknownInferenceContext = inferenceSources.Any(source =>
+            string.IsNullOrWhiteSpace(source.ExpectedContextId));
+        if (recordedContextIds.Count > 1 ||
+            (recordedContextIds.Count == 1 && hasUnknownInferenceContext))
+        {
+            throw new InvalidOperationException(
+                "추론 컨텍스트가 서로 다르거나 컨텍스트가 누락된 추론 배치는 병합할 수 없습니다.");
+        }
+
+        InferenceContextDto? mergedInferenceContext = recordedContextIds.Count == 1
+            ? inferenceSources.First(source => string.Equals(
+                source.ExpectedContextId,
+                recordedContextIds[0],
+                StringComparison.OrdinalIgnoreCase)).Manifest.InferenceContext
+            : null;
 
         int totalItems = sourceManifests.Sum(item => item.Manifest.Items.Count);
         int processedItems = 0;
@@ -116,18 +149,28 @@ public sealed class BatchMergeService
 
                     string? inferManifestPath = null;
                     string inferSourcePath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(sourceBatch.BatchRoot, item);
-                    if (InferenceBatchPathResolver.DetermineItemRequiresInfer(sourceBatch.BatchRoot, manifest, item) &&
-                        File.Exists(inferSourcePath))
+                    bool itemRequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(
+                        sourceBatch.BatchRoot,
+                        manifest,
+                        item);
+                    if (itemRequiresInfer)
                     {
+                        if (!File.Exists(inferSourcePath))
+                            throw new FileNotFoundException("필수 infer.json을 찾을 수 없습니다.", inferSourcePath);
+
                         string uniqueInferFileName = GetUniqueFileName(
                             $"{sourceBatch.BatchKey}__{originalItemId}.infer.json",
                             usedInferNames);
                         string inferDestinationPath = Path.Combine(inferenceDir, uniqueInferFileName);
-                        CopyInferJsonWithNewImageId(inferSourcePath, inferDestinationPath, mergedItemId);
+                        CopyInferJsonWithNewImageId(
+                            inferSourcePath,
+                            inferDestinationPath,
+                            mergedItemId,
+                            sourceInfo.ExpectedContextId);
                         inferManifestPath = $"inference/{uniqueInferFileName}";
                     }
 
-                    CopyStateFileIfExists(processedSourcePath, processedDestinationPath);
+                    CopyReviewFilesIfExists(processedSourcePath, processedDestinationPath);
 
                     manifestItems.Add(new MergedManifestItem
                     {
@@ -163,7 +206,8 @@ public sealed class BatchMergeService
                 manifestOutputPath,
                 mergedBatchKey,
                 orderedSources.Select(batch => batch.BatchId).ToList(),
-                manifestItems
+                manifestItems,
+                mergedInferenceContext
             );
 
             progress?.Report(new BatchMergeProgressInfo
@@ -201,51 +245,58 @@ public sealed class BatchMergeService
         }
     }
 
-    private static void CopyInferJsonWithNewImageId(string sourcePath, string destinationPath, string imageId)
+    private static void CopyInferJsonWithNewImageId(
+        string sourcePath,
+        string destinationPath,
+        string imageId,
+        string expectedContextId)
     {
-        try
-        {
-            var infer = InferenceBatchSchemaParser.ParseInferResult(sourcePath);
-            infer.ImageId = imageId;
+        InferResultDto infer = InferenceBatchSchemaParser.ParseInferResult(sourcePath);
+        InferenceContextValidationService.ValidateInferContext(infer, expectedContextId, sourcePath);
+        infer.ImageId = imageId;
 
-            string json = JsonSerializer.Serialize(
-                infer,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-                });
+        string json = JsonSerializer.Serialize(
+            infer,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            });
 
-            File.WriteAllText(destinationPath, json, Encoding.UTF8);
-        }
-        catch
-        {
-            File.Copy(sourcePath, destinationPath, overwrite: false);
-        }
+        File.WriteAllText(destinationPath, json, Encoding.UTF8);
     }
 
-    private static void CopyStateFileIfExists(string processedSourcePath, string processedDestinationPath)
+    private static void CopyReviewFilesIfExists(string processedSourcePath, string processedDestinationPath)
     {
         string sourceStatePath = ImageStateService.GetStatePath(processedSourcePath);
-        if (!File.Exists(sourceStatePath))
-            return;
+        if (File.Exists(sourceStatePath))
+        {
+            string destinationStatePath = ImageStateService.GetStatePath(processedDestinationPath);
+            File.Copy(sourceStatePath, destinationStatePath, overwrite: false);
+        }
 
-        string destinationStatePath = ImageStateService.GetStatePath(processedDestinationPath);
-        File.Copy(sourceStatePath, destinationStatePath, overwrite: false);
+        string sourceReviewPath = ReviewRepository.GetReviewPath(processedSourcePath);
+        if (File.Exists(sourceReviewPath))
+        {
+            string destinationReviewPath = ReviewRepository.GetReviewPath(processedDestinationPath);
+            File.Copy(sourceReviewPath, destinationReviewPath, overwrite: false);
+        }
     }
 
     private static void WriteMergedManifest(
         string manifestPath,
         string mergedBatchKey,
         IReadOnlyList<string> sourceBatchIds,
-        IReadOnlyList<MergedManifestItem> items)
+        IReadOnlyList<MergedManifestItem> items,
+        InferenceContextDto? inferenceContext)
     {
         var manifest = new
         {
-            schema_version = 2,
+            schema_version = inferenceContext == null ? 2 : 3,
             batch_type = "merged",
             batch_id = mergedBatchKey,
             created_at = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"),
+            inference_context = inferenceContext,
             meta = new
             {
                 merge = true,
@@ -340,5 +391,7 @@ public sealed class BatchMergeService
     {
         public BatchLibraryItem Batch { get; set; } = new();
         public ManifestDto Manifest { get; set; } = new();
+        public bool RequiresInfer { get; set; }
+        public string ExpectedContextId { get; set; } = "";
     }
 }

@@ -528,6 +528,11 @@ namespace CoilTrainingUI
                         ImagePath = item.ProcessedPath,
                         InferJsonPath = inferJsonPath ?? "",
                         RequiresInfer = item.RequiresInfer,
+                        ExpectedInferenceContextId = _expectedInferenceContextByImagePath.TryGetValue(
+                            item.ProcessedPath,
+                            out var expectedContextId)
+                                ? expectedContextId
+                                : "",
                         BatchRoot = batchRoot,
                         BatchKey = BatchLibraryService.GetBatchKey(batchRoot)
                     };
@@ -546,6 +551,7 @@ namespace CoilTrainingUI
 
                 string manifestPath = IOPath.Combine(batch.BatchRoot, "meta", "manifest.json");
                 var manifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
+                string expectedContextId = InferenceContextValidationService.GetExpectedContextId(manifest);
 
                 foreach (var item in manifest.Items)
                 {
@@ -558,6 +564,7 @@ namespace CoilTrainingUI
                         ImagePath = imagePath,
                         InferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batch.BatchRoot, item),
                         RequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batch.BatchRoot, manifest, item),
+                        ExpectedInferenceContextId = expectedContextId,
                         BatchRoot = batch.BatchRoot,
                         BatchKey = batch.BatchKey
                     };

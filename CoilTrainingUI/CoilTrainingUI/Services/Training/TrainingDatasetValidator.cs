@@ -46,6 +46,7 @@ public sealed class TrainingDatasetValidator
 {
     private readonly ReviewRepository _repository;
     private readonly TrainingDatasetSelector _selector;
+    private readonly PredictionReader _predictionReader = new();
 
     public TrainingDatasetValidator(ReviewRepository repository, TrainingDatasetSelector selector)
     {
@@ -157,7 +158,7 @@ public sealed class TrainingDatasetValidator
             result.Errors.Add("YOLO 학습에는 박스가 확정된 불량 이미지가 최소 1개 필요합니다.");
     }
 
-    private static bool ValidateCommonInput(TrainingImageInput input, DatasetValidationResult result)
+    private bool ValidateCommonInput(TrainingImageInput input, DatasetValidationResult result)
     {
         if (input == null || string.IsNullOrWhiteSpace(input.ImagePath))
         {
@@ -173,6 +174,18 @@ public sealed class TrainingDatasetValidator
         {
             result.Errors.Add($"필수 infer.json 없음: {Path.GetFileName(input.ImagePath)}");
             return false;
+        }
+        if (input.RequiresInfer && !string.IsNullOrWhiteSpace(input.ExpectedInferenceContextId))
+        {
+            PredictionSnapshot prediction = _predictionReader.Read(
+                input.InferJsonPath,
+                input.ExpectedInferenceContextId);
+            if (prediction.ParseFailed)
+            {
+                result.Errors.Add(
+                    $"infer.json 추론 컨텍스트 오류: {Path.GetFileName(input.ImagePath)} ({prediction.Error})");
+                return false;
+            }
         }
         return true;
     }

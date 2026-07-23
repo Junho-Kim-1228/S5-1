@@ -100,17 +100,29 @@ foreach (string batchRoot in batchRoots)
     totalSeedConfirmed += seedConfirmed;
     totalFailures += report.Failed;
 
+    List<string> legacyImagePaths = imagePaths
+        .Where(path => File.Exists(ImageStateService.GetStatePath(path)))
+        .ToList();
     int reviewCountAfter = imagePaths.Count(repository.HasReviewFile);
-    if (report.Failed == 0 && reviewCountAfter == legacyCount)
+    bool allLegacyStatesMigrated = legacyImagePaths.All(repository.HasReviewFile);
+    if (report.Failed == 0 && allLegacyStatesMigrated)
     {
-        UpdateLegacyManifest(manifestPath);
-        ManifestDto migratedManifest = InferenceBatchSchemaParser.ParseManifest(manifestPath);
-        if (!string.Equals(
-                migratedManifest.InferenceContext?.Status,
-                "not_applicable",
-                StringComparison.OrdinalIgnoreCase))
+        try
         {
-            throw new InvalidDataException("migrated manifest inference_context is invalid");
+            WriteMigrationReport(
+                batchRoot,
+                batchName,
+                manifestPath,
+                imagePaths.Count,
+                legacyCount,
+                reviewCountAfter,
+                report,
+                seedConfirmed);
+        }
+        catch (Exception ex)
+        {
+            totalFailures++;
+            Console.WriteLine($"FAIL {batchName}: migration report write failed ({ex.Message})");
         }
     }
     else
@@ -128,7 +140,7 @@ foreach (string batchRoot in batchRoots)
 
     Console.WriteLine(
         $"APPLY {batchName}: converted={report.Converted}, already={report.AlreadyMigrated}, " +
-        $"seed_confirmed={seedConfirmed}, ambiguous={report.Ambiguous}, failed={report.Failed}, " +
+        $"seed_confirmed={seedConfirmed}, ambiguous={report.Ambiguous}, failed={report.Failed}, manifest=unchanged, " +
         $"normal={GetCount(decisions, ImageReviewDecision.ConfirmedNormal)}, " +
         $"defect={GetCount(decisions, ImageReviewDecision.ConfirmedDefect)}, " +
         $"reviewing={GetCount(decisions, ImageReviewDecision.Reviewing)}, " +
@@ -186,8 +198,10 @@ static void RunInferenceContractSelfTest()
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
             ?? throw new InvalidDataException("test pipeline config deserialization failed");
         InferenceContextInfo context = InferenceContextFactory.Create(packageRoot, config);
+        InferenceContextInfo cachedContext = InferenceContextFactory.Create(packageRoot, config);
 
         AssertContract(context.status == "recorded", "context status");
+        AssertContract(cachedContext.package_fingerprint == context.package_fingerprint, "cached package fingerprint");
         AssertContract(context.context_id.StartsWith("ctx_", StringComparison.Ordinal), "context id");
         AssertContract(context.package_fingerprint.Length == 64, "package fingerprint");
         AssertContract(context.pipeline_sha256.Length == 64, "pipeline hash");
@@ -263,6 +277,23 @@ static void RunInferenceContractSelfTest()
         AssertContract(InferenceBatchSchemaParser.ParseManifest(legacyManifestPath).SchemaVersion == 2, "legacy manifest compatibility");
         AssertContract(InferenceBatchSchemaParser.ParseInferResult(legacyInferPath).SchemaVersion == 1, "legacy infer compatibility");
 
+        string originalLegacyManifest = File.ReadAllText(legacyManifestPath);
+        WriteMigrationReport(
+            testRoot,
+            "legacy_contract_test",
+            legacyManifestPath,
+            imageCount: 1,
+            legacyCount: 0,
+            reviewCount: 0,
+            migration: new ReviewMigrationReport(),
+            seedConfirmed: 0);
+        AssertContract(
+            File.ReadAllText(legacyManifestPath) == originalLegacyManifest,
+            "migration must not modify manifest");
+        AssertContract(
+            File.Exists(Path.Combine(testRoot, "meta", "review_migration.json")),
+            "migration report sidecar");
+
         Console.WriteLine("SELF-TEST PASS: inference context, schema contracts, and legacy compatibility");
     }
     finally
@@ -305,50 +336,59 @@ static List<string> ReadManifestImagePaths(string batchRoot, string manifestPath
     return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 }
 
-static void UpdateLegacyManifest(string manifestPath)
+static void WriteMigrationReport(
+    string batchRoot,
+    string batchId,
+    string manifestPath,
+    int imageCount,
+    int legacyCount,
+    int reviewCount,
+    ReviewMigrationReport migration,
+    int seedConfirmed)
 {
-    JsonObject root = JsonNode.Parse(File.ReadAllText(manifestPath))?.AsObject()
-                      ?? throw new InvalidDataException("manifest is empty");
-    int currentSchema = root["schema_version"]?.GetValue<int>() ?? 0;
-    string currentStatus = root["inference_context"]?["status"]?.GetValue<string>() ?? "";
-    int currentReviewSchema = root["meta"]?["review_schema_version"]?.GetValue<int>() ?? 0;
-    if (currentSchema >= 3 &&
-        currentReviewSchema == ReviewState.CurrentSchemaVersion &&
-        string.Equals(currentStatus, "not_applicable", StringComparison.OrdinalIgnoreCase))
+    string metaDirectory = Path.Combine(batchRoot, "meta");
+    Directory.CreateDirectory(metaDirectory);
+    string reportPath = Path.Combine(metaDirectory, "review_migration.json");
+    string tempPath = reportPath + ".tmp." + Guid.NewGuid().ToString("N");
+    var report = new
     {
-        return;
-    }
-
-    string backupPath = Path.Combine(
-        Path.GetDirectoryName(manifestPath)!,
-        "manifest.v2.backup.json");
-    if (!File.Exists(backupPath))
-        File.Copy(manifestPath, backupPath, overwrite: false);
-
-    root["schema_version"] = 3;
-    if (string.IsNullOrWhiteSpace(root["batch_type"]?.GetValue<string>()))
-        root["batch_type"] = "no_infer";
-    root["inference_context"] = new JsonObject
-    {
-        ["status"] = "not_applicable",
-        ["reason"] = "manual_seed_no_inference"
+        schema_version = 1,
+        batch_id = batchId,
+        status = migration.Failed == 0 ? "completed" : "failed",
+        source_manifest = Path.GetFileName(manifestPath),
+        source_manifest_sha256 = ComputeFileSha256(manifestPath),
+        source_manifest_modified = false,
+        review_schema_version = ReviewState.CurrentSchemaVersion,
+        image_count = imageCount,
+        legacy_state_count = legacyCount,
+        review_state_count = reviewCount,
+        converted = migration.Converted,
+        already_migrated = migration.AlreadyMigrated,
+        ambiguous = migration.Ambiguous,
+        seed_confirmed = seedConfirmed,
+        failed = migration.Failed,
+        updated_at_utc = DateTime.UtcNow.ToString("O")
     };
-
-    JsonObject meta;
-    if (root["meta"] is JsonObject existingMeta)
-        meta = existingMeta;
-    else
+    try
     {
-        meta = new JsonObject();
-        root["meta"] = meta;
+        File.WriteAllText(
+            tempPath,
+            JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        File.Move(tempPath, reportPath, overwrite: true);
     }
-    meta["review_schema_version"] = ReviewState.CurrentSchemaVersion;
-    meta["legacy_review_migrated_at_utc"] = DateTime.UtcNow.ToString("O");
+    finally
+    {
+        if (File.Exists(tempPath))
+            File.Delete(tempPath);
+    }
+}
 
-    File.WriteAllText(
-        manifestPath,
-        root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
-        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+static string ComputeFileSha256(string path)
+{
+    using var stream = File.OpenRead(path);
+    using var sha256 = System.Security.Cryptography.SHA256.Create();
+    return Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
 }
 
 static int GetCount(Dictionary<ImageReviewDecision, int> counts, ImageReviewDecision decision)

@@ -39,6 +39,7 @@ namespace CoilTrainingUI
         private readonly TrainingDatasetValidator _datasetValidator;
 
         private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _expectedInferenceContextByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, PredictionSnapshot> _predictionByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private const string PredictionOverlayTag = "__prediction_overlay";
         private const string AllBatchFilterLabel = "(전체 배치)";

@@ -72,7 +72,11 @@ namespace CoilTrainingUI
 
             PredictionSnapshot prediction = _predictionByImagePath.TryGetValue(imagePath, out var cached)
                 ? cached
-                : _predictionReader.Read(inferJsonPath);
+                : _predictionReader.Read(
+                    inferJsonPath,
+                    _expectedInferenceContextByImagePath.TryGetValue(imagePath, out var expectedContextId)
+                        ? expectedContextId
+                        : "");
             if (prediction.ParseFailed || !prediction.HasAnomaDecision || !prediction.AnomaIsDefect)
                 return;
 

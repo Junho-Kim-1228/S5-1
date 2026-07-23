@@ -31,8 +31,15 @@ namespace CoilTrainingUI
             ReviewStateLoadResult review = _reviewRepository.Load(imagePath);
             PredictionSnapshot prediction = _predictionByImagePath.TryGetValue(imagePath, out var cached)
                 ? cached
-                : _predictionReader.Read(_inferJsonByImagePath.TryGetValue(imagePath, out var path) ? path : "");
-            TrainingEligibility eligibility = _trainingDatasetSelector.Evaluate(review);
+                : _predictionReader.Read(
+                    _inferJsonByImagePath.TryGetValue(imagePath, out var path) ? path : "",
+                    _expectedInferenceContextByImagePath.TryGetValue(imagePath, out var expectedContextId)
+                        ? expectedContextId
+                        : "");
+            TrainingEligibility eligibility = EvaluateTrainingEligibility(
+                review,
+                prediction,
+                item.RequiresInfer);
             ImageReviewProjection projection = _reviewProjection.Create(review, prediction, eligibility);
             var counts = CountDefectClasses(review.State.Boxes.Select(box => box.ClassName));
 
@@ -70,6 +77,24 @@ namespace CoilTrainingUI
             if (item != null)
                 UpdateGtSummaryForImageItem(item, imagePath);
             RefreshSummaryCounts();
+        }
+
+        private TrainingEligibility EvaluateTrainingEligibility(
+            ReviewStateLoadResult review,
+            PredictionSnapshot prediction,
+            bool requiresInfer)
+        {
+            if (requiresInfer && prediction.ParseFailed)
+            {
+                return new TrainingEligibility
+                {
+                    ExclusionReason = string.IsNullOrWhiteSpace(prediction.Error)
+                        ? "infer.json 검증 실패"
+                        : $"infer.json 검증 실패: {prediction.Error}"
+                };
+            }
+
+            return _trainingDatasetSelector.Evaluate(review);
         }
 
         private void ApplyAnomalyDecisionToItem(ImageItem item, bool isNormal, bool refreshSummary = true)

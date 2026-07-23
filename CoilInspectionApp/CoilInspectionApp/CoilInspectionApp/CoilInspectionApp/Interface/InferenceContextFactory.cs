@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,6 +8,10 @@ namespace CoilInspectionApp
 {
     public static class InferenceContextFactory
     {
+        private static readonly object HashCacheLock = new object();
+        private static readonly Dictionary<string, CachedFileHash> HashCache =
+            new Dictionary<string, CachedFileHash>(StringComparer.OrdinalIgnoreCase);
+
         public static InferenceContextInfo Create(string packagePath, PipelinePackageConfig config)
         {
             if (string.IsNullOrWhiteSpace(packagePath))
@@ -67,9 +72,41 @@ namespace CoilInspectionApp
             if (!File.Exists(path))
                 throw new FileNotFoundException("Inference package file not found.", path);
 
-            using (var stream = File.OpenRead(path))
+            string fullPath = Path.GetFullPath(path);
+            var info = new FileInfo(fullPath);
+            long length = info.Length;
+            long lastWriteTicks = info.LastWriteTimeUtc.Ticks;
+
+            lock (HashCacheLock)
+            {
+                if (HashCache.TryGetValue(fullPath, out var cached) &&
+                    cached.Length == length &&
+                    cached.LastWriteUtcTicks == lastWriteTicks)
+                {
+                    return cached.Sha256;
+                }
+            }
+
+            string hash;
+            using (var stream = File.OpenRead(fullPath))
             using (var sha256 = SHA256.Create())
-                return ToHex(sha256.ComputeHash(stream));
+                hash = ToHex(sha256.ComputeHash(stream));
+
+            info.Refresh();
+            if (info.Length == length && info.LastWriteTimeUtc.Ticks == lastWriteTicks)
+            {
+                lock (HashCacheLock)
+                {
+                    HashCache[fullPath] = new CachedFileHash
+                    {
+                        Length = length,
+                        LastWriteUtcTicks = lastWriteTicks,
+                        Sha256 = hash
+                    };
+                }
+            }
+
+            return hash;
         }
 
         private static string ComputeTextSha256(string value)
@@ -84,6 +121,13 @@ namespace CoilInspectionApp
             foreach (byte value in bytes)
                 builder.Append(value.ToString("x2"));
             return builder.ToString();
+        }
+
+        private sealed class CachedFileHash
+        {
+            public long Length { get; set; }
+            public long LastWriteUtcTicks { get; set; }
+            public string Sha256 { get; set; } = "";
         }
     }
 }
