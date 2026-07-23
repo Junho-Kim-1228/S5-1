@@ -72,6 +72,12 @@ public sealed class InferencePackageDeploymentService
 
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(pipelinePath));
         JsonElement root = document.RootElement;
+        int schemaVersion = root.TryGetProperty("schema_version", out JsonElement schemaElement) &&
+                            schemaElement.TryGetInt32(out int parsedSchemaVersion)
+            ? parsedSchemaVersion
+            : 0;
+        if (schemaVersion >= 4)
+            ValidateAutoReview(root);
         if (!root.TryGetProperty("pipeline", out JsonElement pipeline)
             || !pipeline.TryGetProperty("required_models", out JsonElement requiredModels)
             || requiredModels.ValueKind != JsonValueKind.Array)
@@ -158,6 +164,40 @@ public sealed class InferencePackageDeploymentService
         {
             throw new InvalidDataException($"pipeline.json의 mask.{propertyName}은 숫자 3개 배열이어야 합니다.");
         }
+    }
+
+    private static void ValidateAutoReview(JsonElement root)
+    {
+        if (!root.TryGetProperty("auto_review", out JsonElement section) ||
+            section.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("pipeline schema 4 requires auto_review settings.");
+        }
+
+        if (!section.TryGetProperty("enabled", out JsonElement enabled) ||
+            enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
+            !section.TryGetProperty("policy_version", out JsonElement version) ||
+            string.IsNullOrWhiteSpace(version.GetString()) ||
+            !TryGetFiniteDouble(section, "anoma_normal_threshold_multiplier", out double normalMultiplier) ||
+            normalMultiplier < 0 || normalMultiplier >= 1 ||
+            !TryGetFiniteDouble(section, "anoma_defect_threshold_multiplier", out double defectMultiplier) ||
+            defectMultiplier <= 1 ||
+            !TryGetFiniteDouble(section, "yolo_box_min_confidence", out double boxConfidence) ||
+            boxConfidence < 0 || boxConfidence > 1 ||
+            !TryGetFiniteDouble(section, "audit_sample_rate", out double auditRate) ||
+            auditRate < 0 || auditRate > 1)
+        {
+            throw new InvalidDataException("pipeline.json auto_review settings are invalid.");
+        }
+    }
+
+    private static bool TryGetFiniteDouble(JsonElement section, string propertyName, out double value)
+    {
+        value = 0;
+        return section.TryGetProperty(propertyName, out JsonElement element) &&
+               element.TryGetDouble(out value) &&
+               !double.IsNaN(value) &&
+               !double.IsInfinity(value);
     }
 
     private static void ValidateTargetOrThrow(string source, string target)

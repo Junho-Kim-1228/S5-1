@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "pipeline": {
     "mode": "anoma_then_yolo",
     "display_name": "2단계 (Anoma -> YOLO)",
@@ -18,6 +18,14 @@
   "output": {
     "format": "json",
     "schema": "detections_v1"
+  },
+  "auto_review": {
+    "enabled": true,
+    "policy_version": "auto_review_v1",
+    "anoma_normal_threshold_multiplier": 0.5,
+    "anoma_defect_threshold_multiplier": 2.0,
+    "yolo_box_min_confidence": 0.85,
+    "audit_sample_rate": 0.1
   },
   "mask": {
     "model": "models/mask.onnx",

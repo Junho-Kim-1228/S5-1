@@ -66,8 +66,8 @@ namespace CoilTrainingUI
             }
 
             var confirm = MessageBox.Show(
-                $"AI 예측 박스 {prediction.YoloDetectionCount}개로 현재 확정 박스를 교체할까요?\n" +
-                "이 작업은 사용자 동작으로 기록되며, 이후 박스를 수정할 수 있습니다.",
+                $"AI 예측 박스 {prediction.YoloDetectionCount}개를 편집 가능한 검수 박스로 수락할까요?\n" +
+                "수락 후 박스를 확인·수정하고 '박스 검수 완료'를 눌러야 최종 확정됩니다.",
                 "AI 박스 전체 수락",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
@@ -79,6 +79,7 @@ namespace CoilTrainingUI
                 ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
                 ReviewState next = _reviewWorkflow.AcceptPredictionBoxes(current, prediction);
                 _reviewRepository.Save(item.ProcessedPath, next);
+                ShowPredictionCheckBox.IsChecked = false;
                 ReloadAfterExplicitReviewChange(item, reloadCanvas: true);
             }
             catch (Exception ex)
@@ -207,6 +208,7 @@ namespace CoilTrainingUI
 
             string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
             RefreshAllImagesFromTrainingInbox(selectedPath, _currentBatchRoot);
+            ShowPredictionCheckBox.IsChecked = false;
             MessageBox.Show($"저장 {saved}개 / 실패 {failures.Count}개" +
                             (failures.Count > 0 ? "\n" + string.Join("\n", failures.Take(10)) : ""));
         }

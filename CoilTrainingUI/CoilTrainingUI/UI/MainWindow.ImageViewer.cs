@@ -85,11 +85,13 @@ namespace CoilTrainingUI
 
                 _currentReviewState = review.State.Clone();
 
-                if (_currentReviewState.Boxes.Count > 0)
+                IReadOnlyList<ReviewBox> editableReviewBoxes =
+                    ReviewBoxLayerPolicy.GetEditableBoxes(_currentReviewState);
+                if (editableReviewBoxes.Count > 0)
                 {
                     var mutable = _imageStateManager.GetMutableLabels(imagePath);
 
-                    foreach (var label in _currentReviewState.Boxes)
+                    foreach (var label in editableReviewBoxes)
                     {
                         mutable.Add(new BoundingBox
                         {

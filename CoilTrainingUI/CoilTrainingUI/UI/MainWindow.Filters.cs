@@ -252,6 +252,8 @@ namespace CoilTrainingUI
             ConfirmedNormalCountText.Text = $"정상 확정 {uniqueImages.Count(item => item.IsReviewConfirmedNormal)}";
             ConfirmedDefectCountText.Text = $"불량 확정 {uniqueImages.Count(item => item.IsReviewConfirmedDefect)}";
             ExcludedCountText.Text = $"학습 제외 {uniqueImages.Count(item => item.IsReviewExcluded)}";
+            AutoAcceptedCountText.Text = $"AI 자동수락 {uniqueImages.Count(item => item.IsAutoAccepted)}";
+            AutoAuditCountText.Text = $"표본 검수 {uniqueImages.Count(item => item.IsAutoReviewAudit)}";
             AnomaTrainEligibleCountText.Text = $"Anoma 학습 {uniqueImages.Count(item => item.AnomaTrainingEligible)}";
             AnomaEvalEligibleCountText.Text = $"Anoma 평가 {uniqueImages.Count(item => item.AnomaEvaluationEligible)}";
             YoloPositiveEligibleCountText.Text = $"YOLO 양성 {uniqueImages.Count(item => item.YoloPositiveEligible)}";

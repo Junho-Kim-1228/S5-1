@@ -41,6 +41,17 @@ namespace CoilInspectionApp
                 pipeline_mode = config.pipeline.mode ?? "",
                 package_fingerprint = packageFingerprint,
                 pipeline_sha256 = pipelineHash,
+                auto_review = config.auto_review == null
+                    ? null
+                    : new AutoReviewInferenceContext
+                    {
+                        enabled = config.auto_review.enabled,
+                        policy_version = config.auto_review.policy_version ?? "",
+                        anoma_normal_threshold_multiplier = config.auto_review.anoma_normal_threshold_multiplier,
+                        anoma_defect_threshold_multiplier = config.auto_review.anoma_defect_threshold_multiplier,
+                        yolo_box_min_confidence = config.auto_review.yolo_box_min_confidence,
+                        audit_sample_rate = config.auto_review.audit_sample_rate
+                    },
                 mask = config.RequiresMask
                     ? new MaskInferenceContext
                     {

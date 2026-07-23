@@ -1,8 +1,10 @@
+using CoilTrainingUI.Converters;
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
 using CoilTrainingUI.Services.Imaging;
 using CoilTrainingUI.Services.Review;
+using System.Globalization;
 using System.Text.Json;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -14,6 +16,7 @@ internal sealed class CoreReviewTests
 {
     private readonly ReviewRepository _repository = new();
     private readonly ReviewWorkflowService _workflow = new();
+    private readonly AutoReviewService _autoReview = new();
     private readonly TrainingDatasetSelector _selector;
     private int _passed;
 
@@ -28,7 +31,7 @@ internal sealed class CoreReviewTests
         Directory.CreateDirectory(root);
         try
         {
-            Run("load and selection are read-only", () => LoadAndSelectionAreReadOnly(root));
+            Run("batch manifest reader remains read-only", () => BatchManifestReaderIsReadOnly(root));
             Run("confirmed normal survives reload", () => ConfirmedNormalSurvivesReload(root));
             Run("confirmed defect survives reload", () => ConfirmedDefectSurvivesReload(root));
             Run("accepted and edited boxes survive reload", () => BoxesSurviveReload(root));
@@ -39,6 +42,7 @@ internal sealed class CoreReviewTests
             Run("ambiguous legacy data stays reviewing", () => AmbiguousMigrationStaysReviewing(root));
             Run("selection stays inside supplied batch scope", () => SelectionStaysInScope(root));
             Run("projection flags match persisted state", () => ProjectionFlagsMatchState(root));
+            Run("image list colors distinguish pending box review", ImageListColorsDistinguishPendingBoxes);
             Run("Anoma alone controls accepted AI decision", AcceptAiDecisionUsesAnomaOnly);
             Run("pipeline contract is Anoma then YOLO without fusion", PipelineContractIsCorrect);
             Run("inference context mismatch is rejected", () => InferenceContextMismatchIsRejected(root));
@@ -49,7 +53,14 @@ internal sealed class CoreReviewTests
             Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
             Run("inference package rejects a missing mask model", () => MissingMaskModelIsRejected(root));
             Run("image cache reuses and invalidates frozen bitmaps", () => ImageCacheIsBoundedAndFresh(root));
-            Console.WriteLine($"PASS: {_passed}/21 core review tests");
+            Run("auto review accepts high-confidence normal", () => AutoReviewAcceptsNormal(root));
+            Run("auto review confirms only high-confidence boxes", () => AutoReviewConfirmsHighConfidenceBoxes(root));
+            Run("auto-reviewed boxless defect stays Anoma-only", () => AutoReviewBoxlessDefectIsAnomaOnly(root));
+            Run("auto review leaves gray-zone prediction untouched", AutoReviewLeavesGrayZoneUntouched);
+            Run("auto review audit sample remains unreviewed", AutoReviewAuditSampleRemainsUnreviewed);
+            Run("auto review protects existing user state", AutoReviewProtectsExistingState);
+            Run("prediction-only boxes stay out of editable layer", PredictionOnlyBoxesStayOutOfEditableLayer);
+            Console.WriteLine($"PASS: {_passed}/29 core review tests");
         }
         finally
         {
@@ -81,6 +92,190 @@ internal sealed class CoreReviewTests
         Assert(!ReferenceEquals(first, refreshed), "changed image reused a stale cache entry");
         Assert(refreshed.PixelWidth == 9 && refreshed.PixelHeight == 8,
             "changed image dimensions were not reloaded");
+    }
+
+    private void AutoReviewAcceptsNormal(string root)
+    {
+        string image = NewImage(root, "auto_normal.bmp");
+        AutoReviewEvaluation evaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            NormalPrediction(score: 0.005, threshold: 0.02),
+            AutoPolicy(),
+            "batch/auto_normal");
+
+        Assert(evaluation.Disposition == AutoReviewDisposition.AcceptedNormal,
+            "high-confidence normal was not accepted");
+        _repository.Save(image, evaluation.StateToPersist!);
+        ReviewStateLoadResult loaded = _repository.Load(image);
+        Assert(loaded.State.Decision == ImageReviewDecision.ConfirmedNormal,
+            "auto normal decision was not persisted");
+        Assert(loaded.State.DecisionSource == ReviewDecisionSource.AutoAcceptedAiPrediction,
+            "auto normal source was not preserved");
+        Assert(loaded.State.AutoReview?.DecisionAutoAccepted == true,
+            "auto normal metadata is missing");
+        Assert(_selector.Evaluate(loaded).AnomaTraining,
+            "auto normal must be eligible for Anoma training");
+    }
+
+    private void AutoReviewConfirmsHighConfidenceBoxes(string root)
+    {
+        string image = NewImage(root, "auto_boxes.bmp");
+        PredictionSnapshot prediction = DefectPrediction(
+            PredictionBox("dent", 0.94),
+            PredictionBox("loose", 0.91));
+        AutoReviewEvaluation evaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            prediction,
+            AutoPolicy(),
+            "batch/auto_boxes");
+
+        Assert(evaluation.Disposition == AutoReviewDisposition.AcceptedDefectWithBoxes,
+            "high-confidence boxes were not auto-confirmed");
+        _repository.Save(image, evaluation.StateToPersist!);
+        ReviewStateLoadResult loaded = _repository.Load(image);
+        Assert(loaded.State.Decision == ImageReviewDecision.ConfirmedDefect,
+            "auto defect decision was not persisted");
+        Assert(loaded.State.BoxReview == BoxReviewDecision.Confirmed &&
+               loaded.State.BoxReviewSource == BoxReviewSource.AutoAcceptedAiPrediction,
+            "auto box source/status was not preserved");
+        Assert(_selector.Evaluate(loaded).YoloPositive,
+            "auto-confirmed boxes must be eligible for YOLO training");
+
+        AutoReviewEvaluation lowBox = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            DefectPrediction(PredictionBox("dent", 0.84)),
+            AutoPolicy(),
+            "batch/low_box");
+        Assert(lowBox.StateToPersist?.Decision == ImageReviewDecision.ConfirmedDefect,
+            "low-confidence box must not block the Anoma defect decision");
+        ReviewState lowBoxState = lowBox.StateToPersist ??
+                                  throw new InvalidOperationException("low-confidence state is missing");
+        Assert(lowBoxState.BoxReview == BoxReviewDecision.Predicted &&
+               lowBoxState.BoxReviewSource == BoxReviewSource.AiPrediction,
+            "low-confidence box was incorrectly confirmed");
+        Assert(lowBoxState.Boxes.Count == 0,
+            "low-confidence AI boxes leaked into confirmed review boxes");
+    }
+
+    private void AutoReviewBoxlessDefectIsAnomaOnly(string root)
+    {
+        string image = NewImage(root, "auto_boxless.bmp");
+        AutoReviewEvaluation evaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            DefectPrediction(),
+            AutoPolicy(),
+            "batch/auto_boxless");
+        _repository.Save(image, evaluation.StateToPersist!);
+
+        ReviewStateLoadResult loaded = _repository.Load(image);
+        TrainingEligibility eligibility = _selector.Evaluate(loaded);
+        Assert(loaded.State.Decision == ImageReviewDecision.ConfirmedDefect,
+            "boxless auto-reviewed image must remain defect");
+        Assert(eligibility.AnomaEvaluation, "boxless defect must be eligible for Anoma evaluation");
+        Assert(!eligibility.YoloPositive && eligibility.YoloExcludedDefectWithoutBoxes,
+            "boxless defect must be excluded from YOLO training");
+    }
+
+    private void AutoReviewLeavesGrayZoneUntouched()
+    {
+        AutoReviewEvaluation evaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            DefectPredictionWithScore(score: 0.03, threshold: 0.02),
+            AutoPolicy(),
+            "batch/gray");
+        Assert(!evaluation.ShouldPersist && evaluation.Disposition == AutoReviewDisposition.NotApplied,
+            "gray-zone prediction changed review state");
+    }
+
+    private void AutoReviewAuditSampleRemainsUnreviewed()
+    {
+        AutoReviewPolicy policy = AutoPolicy(auditSampleRate: 1.0);
+        AutoReviewEvaluation evaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            NormalPrediction(score: 0.001, threshold: 0.02),
+            policy,
+            "batch/audit");
+        Assert(evaluation.Disposition == AutoReviewDisposition.AuditHeld,
+            "audit sample was not held");
+        Assert(evaluation.StateToPersist?.Decision == ImageReviewDecision.Unreviewed,
+            "audit sample must remain unreviewed");
+        Assert(evaluation.StateToPersist?.AutoReview?.HeldForAudit == true,
+            "audit metadata is missing");
+
+        ReviewState manuallyConfirmed = _workflow.ConfirmNormal(
+            evaluation.StateToPersist ?? throw new InvalidOperationException("audit state is missing"),
+            useAsYoloBackground: true);
+        var manualLoad = new ReviewStateLoadResult
+        {
+            HasReviewFile = true,
+            State = manuallyConfirmed
+        };
+        ImageReviewProjection projection = new ReviewProjectionService().Create(
+            manualLoad,
+            NormalPrediction(score: 0.001, threshold: 0.02),
+            _selector.Evaluate(manualLoad));
+        Assert(!projection.IsAutoReviewAudit && projection.IsConfirmedNormal,
+            "completed audit remained displayed as pending");
+    }
+
+    private void AutoReviewProtectsExistingState()
+    {
+        var existing = new ReviewStateLoadResult
+        {
+            HasReviewFile = true,
+            State = _workflow.ConfirmNormal(new ReviewState(), useAsYoloBackground: true)
+        };
+        AutoReviewEvaluation evaluation = _autoReview.Evaluate(
+            existing,
+            DefectPrediction(),
+            AutoPolicy(),
+            "batch/protected");
+        Assert(!evaluation.ShouldPersist,
+            "auto review attempted to overwrite existing user state");
+        Assert(existing.State.Decision == ImageReviewDecision.ConfirmedNormal &&
+               existing.State.DecisionSource == ReviewDecisionSource.Manual,
+            "existing user state was changed in memory");
+    }
+
+    private void PredictionOnlyBoxesStayOutOfEditableLayer()
+    {
+        PredictionSnapshot prediction = DefectPrediction(PredictionBox("loose", 0.70));
+        var existingPredictionState = new ReviewState
+        {
+            Decision = ImageReviewDecision.ConfirmedDefect,
+            BoxReview = BoxReviewDecision.Predicted,
+            BoxReviewSource = BoxReviewSource.AiPrediction,
+            Boxes = prediction.YoloBoxes.Select(box => box.Clone()).ToList()
+        };
+
+        Assert(ReviewBoxLayerPolicy.GetEditableBoxes(existingPredictionState).Count == 0,
+            "prediction-only boxes were exposed as editable boxes");
+        var predictionLoad = new ReviewStateLoadResult
+        {
+            HasReviewFile = true,
+            State = existingPredictionState
+        };
+        ImageReviewProjection predictionProjection = new ReviewProjectionService().Create(
+            predictionLoad,
+            prediction,
+            _selector.Evaluate(predictionLoad));
+        Assert(predictionProjection.BoxStatusText.Contains("1개", StringComparison.Ordinal),
+            "prediction-only box count was lost from the list projection");
+
+        ReviewState accepted = _workflow.AcceptPredictionBoxes(existingPredictionState, prediction);
+        Assert(accepted.BoxReview == BoxReviewDecision.Edited &&
+               accepted.BoxReviewSource == BoxReviewSource.AcceptedAiPrediction,
+            "explicit AI box acceptance was not recorded separately");
+        Assert(ReviewBoxLayerPolicy.GetEditableBoxes(accepted).Count == 1,
+            "explicitly accepted boxes were not exposed to the editor");
+
+        AutoReviewEvaluation highConfidence = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            DefectPrediction(PredictionBox("dent", 0.91)),
+            AutoPolicy(),
+            "batch/confirmed_layer");
+        Assert(ReviewBoxLayerPolicy.GetEditableBoxes(highConfidence.StateToPersist!).Count == 1,
+            "auto-confirmed high-confidence boxes were hidden from the editor");
     }
 
     private static void WriteBmp(string path, int width, int height, byte blue)
@@ -332,7 +527,7 @@ internal sealed class CoreReviewTests
         });
     }
 
-    private void LoadAndSelectionAreReadOnly(string root)
+    private void BatchManifestReaderIsReadOnly(string root)
     {
         string inbox = Path.Combine(root, "read_only_inbox");
         string batch = Path.Combine(inbox, "batch-a");
@@ -537,6 +732,46 @@ internal sealed class CoreReviewTests
             _selector.Evaluate(_repository.Load(excluded)));
         Assert(normalView.IsConfirmedNormal && defectView.IsConfirmedDefect && excludedView.IsExcluded,
             "projection summary flags mismatch");
+        Assert(normalView.StatusColorMeaningText.StartsWith("초록색", StringComparison.Ordinal) &&
+               defectView.StatusColorMeaningText.StartsWith("주황색", StringComparison.Ordinal) &&
+               excludedView.StatusColorMeaningText.StartsWith("회색", StringComparison.Ordinal),
+            "projection color explanations do not match review state");
+    }
+
+    private static void ImageListColorsDistinguishPendingBoxes()
+    {
+        Assert(StatusColor(new ImageItem
+        {
+            IsReviewConfirmedDefect = true,
+            IsBoxReviewConfirmed = false
+        }) == Color.FromRgb(255, 226, 179),
+            "defect with pending box review must be orange");
+
+        Assert(StatusColor(new ImageItem
+        {
+            IsReviewConfirmedDefect = true,
+            IsBoxReviewConfirmed = true
+        }) == Color.FromRgb(255, 220, 220),
+            "defect with confirmed boxes must be red");
+
+        Assert(StatusColor(new ImageItem { IsReviewConfirmedNormal = true }) ==
+               Color.FromRgb(220, 255, 225),
+            "confirmed normal must be green");
+        Assert(StatusColor(new ImageItem { IsAutoReviewAudit = true }) ==
+               Color.FromRgb(232, 221, 255),
+            "audit sample must use its own highlight color");
+        Assert(StatusColor(new ImageItem()) == Color.FromRgb(255, 247, 220),
+            "unreviewed image must be yellow");
+    }
+
+    private static Color StatusColor(ImageItem item)
+    {
+        var converter = new ImageStatusToColorConverter();
+        return ((SolidColorBrush)converter.Convert(
+            item,
+            typeof(Brush),
+            parameter: null!,
+            CultureInfo.InvariantCulture)).Color;
     }
 
     private void AcceptAiDecisionUsesAnomaOnly()
@@ -558,7 +793,7 @@ internal sealed class CoreReviewTests
         using JsonDocument document = JsonDocument.Parse(JsonSerializer.Serialize(config));
         JsonElement root = document.RootElement;
         JsonElement pipeline = root.GetProperty("pipeline");
-        Assert(root.GetProperty("schema_version").GetInt32() == 3, "pipeline schema version mismatch");
+        Assert(root.GetProperty("schema_version").GetInt32() == 4, "pipeline schema version mismatch");
         Assert(pipeline.GetProperty("mode").GetString() == "anoma_then_yolo", "pipeline mode mismatch");
         Assert(pipeline.GetProperty("skip_yolo_when_stage1_normal").GetBoolean(), "YOLO skip flag mismatch");
         Assert(root.GetProperty("yolo").GetProperty("imgsz").GetInt32() == 1280,
@@ -567,6 +802,14 @@ internal sealed class CoreReviewTests
             "Mask inference size must be 512");
         Assert(pipeline.GetProperty("required_models").EnumerateArray()
             .Any(item => item.GetString() == "mask"), "Mask must be a required package model");
+        JsonElement autoReview = root.GetProperty("auto_review");
+        Assert(autoReview.GetProperty("enabled").GetBoolean(), "auto review must be enabled");
+        Assert(autoReview.GetProperty("anoma_normal_threshold_multiplier").GetDouble() == 0.5,
+            "auto normal multiplier mismatch");
+        Assert(autoReview.GetProperty("anoma_defect_threshold_multiplier").GetDouble() == 2.0,
+            "auto defect multiplier mismatch");
+        Assert(autoReview.GetProperty("yolo_box_min_confidence").GetDouble() == 0.85,
+            "auto YOLO confidence mismatch");
         Assert(!root.TryGetProperty("fusion", out _), "legacy fusion section must not be emitted");
     }
 
@@ -658,13 +901,52 @@ internal sealed class CoreReviewTests
             "training validation did not reject mismatched context");
     }
 
-    private static PredictionSnapshot DefectPrediction(params ReviewBox[] boxes) => new()
+    private static PredictionSnapshot DefectPrediction(params ReviewBox[] boxes)
+        => DefectPredictionWithScore(score: 0.10, threshold: 0.02, boxes: boxes);
+
+    private static PredictionSnapshot DefectPredictionWithScore(
+        double score,
+        double threshold,
+        params ReviewBox[] boxes) => new()
     {
         HasFile = true,
         HasAnomaDecision = true,
         AnomaIsDefect = true,
-        AnomaScore = 0.9,
+        AnomaScore = score,
+        AnomaScoreThreshold = threshold,
+        InferenceContextId = "ctx_auto_review_test",
         YoloBoxes = boxes
+    };
+
+    private static PredictionSnapshot NormalPrediction(double score, double threshold) => new()
+    {
+        HasFile = true,
+        HasAnomaDecision = true,
+        AnomaIsDefect = false,
+        AnomaScore = score,
+        AnomaScoreThreshold = threshold,
+        InferenceContextId = "ctx_auto_review_test"
+    };
+
+    private static AutoReviewPolicy AutoPolicy(double auditSampleRate = 0) => new()
+    {
+        Enabled = true,
+        PolicyVersion = "auto_review_test_v1",
+        AnomaNormalThresholdMultiplier = 0.5,
+        AnomaDefectThresholdMultiplier = 2.0,
+        YoloBoxMinConfidence = 0.85,
+        AuditSampleRate = auditSampleRate
+    };
+
+    private static ReviewBox PredictionBox(string className, double confidence) => new()
+    {
+        ClassName = className,
+        X = 0.5,
+        Y = 0.5,
+        Width = 0.2,
+        Height = 0.2,
+        Source = "ai_prediction",
+        PredictionConfidence = confidence
     };
 
     private static TrainingImageInput Input(string imagePath, string batchKey) => new()

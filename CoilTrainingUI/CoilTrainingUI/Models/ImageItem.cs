@@ -32,12 +32,16 @@ public sealed class ImageItem : INotifyPropertyChanged
     private string _aiYoloSummaryText = "YOLO 0개";
     private string _trainingEligibilityText = "학습 제외";
     private string _trainingExclusionReasonText = "";
+    private string _statusColorMeaningText = "노란색: 아직 검수하지 않은 이미지입니다.";
     private bool _needsLegacyMigration;
     private bool _isReviewUnreviewed = true;
     private bool _isReviewing;
     private bool _isReviewConfirmedNormal;
     private bool _isReviewConfirmedDefect;
+    private bool _isBoxReviewConfirmed;
     private bool _isReviewExcluded;
+    private bool _isAutoAccepted;
+    private bool _isAutoReviewAudit;
     private bool _anomaTrainingEligible;
     private bool _anomaEvaluationEligible;
     private bool _yoloPositiveEligible;
@@ -68,12 +72,16 @@ public sealed class ImageItem : INotifyPropertyChanged
     public string AiYoloSummaryText { get => _aiYoloSummaryText; set => SetField(ref _aiYoloSummaryText, value); }
     public string TrainingEligibilityText { get => _trainingEligibilityText; set => SetField(ref _trainingEligibilityText, value); }
     public string TrainingExclusionReasonText { get => _trainingExclusionReasonText; set => SetField(ref _trainingExclusionReasonText, value); }
+    public string StatusColorMeaningText { get => _statusColorMeaningText; set => SetField(ref _statusColorMeaningText, value); }
     public bool NeedsLegacyMigration { get => _needsLegacyMigration; set => SetField(ref _needsLegacyMigration, value); }
     public bool IsReviewUnreviewed { get => _isReviewUnreviewed; set => SetField(ref _isReviewUnreviewed, value); }
     public bool IsReviewing { get => _isReviewing; set => SetField(ref _isReviewing, value); }
     public bool IsReviewConfirmedNormal { get => _isReviewConfirmedNormal; set => SetField(ref _isReviewConfirmedNormal, value); }
     public bool IsReviewConfirmedDefect { get => _isReviewConfirmedDefect; set => SetField(ref _isReviewConfirmedDefect, value); }
+    public bool IsBoxReviewConfirmed { get => _isBoxReviewConfirmed; set => SetField(ref _isBoxReviewConfirmed, value); }
     public bool IsReviewExcluded { get => _isReviewExcluded; set => SetField(ref _isReviewExcluded, value); }
+    public bool IsAutoAccepted { get => _isAutoAccepted; set => SetField(ref _isAutoAccepted, value); }
+    public bool IsAutoReviewAudit { get => _isAutoReviewAudit; set => SetField(ref _isAutoReviewAudit, value); }
     public bool AnomaTrainingEligible { get => _anomaTrainingEligible; set => SetField(ref _anomaTrainingEligible, value); }
     public bool AnomaEvaluationEligible { get => _anomaEvaluationEligible; set => SetField(ref _anomaEvaluationEligible, value); }
     public bool YoloPositiveEligible { get => _yoloPositiveEligible; set => SetField(ref _yoloPositiveEligible, value); }

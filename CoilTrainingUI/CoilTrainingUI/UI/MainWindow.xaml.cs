@@ -7,6 +7,7 @@ using CoilTrainingUI.Services.Review;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -35,10 +36,12 @@ namespace CoilTrainingUI
         private readonly ReviewRepository _reviewRepository = new();
         private readonly PredictionReader _predictionReader = new();
         private readonly ReviewWorkflowService _reviewWorkflow = new();
+        private readonly AutoReviewService _autoReviewService = new();
         private readonly ReviewProjectionService _reviewProjection = new();
         private readonly LegacyReviewMigrationService _reviewMigrationService;
         private readonly TrainingDatasetSelector _trainingDatasetSelector;
         private readonly TrainingDatasetValidator _datasetValidator;
+        private AutoReviewPolicy _fallbackAutoReviewPolicy = AutoReviewPolicy.Disabled;
 
         private readonly Dictionary<string, string> _inferJsonByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _expectedInferenceContextByImagePath = new(StringComparer.OrdinalIgnoreCase);
@@ -355,6 +358,7 @@ namespace CoilTrainingUI
         public MainWindow()
         {
             InitializeComponent();
+            _fallbackAutoReviewPolicy = LoadFallbackAutoReviewPolicy();
             _batchImportService = new BatchImportService(_batchLibraryService);
             _reviewMigrationService = new LegacyReviewMigrationService(_reviewRepository);
             _trainingDatasetSelector = new TrainingDatasetSelector(_reviewRepository);
@@ -398,6 +402,32 @@ namespace CoilTrainingUI
                 CancelAndDispose(ref _rawViewLoadCancellation);
                 _imageBitmapCache.Clear();
             };
+        }
+
+        private AutoReviewPolicy LoadFallbackAutoReviewPolicy()
+        {
+            try
+            {
+                AppSettings settings = AppSettingsLoader.LoadOrThrow(
+                    FindProjectRoot("capstone_design"),
+                    requireYoloPython: false,
+                    requireAnomaPython: false);
+                AutoReviewSection section = settings.AutoReview ?? new AutoReviewSection();
+                return new AutoReviewPolicy
+                {
+                    Enabled = section.Enabled,
+                    PolicyVersion = section.PolicyVersion,
+                    AnomaNormalThresholdMultiplier = section.AnomaNormalThresholdMultiplier,
+                    AnomaDefectThresholdMultiplier = section.AnomaDefectThresholdMultiplier,
+                    YoloBoxMinConfidence = section.YoloBoxMinConfidence,
+                    AuditSampleRate = section.AuditSampleRate
+                };
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"auto review settings load failed; auto review disabled: {ex}");
+                return AutoReviewPolicy.Disabled;
+            }
         }
 
     }

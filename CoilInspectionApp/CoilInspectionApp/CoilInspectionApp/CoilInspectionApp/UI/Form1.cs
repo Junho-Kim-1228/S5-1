@@ -370,7 +370,33 @@ namespace CoilInspectionApp
             if (!config.RequiresMask || config.mask == null || string.IsNullOrWhiteSpace(config.mask.model))
                 throw new InvalidOperationException("pipeline.json missing required mask.model.");
 
+            if (config.schema_version >= 4)
+                ValidateAutoReviewConfigOrThrow(config.auto_review);
+
             return config;
+        }
+
+        private static void ValidateAutoReviewConfigOrThrow(AutoReviewSection config)
+        {
+            if (config == null || string.IsNullOrWhiteSpace(config.policy_version) ||
+                float.IsNaN(config.anoma_normal_threshold_multiplier) ||
+                float.IsInfinity(config.anoma_normal_threshold_multiplier) ||
+                config.anoma_normal_threshold_multiplier < 0 ||
+                config.anoma_normal_threshold_multiplier >= 1 ||
+                float.IsNaN(config.anoma_defect_threshold_multiplier) ||
+                float.IsInfinity(config.anoma_defect_threshold_multiplier) ||
+                config.anoma_defect_threshold_multiplier <= 1 ||
+                float.IsNaN(config.yolo_box_min_confidence) ||
+                float.IsInfinity(config.yolo_box_min_confidence) ||
+                config.yolo_box_min_confidence < 0 ||
+                config.yolo_box_min_confidence > 1 ||
+                float.IsNaN(config.audit_sample_rate) ||
+                float.IsInfinity(config.audit_sample_rate) ||
+                config.audit_sample_rate < 0 ||
+                config.audit_sample_rate > 1)
+            {
+                throw new InvalidOperationException("pipeline.json auto_review settings are invalid.");
+            }
         }
 
         private static MaskOnnxRunner LoadMaskOnnxRunnerOrThrow(

@@ -29,8 +29,20 @@ public enum ReviewDecisionSource
     None,
     Manual,
     AcceptedAiPrediction,
+    AutoAcceptedAiPrediction,
     LegacyManual,
     LegacyAuto,
+    LegacyUnknown
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum BoxReviewSource
+{
+    None,
+    AiPrediction,
+    AcceptedAiPrediction,
+    Manual,
+    AutoAcceptedAiPrediction,
     LegacyUnknown
 }
 
@@ -71,7 +83,7 @@ public sealed class ReviewBox
 
 public sealed class ReviewState
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     [JsonPropertyName("schema_version")]
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
@@ -84,6 +96,9 @@ public sealed class ReviewState
 
     [JsonPropertyName("box_review")]
     public BoxReviewDecision BoxReview { get; set; } = BoxReviewDecision.NotApplicable;
+
+    [JsonPropertyName("box_review_source")]
+    public BoxReviewSource BoxReviewSource { get; set; } = BoxReviewSource.None;
 
     [JsonPropertyName("boxes")]
     public List<ReviewBox> Boxes { get; set; } = new();
@@ -109,6 +124,9 @@ public sealed class ReviewState
     [JsonPropertyName("migration")]
     public ReviewMigrationMetadata? Migration { get; set; }
 
+    [JsonPropertyName("auto_review")]
+    public AutoReviewMetadata? AutoReview { get; set; }
+
     public ReviewState Clone()
     {
         return new ReviewState
@@ -117,6 +135,7 @@ public sealed class ReviewState
             Decision = Decision,
             DecisionSource = DecisionSource,
             BoxReview = BoxReview,
+            BoxReviewSource = BoxReviewSource,
             Boxes = Boxes.ConvertAll(box => box.Clone()),
             UseAsYoloBackground = UseAsYoloBackground,
             ExclusionReason = ExclusionReason,
@@ -124,7 +143,8 @@ public sealed class ReviewState
             UpdatedAtUtc = UpdatedAtUtc,
             DecisionConfirmedAtUtc = DecisionConfirmedAtUtc,
             BoxesConfirmedAtUtc = BoxesConfirmedAtUtc,
-            Migration = Migration?.Clone()
+            Migration = Migration?.Clone(),
+            AutoReview = AutoReview?.Clone()
         };
     }
 }

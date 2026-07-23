@@ -18,6 +18,7 @@ namespace CoilTrainingUI.Services
         public YoloInferSection YoloInfer { get; set; } = new();
         public AnomaInferSection AnomaInfer { get; set; } = new();
         public MaskInferSection MaskInfer { get; set; } = new();
+        public AutoReviewSection AutoReview { get; set; } = new();
 
         public class WorkspaceSection
         {
@@ -352,6 +353,16 @@ namespace CoilTrainingUI.Services
         public bool KeepLargestComponent { get; set; } = true;
         public bool PreserveInnerHoles { get; set; } = true;
         public int MinHoleArea { get; set; } = 64;
+    }
+
+    public class AutoReviewSection
+    {
+        public bool Enabled { get; set; } = true;
+        public string PolicyVersion { get; set; } = "auto_review_v1";
+        public double AnomaNormalThresholdMultiplier { get; set; } = 0.5;
+        public double AnomaDefectThresholdMultiplier { get; set; } = 2.0;
+        public double YoloBoxMinConfidence { get; set; } = 0.85;
+        public double AuditSampleRate { get; set; } = 0.10;
     }
 
 }

@@ -24,13 +24,14 @@ public static class InferencePipelineConfigBuilder
         bool requiresYolo = mode is AnomaThenYolo or YoloOnly;
         int anomaInputSize = calibratedAnomaInputSize ?? settings.AnomaInfer.InputSize;
         double anomaThreshold = calibratedAnomaThreshold ?? settings.AnomaInfer.ScoreThres;
+        AutoReviewSection autoReview = settings.AutoReview ?? new AutoReviewSection();
         var requiredModels = new List<string> { "mask" };
         if (requiresAnoma) requiredModels.Add("anoma");
         if (requiresYolo) requiredModels.Add("yolo");
 
         var root = new Dictionary<string, object?>
         {
-            ["schema_version"] = 3,
+            ["schema_version"] = 4,
             ["pipeline"] = new
             {
                 mode,
@@ -42,6 +43,16 @@ public static class InferencePipelineConfigBuilder
             },
             ["input"] = new { image_format = "bmp" },
             ["output"] = new { format = "json", schema = "detections_v1" }
+        };
+
+        root["auto_review"] = new
+        {
+            enabled = autoReview.Enabled,
+            policy_version = autoReview.PolicyVersion,
+            anoma_normal_threshold_multiplier = autoReview.AnomaNormalThresholdMultiplier,
+            anoma_defect_threshold_multiplier = autoReview.AnomaDefectThresholdMultiplier,
+            yolo_box_min_confidence = autoReview.YoloBoxMinConfidence,
+            audit_sample_rate = autoReview.AuditSampleRate
         };
 
         root["mask"] = new

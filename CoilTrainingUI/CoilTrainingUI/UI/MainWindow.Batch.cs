@@ -496,12 +496,14 @@ namespace CoilTrainingUI
                 record.InferJsonPath,
                 record.ExpectedInferenceContextId);
             ReviewStateLoadResult review = _reviewRepository.Load(record.ProcessedPath);
+            review = ApplyAutoReviewOnImport(record, prediction, review);
             TrainingEligibility eligibility = EvaluateTrainingEligibility(
                 review,
                 prediction,
                 record.RequiresInfer);
             ImageReviewProjection projection = _reviewProjection.Create(review, prediction, eligibility);
-            var gtCounts = CountDefectClasses(review.State.Boxes.Select(box => box.ClassName));
+            var gtCounts = CountDefectClasses(
+                ReviewBoxLayerPolicy.GetEditableBoxes(review.State).Select(box => box.ClassName));
 
             _imageStateManager.EnsureImage(record.ProcessedPath);
             _inferJsonByImagePath[record.ProcessedPath] = record.InferJsonPath;
@@ -534,18 +536,43 @@ namespace CoilTrainingUI
                 AiYoloSummaryText = projection.AiYoloText,
                 TrainingEligibilityText = projection.TrainingEligibilityText,
                 TrainingExclusionReasonText = projection.ExclusionReasonText,
+                StatusColorMeaningText = projection.StatusColorMeaningText,
                 NeedsLegacyMigration = projection.NeedsMigration,
                 IsReviewUnreviewed = projection.IsUnreviewed,
                 IsReviewing = projection.IsReviewing,
                 IsReviewConfirmedNormal = projection.IsConfirmedNormal,
                 IsReviewConfirmedDefect = projection.IsConfirmedDefect,
+                IsBoxReviewConfirmed = projection.IsBoxReviewConfirmed,
                 IsReviewExcluded = projection.IsExcluded,
+                IsAutoAccepted = projection.IsAutoAccepted,
+                IsAutoReviewAudit = projection.IsAutoReviewAudit,
                 AnomaTrainingEligible = eligibility.AnomaTraining,
                 AnomaEvaluationEligible = eligibility.AnomaEvaluation,
                 YoloPositiveEligible = eligibility.YoloPositive,
                 YoloBackgroundEligible = eligibility.YoloBackground,
                 YoloExcludedNoBoxDefect = eligibility.YoloExcludedDefectWithoutBoxes
             });
+        }
+
+        private ReviewStateLoadResult ApplyAutoReviewOnImport(
+            BatchImageRecord record,
+            PredictionSnapshot prediction,
+            ReviewStateLoadResult existing)
+        {
+            AutoReviewPolicy policy = record.AutoReviewPolicy ?? _fallbackAutoReviewPolicy;
+            AutoReviewEvaluation evaluation = _autoReviewService.Evaluate(
+                existing,
+                prediction,
+                policy,
+                $"{record.BatchId}|{record.ImageId}");
+            if (!evaluation.ShouldPersist || evaluation.StateToPersist == null)
+                return existing;
+
+            _reviewRepository.Save(record.ProcessedPath, evaluation.StateToPersist);
+            Trace.WriteLine(
+                $"auto review {evaluation.Disposition}: {record.BatchId}/{record.ImageId} " +
+                $"({evaluation.Reason})");
+            return _reviewRepository.Load(record.ProcessedPath);
         }
 
         private static bool PathsEqual(string a, string b)

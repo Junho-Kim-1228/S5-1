@@ -49,7 +49,8 @@ namespace CoilTrainingUI
                 prediction,
                 item.RequiresInfer);
             ImageReviewProjection projection = _reviewProjection.Create(review, prediction, eligibility);
-            var counts = CountDefectClasses(review.State.Boxes.Select(box => box.ClassName));
+            var counts = CountDefectClasses(
+                ReviewBoxLayerPolicy.GetEditableBoxes(review.State).Select(box => box.ClassName));
 
             item.GtDentCount = counts.Dent;
             item.GtLooseCount = counts.Loose;
@@ -63,12 +64,16 @@ namespace CoilTrainingUI
             item.AiYoloSummaryText = projection.AiYoloText;
             item.TrainingEligibilityText = projection.TrainingEligibilityText;
             item.TrainingExclusionReasonText = projection.ExclusionReasonText;
+            item.StatusColorMeaningText = projection.StatusColorMeaningText;
             item.NeedsLegacyMigration = projection.NeedsMigration;
             item.IsReviewUnreviewed = projection.IsUnreviewed;
             item.IsReviewing = projection.IsReviewing;
             item.IsReviewConfirmedNormal = projection.IsConfirmedNormal;
             item.IsReviewConfirmedDefect = projection.IsConfirmedDefect;
+            item.IsBoxReviewConfirmed = projection.IsBoxReviewConfirmed;
             item.IsReviewExcluded = projection.IsExcluded;
+            item.IsAutoAccepted = projection.IsAutoAccepted;
+            item.IsAutoReviewAudit = projection.IsAutoReviewAudit;
             item.AnomaTrainingEligible = eligibility.AnomaTraining;
             item.AnomaEvaluationEligible = eligibility.AnomaEvaluation;
             item.YoloPositiveEligible = eligibility.YoloPositive;

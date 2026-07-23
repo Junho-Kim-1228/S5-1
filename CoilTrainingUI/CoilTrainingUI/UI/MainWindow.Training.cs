@@ -991,6 +991,15 @@ namespace CoilTrainingUI
             Require(root, "input");
             Require(root, "output");
             Require(root, "mask");
+            Require(root, "auto_review");
+
+            var autoReview = root.GetProperty("auto_review");
+            Require(autoReview, "enabled");
+            Require(autoReview, "policy_version");
+            Require(autoReview, "anoma_normal_threshold_multiplier");
+            Require(autoReview, "anoma_defect_threshold_multiplier");
+            Require(autoReview, "yolo_box_min_confidence");
+            Require(autoReview, "audit_sample_rate");
 
             var mask = root.GetProperty("mask");
             Require(mask, "model");

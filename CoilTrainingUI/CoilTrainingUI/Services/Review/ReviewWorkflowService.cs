@@ -34,6 +34,7 @@ public sealed class ReviewWorkflowService
         next.Decision = ImageReviewDecision.ConfirmedNormal;
         next.DecisionSource = source;
         next.BoxReview = BoxReviewDecision.NotApplicable;
+        next.BoxReviewSource = BoxReviewSource.None;
         next.Boxes.Clear();
         next.UseAsYoloBackground = useAsYoloBackground;
         next.ExclusionReason = "";
@@ -71,7 +72,8 @@ public sealed class ReviewWorkflowService
         if (next.Decision == ImageReviewDecision.Unreviewed)
             next.Decision = ImageReviewDecision.Reviewing;
         next.Boxes = prediction.YoloBoxes.Select(box => box.Clone()).ToList();
-        next.BoxReview = BoxReviewDecision.Predicted;
+        next.BoxReview = BoxReviewDecision.Edited;
+        next.BoxReviewSource = BoxReviewSource.AcceptedAiPrediction;
         next.BoxesConfirmedAtUtc = null;
         return Touch(next);
     }
@@ -90,6 +92,7 @@ public sealed class ReviewWorkflowService
 
         next.Boxes = (boxes ?? Array.Empty<ReviewBox>()).Select(box => box.Clone()).ToList();
         next.BoxReview = BoxReviewDecision.Edited;
+        next.BoxReviewSource = BoxReviewSource.Manual;
         next.BoxesConfirmedAtUtc = null;
         return Touch(next);
     }
@@ -101,6 +104,7 @@ public sealed class ReviewWorkflowService
 
         var next = Copy(current);
         next.BoxReview = BoxReviewDecision.Confirmed;
+        next.BoxReviewSource = BoxReviewSource.Manual;
         next.BoxesConfirmedAtUtc = DateTime.UtcNow;
         return Touch(next);
     }

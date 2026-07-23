@@ -1,4 +1,5 @@
 using CoilTrainingUI.Models.InferenceBatch;
+using CoilTrainingUI.Models.Review;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -17,6 +18,7 @@ public sealed class BatchImageRecord
     public string InferJsonPath { get; init; } = "";
     public bool RequiresInfer { get; init; }
     public string ExpectedInferenceContextId { get; init; } = "";
+    public AutoReviewPolicy? AutoReviewPolicy { get; init; }
 }
 
 public sealed class BatchImportLoadResult
@@ -75,7 +77,8 @@ public sealed class BatchImportService
                             RawPath = InferenceBatchPathResolver.ResolveBatchRawImagePath(batch.BatchRoot, item),
                             InferJsonPath = InferenceBatchPathResolver.ResolveBatchInferJsonPath(batch.BatchRoot, item),
                             RequiresInfer = InferenceBatchPathResolver.DetermineItemRequiresInfer(batch.BatchRoot, manifest, item),
-                            ExpectedInferenceContextId = expectedContextId
+                            ExpectedInferenceContextId = expectedContextId,
+                            AutoReviewPolicy = CreateAutoReviewPolicy(manifest.InferenceContext?.AutoReview)
                         });
                     }
                     catch (Exception ex)
@@ -91,5 +94,21 @@ public sealed class BatchImportService
         }
 
         return result;
+    }
+
+    private static AutoReviewPolicy? CreateAutoReviewPolicy(AutoReviewInferenceContextDto? context)
+    {
+        if (context == null)
+            return null;
+
+        return new AutoReviewPolicy
+        {
+            Enabled = context.Enabled,
+            PolicyVersion = context.PolicyVersion,
+            AnomaNormalThresholdMultiplier = context.AnomaNormalThresholdMultiplier,
+            AnomaDefectThresholdMultiplier = context.AnomaDefectThresholdMultiplier,
+            YoloBoxMinConfidence = context.YoloBoxMinConfidence,
+            AuditSampleRate = context.AuditSampleRate
+        };
     }
 }

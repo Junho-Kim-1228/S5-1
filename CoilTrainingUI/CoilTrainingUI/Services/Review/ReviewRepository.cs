@@ -130,8 +130,12 @@ public sealed class ReviewRepository
         if (state.Decision == ImageReviewDecision.ConfirmedNormal)
         {
             state.BoxReview = BoxReviewDecision.NotApplicable;
+            state.BoxReviewSource = BoxReviewSource.None;
             state.Boxes.Clear();
         }
+
+        if (state.BoxReview == BoxReviewDecision.NotApplicable)
+            state.BoxReviewSource = BoxReviewSource.None;
 
         if (state.Decision != ImageReviewDecision.ConfirmedNormal)
             state.UseAsYoloBackground = false;
@@ -156,8 +160,33 @@ public sealed class ReviewRepository
                 throw new InvalidDataException("Review box coordinates must be finite normalized values.");
             }
         }
+
+        if (state.DecisionSource == ReviewDecisionSource.AutoAcceptedAiPrediction &&
+            state.AutoReview == null)
+        {
+            throw new InvalidDataException("Auto-accepted decision is missing auto_review metadata.");
+        }
+
+        if (state.AutoReview != null)
+        {
+            AutoReviewMetadata metadata = state.AutoReview;
+            if (string.IsNullOrWhiteSpace(metadata.PolicyVersion) ||
+                string.IsNullOrWhiteSpace(metadata.InferenceContextId) ||
+                !IsFinite(metadata.AnomaScore) ||
+                !IsFinite(metadata.AnomaScoreThreshold) || metadata.AnomaScoreThreshold <= 0 ||
+                !IsFinite(metadata.NormalAutoMaxScore) ||
+                !IsFinite(metadata.DefectAutoMinScore) ||
+                !IsFinite01(metadata.YoloBoxMinConfidence) ||
+                !IsFinite01(metadata.AuditSampleRate))
+            {
+                throw new InvalidDataException("Invalid auto_review metadata.");
+            }
+        }
     }
 
     private static bool IsFinite01(double value)
         => !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0 && value <= 1;
+
+    private static bool IsFinite(double value)
+        => !double.IsNaN(value) && !double.IsInfinity(value);
 }

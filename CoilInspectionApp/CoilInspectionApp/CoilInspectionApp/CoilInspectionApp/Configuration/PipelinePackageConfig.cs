@@ -11,6 +11,7 @@ namespace CoilInspectionApp
         public MaskSection mask { get; set; }
         public YoloSection yolo { get; set; }
         public AnomaSection anoma { get; set; }
+        public AutoReviewSection auto_review { get; set; }
 
         public bool RequiresMask =>
             (pipeline.required_models?.Any(model => string.Equals(model, "mask", StringComparison.OrdinalIgnoreCase)) == true)
@@ -82,5 +83,15 @@ namespace CoilInspectionApp
         public int input_size { get; set; } = 640;
         public float score_thres { get; set; } = 0.5f;
         public int crop_padding_px { get; set; }
+    }
+
+    public sealed class AutoReviewSection
+    {
+        public bool enabled { get; set; }
+        public string policy_version { get; set; } = "auto_review_v1";
+        public float anoma_normal_threshold_multiplier { get; set; } = 0.5f;
+        public float anoma_defect_threshold_multiplier { get; set; } = 2.0f;
+        public float yolo_box_min_confidence { get; set; } = 0.85f;
+        public float audit_sample_rate { get; set; } = 0.10f;
     }
 }

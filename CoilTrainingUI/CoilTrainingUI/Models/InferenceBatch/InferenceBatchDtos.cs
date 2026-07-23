@@ -157,6 +157,9 @@ public class InferenceContextDto
 
     [JsonPropertyName("yolo")]
     public YoloInferenceContextDto? Yolo { get; set; }
+
+    [JsonPropertyName("auto_review")]
+    public AutoReviewInferenceContextDto? AutoReview { get; set; }
 }
 
 public class MaskInferenceContextDto
@@ -214,4 +217,25 @@ public class YoloInferenceContextDto
 
     [JsonPropertyName("input_size")]
     public int InputSize { get; set; }
+}
+
+public class AutoReviewInferenceContextDto
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("policy_version")]
+    public string PolicyVersion { get; set; } = "";
+
+    [JsonPropertyName("anoma_normal_threshold_multiplier")]
+    public double AnomaNormalThresholdMultiplier { get; set; }
+
+    [JsonPropertyName("anoma_defect_threshold_multiplier")]
+    public double AnomaDefectThresholdMultiplier { get; set; }
+
+    [JsonPropertyName("yolo_box_min_confidence")]
+    public double YoloBoxMinConfidence { get; set; }
+
+    [JsonPropertyName("audit_sample_rate")]
+    public double AuditSampleRate { get; set; }
 }
