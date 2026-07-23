@@ -111,7 +111,7 @@
     <Compile Include="Interface\OnnxModelTester.cs" />
     <Compile Include="Logging\CsvLogger.cs" />
     <Compile Include="Preprocess\ImageProcessor.cs" />
-    <Compile Include="Preprocess\MaskRuntimeRunner.cs" />
+    <Compile Include="Preprocess\MaskOnnxRunner.cs" />
     <Compile Include="Statistics\InspectionStatisticsModels.cs" />
     <Compile Include="Statistics\InspectionStatisticsService.cs" />
     <Compile Include="UI\Form1.cs">
@@ -155,9 +155,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="InferencePackage\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="mask-runtime\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

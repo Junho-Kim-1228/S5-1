@@ -89,6 +89,22 @@ public sealed class InferencePackageDeploymentService
         if (models.Count == 0)
             throw new InvalidDataException("pipeline.json에 필요한 모델이 지정되지 않았습니다.");
 
+        if (!pipeline.TryGetProperty("mode", out JsonElement mode)
+            || !string.Equals(mode.GetString(), InferencePipelineConfigBuilder.AnomaThenYolo, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("추론 UI 배포 패키지는 pipeline.mode가 anoma_then_yolo여야 합니다.");
+        }
+        if (!pipeline.TryGetProperty("skip_yolo_when_stage1_normal", out JsonElement skipYolo)
+            || skipYolo.ValueKind != JsonValueKind.True)
+        {
+            throw new InvalidDataException("추론 UI 배포 패키지는 skip_yolo_when_stage1_normal=true여야 합니다.");
+        }
+        foreach (string required in new[] { "mask", "anoma", "yolo" })
+        {
+            if (!models.Contains(required, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidDataException($"추론 UI 배포 패키지에 필수 모델이 없습니다: {required}");
+        }
+
         foreach (string model in models.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!root.TryGetProperty(model, out JsonElement section)
@@ -112,6 +128,35 @@ public sealed class InferencePackageDeploymentService
             {
                 throw new InvalidDataException("pipeline.json의 yolo.imgsz가 올바르지 않습니다.");
             }
+        }
+
+        if (models.Contains("mask"))
+        {
+            JsonElement mask = root.GetProperty("mask");
+            if (!mask.TryGetProperty("input_size", out JsonElement inputSize)
+                || !inputSize.TryGetInt32(out int parsedInputSize)
+                || parsedInputSize <= 0)
+            {
+                throw new InvalidDataException("pipeline.json의 mask.input_size가 올바르지 않습니다.");
+            }
+            if (!mask.TryGetProperty("resize_mode", out JsonElement resizeMode)
+                || !string.Equals(resizeMode.GetString(), "letterbox", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("pipeline.json의 mask.resize_mode는 letterbox여야 합니다.");
+            }
+            ValidateThreeElementArray(mask, "image_mean");
+            ValidateThreeElementArray(mask, "image_std");
+        }
+    }
+
+    private static void ValidateThreeElementArray(JsonElement section, string propertyName)
+    {
+        if (!section.TryGetProperty(propertyName, out JsonElement values)
+            || values.ValueKind != JsonValueKind.Array
+            || values.GetArrayLength() != 3
+            || values.EnumerateArray().Any(value => value.ValueKind != JsonValueKind.Number))
+        {
+            throw new InvalidDataException($"pipeline.json의 mask.{propertyName}은 숫자 3개 배열이어야 합니다.");
         }
     }
 

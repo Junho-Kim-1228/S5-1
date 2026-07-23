@@ -29,6 +29,14 @@ namespace CoilTrainingUI
         private void UpdateGtSummaryForImageItem(ImageItem item, string imagePath)
         {
             ReviewStateLoadResult review = _reviewRepository.Load(imagePath);
+            UpdateGtSummaryForImageItem(item, imagePath, review);
+        }
+
+        private void UpdateGtSummaryForImageItem(
+            ImageItem item,
+            string imagePath,
+            ReviewStateLoadResult review)
+        {
             PredictionSnapshot prediction = _predictionByImagePath.TryGetValue(imagePath, out var cached)
                 ? cached
                 : _predictionReader.Read(

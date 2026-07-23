@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "pipeline": {
     "mode": "anoma_then_yolo",
     "display_name": "2단계 (Anoma -> YOLO)",
@@ -7,6 +7,7 @@
     "stage2": "yolo",
     "skip_yolo_when_stage1_normal": true,
     "required_models": [
+      "mask",
       "anoma",
       "yolo"
     ]
@@ -17,6 +18,23 @@
   "output": {
     "format": "json",
     "schema": "detections_v1"
+  },
+  "mask": {
+    "model": "models/mask.onnx",
+    "input_size": 512,
+    "resize_mode": "letterbox",
+    "image_mean": [0.485, 0.456, 0.406],
+    "image_std": [0.229, 0.224, 0.225],
+    "confidence_percentile": 99.5,
+    "confidence_threshold": 0.5,
+    "mask_threshold": 0.3,
+    "min_component_area": 64,
+    "morph_open_kernel": 0,
+    "morph_close_kernel": 0,
+    "outer_recover_kernel": 0,
+    "keep_largest_component": true,
+    "preserve_inner_holes": true,
+    "min_hole_area": 64
   },
   "yolo": {
     "model": "models/yolo.onnx",

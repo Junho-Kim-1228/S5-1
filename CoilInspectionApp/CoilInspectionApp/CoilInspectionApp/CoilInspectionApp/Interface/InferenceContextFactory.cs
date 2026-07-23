@@ -21,6 +21,9 @@ namespace CoilInspectionApp
 
             string configPath = Path.Combine(packagePath, "config", "pipeline.json");
             string pipelineHash = ComputeFileSha256(configPath);
+            string maskHash = config.RequiresMask
+                ? ComputeFileSha256(Path.Combine(packagePath, config.mask.model))
+                : "";
             string anomaHash = config.RequiresAnoma
                 ? ComputeFileSha256(Path.Combine(packagePath, config.anoma.model))
                 : "";
@@ -28,7 +31,7 @@ namespace CoilInspectionApp
                 ? ComputeFileSha256(Path.Combine(packagePath, config.yolo.model))
                 : "";
             string packageFingerprint = ComputeTextSha256(
-                string.Join("|", pipelineHash, anomaHash, yoloHash));
+                string.Join("|", pipelineHash, maskHash, anomaHash, yoloHash));
 
             return new InferenceContextInfo
             {
@@ -38,6 +41,17 @@ namespace CoilInspectionApp
                 pipeline_mode = config.pipeline.mode ?? "",
                 package_fingerprint = packageFingerprint,
                 pipeline_sha256 = pipelineHash,
+                mask = config.RequiresMask
+                    ? new MaskInferenceContext
+                    {
+                        model_file = Path.GetFileName(config.mask.model),
+                        model_sha256 = maskHash,
+                        confidence_threshold = config.mask.confidence_threshold,
+                        mask_threshold = config.mask.mask_threshold,
+                        input_size = config.mask.input_size,
+                        resize_mode = config.mask.resize_mode ?? ""
+                    }
+                    : null,
                 anoma = config.RequiresAnoma
                     ? new AnomaInferenceContext
                     {

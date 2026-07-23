@@ -2,12 +2,14 @@
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Imaging;
 using CoilTrainingUI.Services.Review;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -47,6 +49,11 @@ namespace CoilTrainingUI
         private bool _currentBatchHasAnyInfer;
 
         // 항상 원본은 유지
+        private readonly ImageBitmapCache _imageBitmapCache = new(capacity: 3);
+        private CancellationTokenSource? _imageLoadCancellation;
+        private CancellationTokenSource? _imagePrefetchCancellation;
+        private CancellationTokenSource? _rawViewLoadCancellation;
+        private long _imageLoadRequestId;
         private BitmapSource? _rawBitmap;
         private BitmapSource? _rawViewBitmap;
         private string? _rawViewBitmapPath;
@@ -381,6 +388,15 @@ namespace CoilTrainingUI
                     ImageCanvas.Width,
                     ImageCanvas.Height
                 );
+            };
+
+            Closed += (s, e) =>
+            {
+                _imageLoadRequestId++;
+                CancelAndDispose(ref _imageLoadCancellation);
+                CancelAndDispose(ref _imagePrefetchCancellation);
+                CancelAndDispose(ref _rawViewLoadCancellation);
+                _imageBitmapCache.Clear();
             };
         }
 

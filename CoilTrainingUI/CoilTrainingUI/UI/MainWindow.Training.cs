@@ -233,6 +233,7 @@ namespace CoilTrainingUI
                     projectRoot,
                     requireYoloPython: trainYolo,
                     requireAnomaPython: trainAnoma);
+                string maskOnnxSource = ResolveMaskOnnxPathOrThrow(settings);
 
                 var scopedTrainingInputs = trainingInputs.ToList();
                 if (trainYolo
@@ -525,6 +526,8 @@ namespace CoilTrainingUI
 
                 if (trainAnoma)
                     File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
+
+                File.Copy(maskOnnxSource, IOPath.Combine(modelsDir, "mask.onnx"), true);
 
                 var anomaCalibration = trainAnoma
                     ? TryLoadAnomaInferenceCalibration(anomaOut)
@@ -856,6 +859,27 @@ namespace CoilTrainingUI
                 anomaCalibration?.ScoreThreshold);
         }
 
+        private static string ResolveMaskOnnxPathOrThrow(AppSettings settings)
+        {
+            if (settings?.MaskInfer == null || string.IsNullOrWhiteSpace(settings.MaskInfer.ModelPath))
+                throw new InvalidOperationException("MaskInfer.ModelPath가 설정되지 않았습니다.");
+
+            string configured = settings.MaskInfer.ModelPath.Trim();
+            string resolved = IOPath.IsPathRooted(configured)
+                ? IOPath.GetFullPath(configured)
+                : IOPath.GetFullPath(IOPath.Combine(
+                    settings.AiProjectRoot,
+                    configured.Replace('/', IOPath.DirectorySeparatorChar)));
+
+            if (!File.Exists(resolved) || new FileInfo(resolved).Length == 0)
+            {
+                throw new FileNotFoundException(
+                    "Mask ONNX 모델을 찾을 수 없습니다. 개발 환경에서 Mask 체크포인트를 ONNX로 먼저 내보내세요.",
+                    resolved);
+            }
+            return resolved;
+        }
+
         private RunManifestMetadata? TryLoadRunManifestMetadata(string runDir)
         {
             string manifestPath = IOPath.Combine(runDir, "run_manifest.json");
@@ -935,7 +959,11 @@ namespace CoilTrainingUI
 
             string yoloOnnx = IOPath.Combine(modelsDir, "yolo.onnx");
             string anomaOnnx = IOPath.Combine(modelsDir, "anoma.onnx");
+            string maskOnnx = IOPath.Combine(modelsDir, "mask.onnx");
             string pipeline = IOPath.Combine(cfgDir, "pipeline.json");
+
+            if (!File.Exists(maskOnnx))
+                throw new FileNotFoundException("Missing mask.onnx in inference_package/models", maskOnnx);
 
             if (RequiresYoloTraining(pipelineMode) && !File.Exists(yoloOnnx))
                 throw new FileNotFoundException("Missing yolo.onnx in inference_package/models", yoloOnnx);
@@ -952,6 +980,9 @@ namespace CoilTrainingUI
             if (RequiresAnomaTraining(pipelineMode) && new FileInfo(anomaOnnx).Length <= 0)
                 throw new InvalidOperationException("anoma.onnx is empty (0 bytes).");
 
+            if (new FileInfo(maskOnnx).Length <= 0)
+                throw new InvalidOperationException("mask.onnx is empty (0 bytes).");
+
             using var doc = JsonDocument.Parse(File.ReadAllText(pipeline));
             var root = doc.RootElement;
 
@@ -959,6 +990,21 @@ namespace CoilTrainingUI
             Require(root, "pipeline");
             Require(root, "input");
             Require(root, "output");
+            Require(root, "mask");
+
+            var mask = root.GetProperty("mask");
+            Require(mask, "model");
+            Require(mask, "input_size");
+            Require(mask, "resize_mode");
+            Require(mask, "image_mean");
+            Require(mask, "image_std");
+            Require(mask, "confidence_percentile");
+            Require(mask, "confidence_threshold");
+            Require(mask, "mask_threshold");
+            Require(mask, "min_component_area");
+            Require(mask, "keep_largest_component");
+            Require(mask, "preserve_inner_holes");
+            Require(mask, "min_hole_area");
 
             var pipelineSection = root.GetProperty("pipeline");
             Require(pipelineSection, "mode");
@@ -1200,6 +1246,7 @@ namespace CoilTrainingUI
                     projectRoot,
                     requireYoloPython: false,
                     requireAnomaPython: false);
+                string maskOnnxSource = ResolveMaskOnnxPathOrThrow(settings);
 
                 string runRoot = ResolveRunRoot(currentInputs);
                 if (!Directory.Exists(runRoot))
@@ -1263,6 +1310,8 @@ namespace CoilTrainingUI
 
                 if (RequiresAnomaTraining(pipelineMode))
                     File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);
+
+                File.Copy(maskOnnxSource, IOPath.Combine(modelsDir, "mask.onnx"), true);
 
                 var anomaCalibration = RequiresAnomaTraining(pipelineMode)
                     ? TryLoadAnomaInferenceCalibration(anomaOut)

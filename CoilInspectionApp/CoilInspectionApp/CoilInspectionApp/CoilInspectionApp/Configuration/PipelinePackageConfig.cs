@@ -8,8 +8,13 @@ namespace CoilInspectionApp
     {
         public int schema_version { get; set; }
         public PipelineSection pipeline { get; set; } = new PipelineSection();
+        public MaskSection mask { get; set; }
         public YoloSection yolo { get; set; }
         public AnomaSection anoma { get; set; }
+
+        public bool RequiresMask =>
+            (pipeline.required_models?.Any(model => string.Equals(model, "mask", StringComparison.OrdinalIgnoreCase)) == true)
+            || mask != null;
 
         public bool RequiresYolo =>
             (pipeline.required_models?.Any(model => string.Equals(model, "yolo", StringComparison.OrdinalIgnoreCase)) == true)
@@ -29,6 +34,25 @@ namespace CoilInspectionApp
                 return yolo.class_map.ToDictionary(kv => kv.Value, kv => kv.Key);
             }
         }
+    }
+
+    public sealed class MaskSection
+    {
+        public string model { get; set; } = "";
+        public int input_size { get; set; } = 512;
+        public string resize_mode { get; set; } = "letterbox";
+        public float[] image_mean { get; set; } = { 0.485f, 0.456f, 0.406f };
+        public float[] image_std { get; set; } = { 0.229f, 0.224f, 0.225f };
+        public float confidence_percentile { get; set; } = 99.5f;
+        public float confidence_threshold { get; set; } = 0.5f;
+        public float mask_threshold { get; set; } = 0.3f;
+        public int min_component_area { get; set; } = 64;
+        public int morph_open_kernel { get; set; }
+        public int morph_close_kernel { get; set; }
+        public int outer_recover_kernel { get; set; }
+        public bool keep_largest_component { get; set; } = true;
+        public bool preserve_inner_holes { get; set; } = true;
+        public int min_hole_area { get; set; } = 64;
     }
 
     public sealed class PipelineSection

@@ -26,17 +26,17 @@ namespace CoilInspectionApp
         private readonly List<InspectionResultViewModel> _results = new List<InspectionResultViewModel>();
         private readonly object _batchExporterLock = new object();
         private readonly ContextMenuStrip _resultContextMenu = new ContextMenuStrip();
+        private readonly ToolStripMenuItem _retryPreprocessMenuItem = new ToolStripMenuItem("전처리 재시도");
+        private readonly ToolStripMenuItem _retryAllPreprocessMenuItem = new ToolStripMenuItem("전처리 실패 전체 재시도");
         private readonly ToolStripMenuItem _retryInferenceMenuItem = new ToolStripMenuItem("추론 재시도");
         private readonly RuntimePathSettingsStore _runtimePathSettingsStore = new RuntimePathSettingsStore();
         private StatisticsForm _statisticsForm;
         private BatchExporter _batchExporter;
-        private MaskRuntimeRunner _maskRuntimeRunner;
+        private MaskOnnxRunner _maskOnnxRunner;
         private PipelinePackageConfig _config;
         private string _inputPath = "";
         private string _packagePath = "";
         private string _exportBasePath = "";
-        private string _maskPythonExe = "";
-        private string _maskRuntimePath = "";
         private RuntimePathSettings _runtimePathSettings = new RuntimePathSettings();
         private bool _servicesInitialized;
         private volatile bool _isPreprocessing;
@@ -74,7 +74,11 @@ namespace CoilInspectionApp
             var deleteMenuItem = new ToolStripMenuItem("이미지 삭제");
             var retrySeparator = new ToolStripSeparator();
             deleteMenuItem.Click += (sender, args) => DeleteSelectedResult();
+            _retryPreprocessMenuItem.Click += (sender, args) => RetrySelectedPreprocess();
+            _retryAllPreprocessMenuItem.Click += (sender, args) => RetryAllFailedPreprocess();
             _retryInferenceMenuItem.Click += (sender, args) => RetrySelectedInference();
+            _resultContextMenu.Items.Add(_retryPreprocessMenuItem);
+            _resultContextMenu.Items.Add(_retryAllPreprocessMenuItem);
             _resultContextMenu.Items.Add(_retryInferenceMenuItem);
             _resultContextMenu.Items.Add(retrySeparator);
             _resultContextMenu.Items.Add(deleteMenuItem);
@@ -82,11 +86,69 @@ namespace CoilInspectionApp
             {
                 InspectionResultViewModel selectedResult = GetCurrentSelectedResult();
                 args.Cancel = selectedResult == null;
+                _retryPreprocessMenuItem.Visible = CanRetryPreprocess(selectedResult);
+                int failedPreprocessCount = _results.Count(CanRetryPreprocess);
+                _retryAllPreprocessMenuItem.Visible = failedPreprocessCount > 0;
+                _retryAllPreprocessMenuItem.Text = $"전처리 실패 전체 재시도 ({failedPreprocessCount}장)";
                 _retryInferenceMenuItem.Visible = selectedResult != null
                     && string.Equals(selectedResult.ReasonText, "inference_failed", StringComparison.OrdinalIgnoreCase);
-                retrySeparator.Visible = _retryInferenceMenuItem.Visible;
+                retrySeparator.Visible = _retryPreprocessMenuItem.Visible
+                    || _retryAllPreprocessMenuItem.Visible
+                    || _retryInferenceMenuItem.Visible;
             };
             listViewResults.ContextMenuStrip = _resultContextMenu;
+        }
+
+        private static bool CanRetryPreprocess(InspectionResultViewModel result)
+        {
+            if (result == null || string.IsNullOrWhiteSpace(result.SourceFilePath) || !File.Exists(result.SourceFilePath))
+                return false;
+
+            return string.Equals(result.ReasonText, "preprocess_failed", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(result.ReasonText, "mask_not_created", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(result.ReasonText, "masked_file_locked", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void RetrySelectedPreprocess()
+        {
+            InspectionResultViewModel result = GetCurrentSelectedResult();
+            if (!CanRetryPreprocess(result))
+                return;
+
+            ResetForPreprocessRetry(result);
+            RefreshResultList(selectFirst: false);
+            SaveSessionState();
+            StartPreprocessWorkerIfNeeded();
+        }
+
+        private void RetryAllFailedPreprocess()
+        {
+            List<InspectionResultViewModel> failedItems = _results.Where(CanRetryPreprocess).ToList();
+            if (failedItems.Count == 0)
+                return;
+
+            foreach (InspectionResultViewModel item in failedItems)
+                ResetForPreprocessRetry(item);
+
+            RefreshResultList(selectFirst: false);
+            SaveSessionState();
+            StartPreprocessWorkerIfNeeded();
+        }
+
+        private static void ResetForPreprocessRetry(InspectionResultViewModel result)
+        {
+            result.Stage1 = "미전처리";
+            result.Stage2 = "대기";
+            result.Final = "수신완료";
+            result.ScoreText = "-";
+            result.DetectionCount = 0;
+            result.Detections = new List<Detection>();
+            result.RawImagePath = null;
+            result.ProcessedImagePath = null;
+            result.ReasonText = "received_waiting_preprocess";
+            result.IsPreprocessPending = true;
+            result.IsPending = false;
+            result.IsInferenceCompleted = false;
         }
 
         private void RetrySelectedInference()
@@ -129,14 +191,16 @@ namespace CoilInspectionApp
                     _runtimePathSettings.InferencePackageDirectory,
                     ConfigurationManager.AppSettings["InferencePackagePath"],
                     @".\InferencePackage");
+                // 사용자가 선택한 출력 경로가 있으면 복원하고,
+                // 최초 실행에는 EXE 기준 TrainingBatches 폴더를 사용한다.
                 _exportBasePath = ResolveSavedOrConfiguredPath(
                     _runtimePathSettings.ExportBaseDirectory,
                     ConfigurationManager.AppSettings["ExportBasePath"],
-                    @"C:\InspectionTest\TrainingBatches");
-                _maskPythonExe = ResolveConfiguredExecutable(ConfigurationManager.AppSettings["MaskPythonExe"], "python");
-                _maskRuntimePath = ResolveMaskRuntimePath(ConfigurationManager.AppSettings["MaskRuntimePath"], @".\mask-runtime");
+                    @".\TrainingBatches");
+                Directory.CreateDirectory(_exportBasePath);
 
                 _config = LoadPipelinePackageOrThrow(_packagePath);
+                _maskOnnxRunner = LoadMaskOnnxRunnerOrThrow(_packagePath, _config);
                 LoadRequiredModelsOrThrow(_modelTester, _packagePath, _config);
                 InitializeOperationalServices();
             }
@@ -155,7 +219,6 @@ namespace CoilInspectionApp
             if (_servicesInitialized)
                 return;
 
-            _maskRuntimeRunner = new MaskRuntimeRunner(_maskPythonExe, _maskRuntimePath);
             Directory.CreateDirectory(_inputPath);
 
             _batchExporter = CreateBatchExporter(_exportBasePath, _packagePath, _config);
@@ -249,21 +312,6 @@ namespace CoilInspectionApp
             return ResolvePackagePath(configuredValue, fallbackValue);
         }
 
-        private static string ResolveConfiguredExecutable(string configuredValue, string fallbackValue)
-        {
-            string value = string.IsNullOrWhiteSpace(configuredValue) ? fallbackValue : configuredValue;
-            if (Path.IsPathRooted(value))
-                return value;
-
-            if (value.IndexOf('\\') >= 0 || value.IndexOf('/') >= 0)
-            {
-                string normalized = value.Replace('/', '\\');
-                return Path.GetFullPath(Path.Combine(Application.StartupPath, normalized));
-            }
-
-            return value;
-        }
-
         private static int ResolveAutoCloseIdleSeconds()
         {
             const int defaultSeconds = 300;
@@ -299,31 +347,6 @@ namespace CoilInspectionApp
             return primary;
         }
 
-        private static string ResolveMaskRuntimePath(string configuredValue, string fallbackValue)
-        {
-            string primary = ResolveConfiguredPath(configuredValue, fallbackValue);
-            if (Directory.Exists(primary))
-                return primary;
-
-            string startupPath = Application.StartupPath;
-            string[] candidates =
-            {
-                primary,
-                Path.Combine(startupPath, "mask-runtime"),
-                Path.Combine(startupPath, "..", "..", "mask-runtime"),
-                Path.Combine(startupPath, "..", "..", "..", "mask-runtime"),
-            };
-
-            foreach (string candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                string fullPath = Path.GetFullPath(candidate);
-                if (Directory.Exists(fullPath))
-                    return fullPath;
-            }
-
-            return primary;
-        }
-
         private PipelinePackageConfig LoadPipelinePackageOrThrow(string packagePath)
         {
             string configPath = Path.Combine(packagePath, "config", "pipeline.json");
@@ -344,7 +367,23 @@ namespace CoilInspectionApp
             if (config.pipeline.skip_yolo_when_stage1_normal != true)
                 throw new InvalidOperationException("pipeline.skip_yolo_when_stage1_normal must be true.");
 
+            if (!config.RequiresMask || config.mask == null || string.IsNullOrWhiteSpace(config.mask.model))
+                throw new InvalidOperationException("pipeline.json missing required mask.model.");
+
             return config;
+        }
+
+        private static MaskOnnxRunner LoadMaskOnnxRunnerOrThrow(
+            string packagePath,
+            PipelinePackageConfig config)
+        {
+            if (config == null || config.mask == null || string.IsNullOrWhiteSpace(config.mask.model))
+                throw new InvalidOperationException("pipeline.json missing mask.model");
+
+            string modelPath = Path.GetFullPath(Path.Combine(
+                packagePath,
+                config.mask.model.Replace('/', Path.DirectorySeparatorChar)));
+            return new MaskOnnxRunner(modelPath, config.mask);
         }
 
         private static BatchExporter CreateBatchExporter(
@@ -568,7 +607,7 @@ namespace CoilInspectionApp
             Action<string, string> onMaskedImageReady)
         {
             string preprocessOutputDir = Path.Combine(batchDirectory, "preprocessed");
-            return _maskRuntimeRunner.RunBatch(sourcePaths, preprocessOutputDir, onMaskedImageReady);
+            return _maskOnnxRunner.RunBatch(sourcePaths, preprocessOutputDir, onMaskedImageReady);
         }
 
         private void RunPreprocessBatchInBackground(
@@ -1422,12 +1461,14 @@ namespace CoilInspectionApp
                 return;
 
             OnnxModelTester candidateTester = null;
+            MaskOnnxRunner candidateMaskRunner = null;
             BatchExporter candidateExporter = null;
             bool packageApplied = false;
             try
             {
                 PipelinePackageConfig candidateConfig = LoadPipelinePackageOrThrow(selectedPath);
                 candidateTester = new OnnxModelTester();
+                candidateMaskRunner = LoadMaskOnnxRunnerOrThrow(selectedPath, candidateConfig);
                 LoadRequiredModelsOrThrow(candidateTester, selectedPath, candidateConfig);
 
                 if (_servicesInitialized)
@@ -1437,13 +1478,17 @@ namespace CoilInspectionApp
                 }
 
                 OnnxModelTester previousTester = _modelTester;
+                MaskOnnxRunner previousMaskRunner = _maskOnnxRunner;
                 _modelTester = candidateTester;
                 candidateTester = null;
+                _maskOnnxRunner = candidateMaskRunner;
+                candidateMaskRunner = null;
                 _config = candidateConfig;
                 _packagePath = selectedPath;
                 if (candidateExporter != null)
                     _batchExporter = candidateExporter;
                 previousTester?.Dispose();
+                previousMaskRunner?.Dispose();
                 packageApplied = true;
 
                 PersistRuntimePathSettings();
@@ -1459,6 +1504,7 @@ namespace CoilInspectionApp
             catch (Exception ex)
             {
                 candidateTester?.Dispose();
+                candidateMaskRunner?.Dispose();
                 LogException(ex);
                 MessageBox.Show(
                     packageApplied
@@ -1681,6 +1727,7 @@ namespace CoilInspectionApp
             _dw?.Dispose();
             _dw = null;
             _modelTester?.Dispose();
+            _maskOnnxRunner?.Dispose();
             _resultContextMenu.Dispose();
             SaveSessionState();
             ClearDisplayImage();

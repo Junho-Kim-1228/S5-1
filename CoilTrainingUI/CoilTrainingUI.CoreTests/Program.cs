@@ -1,8 +1,11 @@
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Imaging;
 using CoilTrainingUI.Services.Review;
 using System.Text.Json;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 var suite = new CoreReviewTests();
 suite.RunAll();
@@ -44,12 +47,67 @@ internal sealed class CoreReviewTests
             Run("Python environment validation follows selected pipeline", () => PythonEnvironmentValidationFollowsPipeline(root));
             Run("model registry tracks lifecycle and lineage", () => ModelRegistryTracksLifecycle(root));
             Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
-            Console.WriteLine($"PASS: {_passed}/19 core review tests");
+            Run("inference package rejects a missing mask model", () => MissingMaskModelIsRejected(root));
+            Run("image cache reuses and invalidates frozen bitmaps", () => ImageCacheIsBoundedAndFresh(root));
+            Console.WriteLine($"PASS: {_passed}/21 core review tests");
         }
         finally
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static void ImageCacheIsBoundedAndFresh(string root)
+    {
+        string imagePath = Path.Combine(root, "cache_test.bmp");
+        WriteBmp(imagePath, width: 8, height: 8, blue: 10);
+
+        using var cache = new ImageBitmapCache(capacity: 3);
+        BitmapSource first = cache.LoadCachedAsync(imagePath, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        BitmapSource second = cache.LoadCachedAsync(imagePath, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        Assert(first.IsFrozen, "cached bitmap must be frozen for cross-thread UI use");
+        Assert(ReferenceEquals(first, second), "unchanged image was decoded more than once");
+
+        WriteBmp(imagePath, width: 9, height: 8, blue: 20);
+        BitmapSource refreshed = cache.LoadCachedAsync(imagePath, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        Assert(!ReferenceEquals(first, refreshed), "changed image reused a stale cache entry");
+        Assert(refreshed.PixelWidth == 9 && refreshed.PixelHeight == 8,
+            "changed image dimensions were not reloaded");
+    }
+
+    private static void WriteBmp(string path, int width, int height, byte blue)
+    {
+        const int bytesPerPixel = 3;
+        int stride = width * bytesPerPixel;
+        var pixels = new byte[stride * height];
+        for (int index = 0; index < pixels.Length; index += bytesPerPixel)
+        {
+            pixels[index] = blue;
+            pixels[index + 1] = 30;
+            pixels[index + 2] = 40;
+        }
+
+        BitmapSource source = BitmapSource.Create(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Bgr24,
+            palette: null,
+            pixels,
+            stride);
+        var encoder = new BmpBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using FileStream stream = File.Create(path);
+        encoder.Save(stream);
     }
 
     private static void FinalTrainingCommandsAreExplicit()
@@ -148,13 +206,29 @@ internal sealed class CoreReviewTests
         string source = Path.Combine(root, "deployment_source");
         Directory.CreateDirectory(Path.Combine(source, "config"));
         Directory.CreateDirectory(Path.Combine(source, "models"));
+        File.WriteAllBytes(Path.Combine(source, "models", "mask.onnx"), new byte[] { 9, 8, 7 });
+        File.WriteAllBytes(Path.Combine(source, "models", "anoma.onnx"), new byte[] { 4, 5, 6 });
         File.WriteAllBytes(Path.Combine(source, "models", "yolo.onnx"), new byte[] { 1, 2, 3 });
         File.WriteAllText(
             Path.Combine(source, "config", "pipeline.json"),
             JsonSerializer.Serialize(new
             {
-                schema_version = 2,
-                pipeline = new { required_models = new[] { "yolo" } },
+                schema_version = 3,
+                pipeline = new
+                {
+                    mode = "anoma_then_yolo",
+                    skip_yolo_when_stage1_normal = true,
+                    required_models = new[] { "mask", "anoma", "yolo" }
+                },
+                mask = new
+                {
+                    model = "models/mask.onnx",
+                    input_size = 512,
+                    resize_mode = "letterbox",
+                    image_mean = new[] { 0.485, 0.456, 0.406 },
+                    image_std = new[] { 0.229, 0.224, 0.225 }
+                },
+                anoma = new { model = "models/anoma.onnx", input_size = 448 },
                 yolo = new { model = "models/yolo.onnx", imgsz = 1280 }
             }));
 
@@ -171,6 +245,46 @@ internal sealed class CoreReviewTests
         Assert(Directory.Exists(result.BackupDirectory)
                && File.Exists(Path.Combine(result.BackupDirectory, "old-package.txt")),
             "previous package was not backed up");
+    }
+
+    private static void MissingMaskModelIsRejected(string root)
+    {
+        string source = Path.Combine(root, "deployment_missing_mask");
+        Directory.CreateDirectory(Path.Combine(source, "config"));
+        Directory.CreateDirectory(Path.Combine(source, "models"));
+        File.WriteAllText(
+            Path.Combine(source, "config", "pipeline.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema_version = 3,
+                pipeline = new
+                {
+                    mode = "anoma_then_yolo",
+                    skip_yolo_when_stage1_normal = true,
+                    required_models = new[] { "mask", "anoma", "yolo" }
+                },
+                mask = new
+                {
+                    model = "models/mask.onnx",
+                    input_size = 512,
+                    resize_mode = "letterbox",
+                    image_mean = new[] { 0.485, 0.456, 0.406 },
+                    image_std = new[] { 0.229, 0.224, 0.225 }
+                },
+                anoma = new { model = "models/anoma.onnx", input_size = 448 },
+                yolo = new { model = "models/yolo.onnx", imgsz = 1280 }
+            }));
+
+        bool rejected = false;
+        try
+        {
+            new InferencePackageDeploymentService().ValidatePackageOrThrow(source);
+        }
+        catch (FileNotFoundException)
+        {
+            rejected = true;
+        }
+        Assert(rejected, "package validation accepted a missing mask.onnx");
     }
 
     private static ModelRegistryEntry RegisterFakeModel(
@@ -444,10 +558,15 @@ internal sealed class CoreReviewTests
         using JsonDocument document = JsonDocument.Parse(JsonSerializer.Serialize(config));
         JsonElement root = document.RootElement;
         JsonElement pipeline = root.GetProperty("pipeline");
+        Assert(root.GetProperty("schema_version").GetInt32() == 3, "pipeline schema version mismatch");
         Assert(pipeline.GetProperty("mode").GetString() == "anoma_then_yolo", "pipeline mode mismatch");
         Assert(pipeline.GetProperty("skip_yolo_when_stage1_normal").GetBoolean(), "YOLO skip flag mismatch");
         Assert(root.GetProperty("yolo").GetProperty("imgsz").GetInt32() == 1280,
             "YOLO inference size must match the exported 1280 model");
+        Assert(root.GetProperty("mask").GetProperty("input_size").GetInt32() == 512,
+            "Mask inference size must be 512");
+        Assert(pipeline.GetProperty("required_models").EnumerateArray()
+            .Any(item => item.GetString() == "mask"), "Mask must be a required package model");
         Assert(!root.TryGetProperty("fusion", out _), "legacy fusion section must not be emitted");
     }
 

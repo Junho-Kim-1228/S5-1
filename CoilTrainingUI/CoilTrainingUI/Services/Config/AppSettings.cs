@@ -17,6 +17,7 @@ namespace CoilTrainingUI.Services
         public AnomaTrainingSection AnomaTraining { get; set; } = new();
         public YoloInferSection YoloInfer { get; set; } = new();
         public AnomaInferSection AnomaInfer { get; set; } = new();
+        public MaskInferSection MaskInfer { get; set; } = new();
 
         public class WorkspaceSection
         {
@@ -332,6 +333,25 @@ namespace CoilTrainingUI.Services
         public int InputSize { get; set; } = 448;
         public double ScoreThres { get; set; } = 0.02454194;
         public int CropPaddingPx { get; set; } = 8;
+    }
+
+    public class MaskInferSection
+    {
+        public string ModelPath { get; set; } = "outputs/mask/coil_unetpp_effb4_scratch_v8/mask.onnx";
+        public int InputSize { get; set; } = 512;
+        public string ResizeMode { get; set; } = "letterbox";
+        public double[] ImageMean { get; set; } = { 0.485, 0.456, 0.406 };
+        public double[] ImageStd { get; set; } = { 0.229, 0.224, 0.225 };
+        public double ConfidencePercentile { get; set; } = 99.5;
+        public double ConfidenceThreshold { get; set; } = 0.5;
+        public double MaskThreshold { get; set; } = 0.3;
+        public int MinComponentArea { get; set; } = 64;
+        public int MorphOpenKernel { get; set; }
+        public int MorphCloseKernel { get; set; }
+        public int OuterRecoverKernel { get; set; }
+        public bool KeepLargestComponent { get; set; } = true;
+        public bool PreserveInnerHoles { get; set; } = true;
+        public int MinHoleArea { get; set; } = 64;
     }
 
 }

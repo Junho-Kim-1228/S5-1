@@ -9,8 +9,19 @@ namespace CoilInspectionApp
         public string pipeline_mode { get; set; } = "";
         public string package_fingerprint { get; set; } = "";
         public string pipeline_sha256 { get; set; } = "";
+        public MaskInferenceContext mask { get; set; }
         public AnomaInferenceContext anoma { get; set; }
         public YoloInferenceContext yolo { get; set; }
+    }
+
+    public class MaskInferenceContext
+    {
+        public string model_file { get; set; } = "";
+        public string model_sha256 { get; set; } = "";
+        public float confidence_threshold { get; set; }
+        public float mask_threshold { get; set; }
+        public int input_size { get; set; }
+        public string resize_mode { get; set; } = "";
     }
 
     public class AnomaInferenceContext

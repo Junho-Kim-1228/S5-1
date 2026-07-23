@@ -24,13 +24,13 @@ public static class InferencePipelineConfigBuilder
         bool requiresYolo = mode is AnomaThenYolo or YoloOnly;
         int anomaInputSize = calibratedAnomaInputSize ?? settings.AnomaInfer.InputSize;
         double anomaThreshold = calibratedAnomaThreshold ?? settings.AnomaInfer.ScoreThres;
-        var requiredModels = new List<string>();
+        var requiredModels = new List<string> { "mask" };
         if (requiresAnoma) requiredModels.Add("anoma");
         if (requiresYolo) requiredModels.Add("yolo");
 
         var root = new Dictionary<string, object?>
         {
-            ["schema_version"] = 2,
+            ["schema_version"] = 3,
             ["pipeline"] = new
             {
                 mode,
@@ -42,6 +42,25 @@ public static class InferencePipelineConfigBuilder
             },
             ["input"] = new { image_format = "bmp" },
             ["output"] = new { format = "json", schema = "detections_v1" }
+        };
+
+        root["mask"] = new
+        {
+            model = "models/mask.onnx",
+            input_size = settings.MaskInfer.InputSize,
+            resize_mode = settings.MaskInfer.ResizeMode,
+            image_mean = settings.MaskInfer.ImageMean,
+            image_std = settings.MaskInfer.ImageStd,
+            confidence_percentile = settings.MaskInfer.ConfidencePercentile,
+            confidence_threshold = settings.MaskInfer.ConfidenceThreshold,
+            mask_threshold = settings.MaskInfer.MaskThreshold,
+            min_component_area = settings.MaskInfer.MinComponentArea,
+            morph_open_kernel = settings.MaskInfer.MorphOpenKernel,
+            morph_close_kernel = settings.MaskInfer.MorphCloseKernel,
+            outer_recover_kernel = settings.MaskInfer.OuterRecoverKernel,
+            keep_largest_component = settings.MaskInfer.KeepLargestComponent,
+            preserve_inner_holes = settings.MaskInfer.PreserveInnerHoles,
+            min_hole_area = settings.MaskInfer.MinHoleArea
         };
 
         if (requiresYolo)

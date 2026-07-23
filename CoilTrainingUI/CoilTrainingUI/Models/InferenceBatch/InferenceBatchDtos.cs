@@ -149,11 +149,35 @@ public class InferenceContextDto
     [JsonPropertyName("pipeline_sha256")]
     public string PipelineSha256 { get; set; } = "";
 
+    [JsonPropertyName("mask")]
+    public MaskInferenceContextDto? Mask { get; set; }
+
     [JsonPropertyName("anoma")]
     public AnomaInferenceContextDto? Anoma { get; set; }
 
     [JsonPropertyName("yolo")]
     public YoloInferenceContextDto? Yolo { get; set; }
+}
+
+public class MaskInferenceContextDto
+{
+    [JsonPropertyName("model_file")]
+    public string ModelFile { get; set; } = "";
+
+    [JsonPropertyName("model_sha256")]
+    public string ModelSha256 { get; set; } = "";
+
+    [JsonPropertyName("confidence_threshold")]
+    public double ConfidenceThreshold { get; set; }
+
+    [JsonPropertyName("mask_threshold")]
+    public double MaskThreshold { get; set; }
+
+    [JsonPropertyName("input_size")]
+    public int InputSize { get; set; }
+
+    [JsonPropertyName("resize_mode")]
+    public string ResizeMode { get; set; } = "";
 }
 
 public class AnomaInferenceContextDto
