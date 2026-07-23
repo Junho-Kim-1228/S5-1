@@ -29,6 +29,7 @@ class AnomaConfig:
     dinomaly_decoder_depth: int
     dinomaly_max_steps: int
     dinomaly_learning_rate: float
+    target_recall: float | None
     skip_export: bool
 
 
@@ -109,6 +110,12 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         help="Dinomaly StableAdamW base learning rate.",
     )
     parser.add_argument(
+        "--target-recall",
+        type=float,
+        default=None,
+        help="Use the highest-precision validation threshold meeting this recall target.",
+    )
+    parser.add_argument(
         "--skip-export",
         action="store_true",
         help="Skip ONNX/state export and keep only metrics/debug outputs.",
@@ -138,6 +145,8 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         raise SystemExit("--dinomaly-max-steps must be positive.")
     if args.dinomaly_learning_rate <= 0:
         raise SystemExit("--dinomaly-learning-rate must be positive.")
+    if args.target_recall is not None and not 0.0 < args.target_recall <= 1.0:
+        raise SystemExit("--target-recall must be greater than 0 and at most 1.")
     if args.model == "dinomaly" and image_size % 14 != 0:
         raise SystemExit("Dinomaly --image-size must be divisible by the DINOv2 patch size (14).")
 
@@ -160,5 +169,6 @@ def parse_args(argv: Sequence[str] | None = None) -> AnomaConfig:
         dinomaly_decoder_depth=args.dinomaly_decoder_depth,
         dinomaly_max_steps=args.dinomaly_max_steps,
         dinomaly_learning_rate=args.dinomaly_learning_rate,
+        target_recall=args.target_recall,
         skip_export=args.skip_export,
     )

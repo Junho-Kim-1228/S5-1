@@ -27,7 +27,8 @@ public sealed class BatchLibraryService
                      .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             string folderName = Path.GetFileName(candidateFolder);
-            if (string.Equals(folderName, "_train_runs", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(folderName, "_train_runs", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(folderName, "_model_registry", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var validation = BatchFolderValidationService.Validate(candidateFolder);

@@ -33,6 +33,7 @@ def main() -> int:
             seed=args.seed,
             workers=args.workers,
             conf_val=args.conf_val,
+            lr0=args.lr0,
         )
         return 0
     except CoilAIError as e:

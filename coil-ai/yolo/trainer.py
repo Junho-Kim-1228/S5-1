@@ -47,6 +47,7 @@ def run_yolo_training(
     seed: int = 42,
     workers: int | None = None,
     conf_val: float | None = None,
+    lr0: float | None = None,
 ) -> None:
     workspace_path = resolve_path(workspace)
     out_path = ensure_dir(resolve_path(out_dir))
@@ -62,6 +63,7 @@ def run_yolo_training(
         seed=seed,
         workers=workers,
         conf_val=conf_val,
+        lr0=lr0,
     )
 
     try:
@@ -120,6 +122,8 @@ def run_yolo_training(
         }
         if use_one_to_many_head:
             train_kwargs["end2end"] = False
+        if config.lr0 is not None:
+            train_kwargs["lr0"] = config.lr0
 
         train_results = model_obj.train(
             **train_kwargs,
@@ -174,6 +178,7 @@ def run_yolo_training(
                 "device": config.device,
                 "workers": config.workers,
                 "conf_val": config.conf_val,
+                "lr0": config.lr0,
                 "augmentation": config.augmentation,
                 "end2end": False,
                 "train_save_dir": str(train_results.save_dir) if hasattr(train_results, "save_dir") else None,

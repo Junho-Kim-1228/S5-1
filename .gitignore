@@ -2,6 +2,8 @@
 config/appsettings.local.json
 CoilTrainingUI/config/appsettings.local.json
 CoilTrainingUI/python_env/
+CoilTrainingUI/python_env_yolo/
+CoilTrainingUI/python_env_dinomaly/
 CoilTrainingUI/coil-ai-runtime/
 
 #python scripts

@@ -8,9 +8,13 @@ namespace CoilTrainingUI.Services
     public class AppSettings
     {
         public string PythonExe { get; set; } = "";
+        public string YoloPythonExe { get; set; } = "";
+        public string AnomaPythonExe { get; set; } = "";
         public string BatchLibraryRoot { get; set; } = "";
         public string AiProjectRoot { get; set; } = "coil-ai-runtime";
         public WorkspaceSection Workspace { get; set; } = new();
+        public YoloTrainingSection YoloTraining { get; set; } = new();
+        public AnomaTrainingSection AnomaTraining { get; set; } = new();
         public YoloInferSection YoloInfer { get; set; } = new();
         public AnomaInferSection AnomaInfer { get; set; } = new();
 
@@ -19,20 +23,48 @@ namespace CoilTrainingUI.Services
             public double TrainRatio { get; set; } = 0.8;
             public double ValRatio { get; set; } = 0.2;
             public int Seed { get; set; } = 42;
-            public int YoloMaxBackground { get; set; } = 250;
-            public int YoloEpochs { get; set; } = 150;
-            public int YoloBatch { get; set; } = 4;
+            public int? YoloMaxBackground { get; set; }
             public string YoloOversampleClass { get; set; } = "";
             public double YoloOversampleFactor { get; set; } = 1.0;
             public string YoloAugmentClass { get; set; } = "all";
             public double YoloAugmentFactor { get; set; } = 2.0;
         }
 
+        public class YoloTrainingSection
+        {
+            public string Model { get; set; } = "yolo26n.pt";
+            public int Epochs { get; set; } = 100;
+            public int FineTuneEpochs { get; set; } = 40;
+            public double FineTuneLearningRate { get; set; } = 0.001;
+            public int ImageSize { get; set; } = 1280;
+            public int Batch { get; set; } = 4;
+            public string Device { get; set; } = "auto";
+            public int Seed { get; set; } = 42;
+        }
+
+        public class AnomaTrainingSection
+        {
+            public string Model { get; set; } = "dinomaly";
+            public int ImageSize { get; set; } = 448;
+            public int Batch { get; set; } = 4;
+            public string Device { get; set; } = "auto";
+            public int Seed { get; set; } = 42;
+            public string Encoder { get; set; } = "vit_large_patch14_reg4_dinov2";
+            public double Dropout { get; set; } = 0.1;
+            public int DecoderDepth { get; set; } = 12;
+            public int MaxSteps { get; set; } = 5000;
+            public double LearningRate { get; set; } = 0.002;
+            public double TargetRecall { get; set; } = 0.90;
+        }
+
     }
 
     public static class AppSettingsLoader
     {
-        public static AppSettings LoadOrThrow(string projectRoot)
+        public static AppSettings LoadOrThrow(
+            string projectRoot,
+            bool requireYoloPython = true,
+            bool requireAnomaPython = true)
         {
             string appBaseDir = AppDomain.CurrentDomain.BaseDirectory;
             string settingsRoot = ResolveSettingsRootOrThrow(projectRoot, appBaseDir);
@@ -54,6 +86,12 @@ namespace CoilTrainingUI.Services
                     if (!string.IsNullOrWhiteSpace(local.PythonExe))
                         baseSettings.PythonExe = local.PythonExe;
 
+                    if (!string.IsNullOrWhiteSpace(local.YoloPythonExe))
+                        baseSettings.YoloPythonExe = local.YoloPythonExe;
+
+                    if (!string.IsNullOrWhiteSpace(local.AnomaPythonExe))
+                        baseSettings.AnomaPythonExe = local.AnomaPythonExe;
+
                     if (!string.IsNullOrWhiteSpace(local.BatchLibraryRoot))
                         baseSettings.BatchLibraryRoot = local.BatchLibraryRoot;
 
@@ -62,19 +100,63 @@ namespace CoilTrainingUI.Services
                 }
             }
 
-            string? resolvedPythonExe = ResolvePythonExePath(baseSettings.PythonExe, settingsRoot, projectRoot, appBaseDir);
-            if (string.IsNullOrWhiteSpace(resolvedPythonExe))
-            {
-                throw new InvalidOperationException(
-                    "Python 실행 파일을 찾을 수 없습니다. " +
-                    "config/appsettings.local.json의 PythonExe를 설정하거나, " +
-                    "앱 폴더 아래 python_env 폴더를 함께 배포하세요.");
-            }
+            string? resolvedLegacyPython = ResolvePythonExePath(
+                baseSettings.PythonExe,
+                settingsRoot,
+                projectRoot,
+                appBaseDir);
+            string? resolvedYoloPython = ResolvePythonExePath(
+                baseSettings.YoloPythonExe,
+                settingsRoot,
+                projectRoot,
+                appBaseDir,
+                new[]
+                {
+                    @"python_env_yolo\Scripts\python.exe",
+                    @"python_env_yolo\python.exe",
+                    @"coil-ai\.venv_train\Scripts\python.exe",
+                    "coil-ai/.venv_train/bin/python"
+                }) ?? resolvedLegacyPython;
+            string? resolvedAnomaPython = ResolvePythonExePath(
+                baseSettings.AnomaPythonExe,
+                settingsRoot,
+                projectRoot,
+                appBaseDir,
+                new[]
+                {
+                    @"python_env_dinomaly\Scripts\python.exe",
+                    @"python_env_dinomaly\python.exe",
+                    @"coil-ai\.venv_dinomaly\Scripts\python.exe",
+                    "coil-ai/.venv_dinomaly/bin/python"
+                }) ?? resolvedLegacyPython;
 
-            baseSettings.PythonExe = resolvedPythonExe;
+            baseSettings.YoloPythonExe = resolvedYoloPython ?? "";
+            baseSettings.AnomaPythonExe = resolvedAnomaPython ?? "";
+            baseSettings.PythonExe = resolvedLegacyPython ?? resolvedYoloPython ?? resolvedAnomaPython ?? "";
+            ValidateRequiredPythonEnvironments(baseSettings, requireYoloPython, requireAnomaPython);
             baseSettings.AiProjectRoot = ResolveAiProjectRootOrThrow(baseSettings.AiProjectRoot, settingsRoot, projectRoot, appBaseDir);
 
             return baseSettings;
+        }
+
+        public static void ValidateRequiredPythonEnvironments(
+            AppSettings settings,
+            bool requireYoloPython,
+            bool requireAnomaPython)
+        {
+            var missingEnvironments = new List<string>();
+            if (requireYoloPython && !File.Exists(settings.YoloPythonExe))
+                missingEnvironments.Add("YOLO");
+            if (requireAnomaPython && !File.Exists(settings.AnomaPythonExe))
+                missingEnvironments.Add("Anoma");
+
+            if (missingEnvironments.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"{string.Join("/", missingEnvironments)} Python 실행 파일을 찾을 수 없습니다. " +
+                    "config/appsettings.local.json의 YoloPythonExe와 AnomaPythonExe를 설정하거나, " +
+                    "선택한 학습에 필요한 Python 환경을 앱과 함께 배포하세요.");
+            }
         }
 
         private static string ResolveSettingsRootOrThrow(string projectRoot, string appBaseDir)
@@ -132,13 +214,29 @@ namespace CoilTrainingUI.Services
                     return resolved;
             }
 
+            // Source checkout에서는 배포용 coil-ai-runtime 대신 같은 저장소의 coil-ai를 사용한다.
+            if (candidateRoot.Equals("coil-ai-runtime", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (string baseDir in GetCandidateBaseDirs(settingsRoot, projectRoot, appBaseDir))
+                {
+                    string sourceCheckout = Path.GetFullPath(Path.Combine(baseDir, "coil-ai"));
+                    if (Directory.Exists(sourceCheckout))
+                        return sourceCheckout;
+                }
+            }
+
             throw new InvalidOperationException(
                 "AI 학습 프로젝트 폴더를 찾을 수 없습니다. " +
                 "config/appsettings.local.json의 AiProjectRoot를 설정하거나, " +
                 "앱 폴더 또는 프로젝트 루트 아래에 coil-ai 폴더를 배치하세요.");
         }
 
-        private static string? ResolvePythonExePath(string configuredPythonExe, string settingsRoot, string projectRoot, string appBaseDir)
+        private static string? ResolvePythonExePath(
+            string configuredPythonExe,
+            string settingsRoot,
+            string projectRoot,
+            string appBaseDir,
+            IEnumerable<string>? preferredRelativeCandidates = null)
         {
             if (!string.IsNullOrWhiteSpace(configuredPythonExe))
             {
@@ -152,8 +250,19 @@ namespace CoilTrainingUI.Services
                     if (File.Exists(candidate))
                         return candidate;
                 }
+            }
 
-                return null;
+            if (preferredRelativeCandidates != null)
+            {
+                foreach (string baseDir in GetCandidateBaseDirs(settingsRoot, projectRoot, appBaseDir))
+                {
+                    foreach (string relativePath in preferredRelativeCandidates)
+                    {
+                        string candidate = Path.GetFullPath(Path.Combine(baseDir, relativePath));
+                        if (File.Exists(candidate))
+                            return candidate;
+                    }
+                }
             }
 
             foreach (string candidate in GetBundledPythonCandidates(settingsRoot, projectRoot, appBaseDir))
@@ -172,6 +281,7 @@ namespace CoilTrainingUI.Services
             foreach (string baseDir in new[]
             {
                 settingsRoot,
+                Directory.GetParent(settingsRoot)?.FullName ?? "",
                 appBaseDir,
                 projectRoot
             })
@@ -209,7 +319,7 @@ namespace CoilTrainingUI.Services
     }
     public class YoloInferSection
     {
-        public int ImgSz { get; set; } = 1024;
+        public int ImgSz { get; set; } = 1280;
         public bool Letterbox { get; set; } = true;
         public double ConfThres { get; set; } = 0.25;
         public double IouThres { get; set; } = 0.45;
@@ -219,8 +329,8 @@ namespace CoilTrainingUI.Services
     public class AnomaInferSection
     {
         public string Mode { get; set; } = "crop"; // "crop" 고정 권장
-        public int InputSize { get; set; } = 640;
-        public double ScoreThres { get; set; } = 0.5;
+        public int InputSize { get; set; } = 448;
+        public double ScoreThres { get; set; } = 0.02454194;
         public int CropPaddingPx { get; set; } = 8;
     }
 

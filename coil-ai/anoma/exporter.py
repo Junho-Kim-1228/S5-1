@@ -139,7 +139,7 @@ def save_debug_artifacts(
     ensure_directory(debug_dir)
     ensure_directory(map_dir)
 
-    threshold = float(metrics["best_threshold"])
+    threshold = float(metrics.get("deployment_threshold", metrics["best_threshold"]))
     records = _build_debug_records(predictions=predictions, threshold=threshold)
     score_csv_path = debug_dir / "scores.csv"
     score_stats_path = debug_dir / "score_stats.json"
@@ -237,14 +237,28 @@ def save_inference_config(
                 "mean": [0.485, 0.456, 0.406],
                 "std": [0.229, 0.224, 0.225],
             },
-            "score_threshold": float(metrics["best_threshold"]),
-            "threshold_policy": "best_f1_on_validation",
+            "score_threshold": float(metrics.get("deployment_threshold", metrics["best_threshold"])),
+            "threshold_policy": (
+                "highest_precision_at_target_recall_on_validation"
+                if "deployment_threshold" in metrics
+                else "best_f1_on_validation"
+            ),
             "validation_metrics": {
                 "image_auroc": float(metrics["image_auroc"]),
                 "image_ap": float(metrics["image_ap"]),
                 "best_f1": float(metrics["best_f1"]),
                 "best_precision": float(metrics["best_precision"]),
                 "best_recall": float(metrics["best_recall"]),
+                **(
+                    {
+                        "target_recall": float(metrics["target_recall"]),
+                        "deployment_precision": float(metrics["deployment_precision"]),
+                        "deployment_recall": float(metrics["deployment_recall"]),
+                        "deployment_f1": float(metrics["deployment_f1"]),
+                    }
+                    if "deployment_threshold" in metrics
+                    else {}
+                ),
             },
         },
     )

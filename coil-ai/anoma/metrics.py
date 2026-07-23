@@ -95,3 +95,51 @@ def compute_image_metrics(labels: np.ndarray, scores: np.ndarray) -> dict[str, f
         "best_recall": float(recall[best_index]),
         "best_threshold": float(thresholds[best_index]),
     }
+
+
+def compute_target_recall_operating_point(
+    labels: np.ndarray,
+    scores: np.ndarray,
+    target_recall: float,
+) -> dict[str, float]:
+    """Choose the highest-precision threshold that reaches the recall target."""
+    if not 0.0 < target_recall <= 1.0:
+        raise ValueError("target_recall must be greater than 0 and at most 1")
+
+    y_true = np.asarray(labels, dtype=np.int64)
+    y_score = np.asarray(scores, dtype=np.float64)
+    positives = int((y_true == 1).sum())
+    if positives == 0 or y_true.size == 0:
+        return {
+            "target_recall": float(target_recall),
+            "deployment_threshold": 0.0,
+            "deployment_precision": 0.0,
+            "deployment_recall": 0.0,
+            "deployment_f1": 0.0,
+        }
+
+    tp, fp, thresholds = _binary_curve(y_true, y_score)
+    recall = tp / positives
+    precision = tp / np.maximum(tp + fp, 1)
+    eligible = np.flatnonzero(recall >= target_recall)
+    if eligible.size == 0:
+        best_index = len(thresholds) - 1
+    else:
+        eligible_precision = precision[eligible]
+        best_precision = float(eligible_precision.max())
+        tied = eligible[np.flatnonzero(np.isclose(eligible_precision, best_precision))]
+        best_index = int(tied[np.argmax(thresholds[tied])])
+
+    selected_precision = float(precision[best_index])
+    selected_recall = float(recall[best_index])
+    selected_f1 = (2.0 * selected_precision * selected_recall) / max(
+        selected_precision + selected_recall,
+        1e-12,
+    )
+    return {
+        "target_recall": float(target_recall),
+        "deployment_threshold": float(thresholds[best_index]),
+        "deployment_precision": selected_precision,
+        "deployment_recall": selected_recall,
+        "deployment_f1": float(selected_f1),
+    }

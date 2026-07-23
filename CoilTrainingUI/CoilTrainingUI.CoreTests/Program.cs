@@ -39,12 +39,183 @@ internal sealed class CoreReviewTests
             Run("Anoma alone controls accepted AI decision", AcceptAiDecisionUsesAnomaOnly);
             Run("pipeline contract is Anoma then YOLO without fusion", PipelineContractIsCorrect);
             Run("inference context mismatch is rejected", () => InferenceContextMismatchIsRejected(root));
-            Console.WriteLine($"PASS: {_passed}/14 core review tests");
+            Run("final training commands are explicit", FinalTrainingCommandsAreExplicit);
+            Run("fine-tune command uses warm-start policy", FineTuneCommandUsesWarmStartPolicy);
+            Run("Python environment validation follows selected pipeline", () => PythonEnvironmentValidationFollowsPipeline(root));
+            Run("model registry tracks lifecycle and lineage", () => ModelRegistryTracksLifecycle(root));
+            Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
+            Console.WriteLine($"PASS: {_passed}/19 core review tests");
         }
         finally
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static void FinalTrainingCommandsAreExplicit()
+    {
+        var settings = new AppSettings();
+        string workspace = TrainingCommandBuilder.BuildYoloWorkspaceArgs(settings, "raw data", "yolo workspace");
+        string yolo = TrainingCommandBuilder.BuildYoloArgs(settings, "workspace", "out", false, null);
+        string anoma = TrainingCommandBuilder.BuildAnomaArgs(settings, "raw", "out", "run_001");
+
+        Assert(workspace.Contains("--augment-class \"all\""), "defect augmentation is missing");
+        Assert(!workspace.Contains("--max-background"), "background images must not be capped");
+        Assert(yolo.Contains("--model \"yolo26n.pt\""), "fresh YOLO26n model is missing");
+        Assert(yolo.Contains("--epochs 100") && yolo.Contains("--imgsz 1280"), "final YOLO settings are missing");
+        Assert(anoma.Contains("--model \"dinomaly\""), "Dinomaly model is missing");
+        Assert(anoma.Contains("--dataset-name \"run_001\""), "run-specific anomaly dataset is missing");
+        Assert(anoma.Contains("vit_large_patch14_reg4_dinov2"), "ViT-Large encoder is missing");
+        Assert(anoma.Contains("--image-size 448") && anoma.Contains("--target-recall 0.9"),
+            "final Dinomaly settings are missing");
+    }
+
+    private static void FineTuneCommandUsesWarmStartPolicy()
+    {
+        var settings = new AppSettings();
+        string args = TrainingCommandBuilder.BuildYoloArgs(
+            settings,
+            "workspace",
+            "out",
+            true,
+            @"C:\models\parent_best.pt");
+
+        Assert(args.Contains("parent_best.pt"), "parent checkpoint is missing");
+        Assert(args.Contains("--epochs 40"), "fine-tune epoch policy is missing");
+        Assert(args.Contains("--lr0 0.001"), "fine-tune learning rate is missing");
+    }
+
+    private static void PythonEnvironmentValidationFollowsPipeline(string root)
+    {
+        string yoloPython = Path.Combine(root, "fake-yolo-python.exe");
+        File.WriteAllBytes(yoloPython, new byte[] { 1 });
+        var settings = new AppSettings
+        {
+            YoloPythonExe = yoloPython,
+            AnomaPythonExe = ""
+        };
+
+        AppSettingsLoader.ValidateRequiredPythonEnvironments(
+            settings,
+            requireYoloPython: true,
+            requireAnomaPython: false);
+
+        bool rejectedMissingAnoma = false;
+        try
+        {
+            AppSettingsLoader.ValidateRequiredPythonEnvironments(
+                settings,
+                requireYoloPython: false,
+                requireAnomaPython: true);
+        }
+        catch (InvalidOperationException)
+        {
+            rejectedMissingAnoma = true;
+        }
+        Assert(rejectedMissingAnoma, "Anoma-only validation accepted a missing Anoma environment");
+    }
+
+    private static void ModelRegistryTracksLifecycle(string root)
+    {
+        string registryRoot = Path.Combine(root, "model_registry");
+        var registry = new ModelRegistryService(registryRoot);
+
+        ModelRegistryEntry first = RegisterFakeModel(registry, root, "run_first", 0.30, "");
+        Assert(first.YoloBestPtPath.EndsWith(Path.Combine("training", "yolo_best.pt")),
+            "package checkpoint was not preferred");
+        File.Delete(Path.Combine(root, "run_first", "yolo_out", "best.pt"));
+        Assert(registry.Load().Single(model => model.Id == first.Id).HasYoloCheckpoint,
+            "package checkpoint was not retained after yolo_out checkpoint removal");
+
+        registry.SetReference(first.Id);
+        Assert(registry.Load().Single(model => model.Id == first.Id).Status == ModelLifecycleStatus.Reference,
+            "first model was not selected as reference");
+        Assert(File.Exists(registry.ReferencePointerPath), "reference pointer is missing");
+
+        ModelRegistryEntry second = RegisterFakeModel(registry, root, "run_second", 0.35, first.Id);
+        registry.SetReference(second.Id);
+        IReadOnlyList<ModelRegistryEntry> models = registry.Load();
+        Assert(models.Single(model => model.Id == second.Id).Status == ModelLifecycleStatus.Reference,
+            "second model was not selected as reference");
+        Assert(models.Single(model => model.Id == first.Id).Status == ModelLifecycleStatus.Candidate,
+            "previous reference model did not return to candidate status");
+        Assert(models.Single(model => model.Id == second.Id).ParentModelId == first.Id,
+            "fine-tune lineage was not stored");
+    }
+
+    private static void InferencePackageDeploymentIsSafe(string root)
+    {
+        string source = Path.Combine(root, "deployment_source");
+        Directory.CreateDirectory(Path.Combine(source, "config"));
+        Directory.CreateDirectory(Path.Combine(source, "models"));
+        File.WriteAllBytes(Path.Combine(source, "models", "yolo.onnx"), new byte[] { 1, 2, 3 });
+        File.WriteAllText(
+            Path.Combine(source, "config", "pipeline.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema_version = 2,
+                pipeline = new { required_models = new[] { "yolo" } },
+                yolo = new { model = "models/yolo.onnx", imgsz = 1280 }
+            }));
+
+        string target = Path.Combine(root, "inspection_app", "InferencePackage");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "old-package.txt"), "old");
+
+        var service = new InferencePackageDeploymentService();
+        InferencePackageDeploymentResult result = service.Deploy(source, target);
+        Assert(File.Exists(Path.Combine(target, "models", "yolo.onnx")),
+            "new package was not deployed");
+        Assert(!File.Exists(Path.Combine(target, "old-package.txt")),
+            "old package content leaked into the new package");
+        Assert(Directory.Exists(result.BackupDirectory)
+               && File.Exists(Path.Combine(result.BackupDirectory, "old-package.txt")),
+            "previous package was not backed up");
+    }
+
+    private static ModelRegistryEntry RegisterFakeModel(
+        ModelRegistryService registry,
+        string root,
+        string runName,
+        double map50,
+        string parentModelId)
+    {
+        string run = Path.Combine(root, runName);
+        string yoloOut = Path.Combine(run, "yolo_out");
+        string package = Path.Combine(run, "inference_package");
+        Directory.CreateDirectory(yoloOut);
+        Directory.CreateDirectory(Path.Combine(package, "training"));
+        Directory.CreateDirectory(Path.Combine(package, "models"));
+        File.WriteAllBytes(Path.Combine(yoloOut, "best.pt"), new byte[] { 1, 2, 3 });
+        File.WriteAllBytes(Path.Combine(yoloOut, "yolo.onnx"), new byte[] { 4, 5, 6 });
+        File.WriteAllBytes(Path.Combine(package, "training", "yolo_best.pt"), new byte[] { 7, 8, 9 });
+        File.WriteAllBytes(Path.Combine(package, "models", "yolo.onnx"), new byte[] { 4, 5, 6 });
+        File.WriteAllText(
+            Path.Combine(yoloOut, "train_summary.json"),
+            JsonSerializer.Serialize(new
+            {
+                metrics = new
+                {
+                    precision = 0.6,
+                    recall = 0.4,
+                    map50,
+                    map = 0.2
+                }
+            }));
+
+        return registry.Register(new ModelRegistrationContext
+        {
+            RunDirectory = run,
+            InferencePackageDirectory = package,
+            PipelineMode = "yolo_only",
+            TrainingMode = string.IsNullOrWhiteSpace(parentModelId) ? "fresh" : "fine_tune",
+            ParentModelId = parentModelId,
+            SourceBatches = new[] { "batch-a" },
+            TotalImages = 10,
+            NormalImages = 6,
+            YoloModel = "yolo26n.pt",
+            YoloOutDirectory = yoloOut
+        });
     }
 
     private void LoadAndSelectionAreReadOnly(string root)
@@ -275,6 +446,8 @@ internal sealed class CoreReviewTests
         JsonElement pipeline = root.GetProperty("pipeline");
         Assert(pipeline.GetProperty("mode").GetString() == "anoma_then_yolo", "pipeline mode mismatch");
         Assert(pipeline.GetProperty("skip_yolo_when_stage1_normal").GetBoolean(), "YOLO skip flag mismatch");
+        Assert(root.GetProperty("yolo").GetProperty("imgsz").GetInt32() == 1280,
+            "YOLO inference size must match the exported 1280 model");
         Assert(!root.TryGetProperty("fusion", out _), "legacy fusion section must not be emitted");
     }
 

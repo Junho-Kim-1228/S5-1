@@ -95,7 +95,7 @@
 
                 <MenuItem Header="YOLO 학습 방식">
                     <MenuItem x:Name="YoloTrainFreshMenuItem"
-                              Header="기본 가중치로 재학습"
+                              Header="YOLO26n 기본 가중치로 새 학습"
                               IsCheckable="True"
                               IsChecked="True"
                               Click="YoloTrainFresh_Click"/>
@@ -112,6 +112,11 @@
 
                 <MenuItem Header="패키지만 다시 생성" 
                           Click="BuildPackageOnly_Click"/>
+
+                <Separator/>
+
+                <MenuItem Header="모델 관리..."
+                          Click="ModelManagement_Click"/>
             </MenuItem>
 
         </Menu>

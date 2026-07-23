@@ -118,6 +118,7 @@ class YoloTrainConfig:
     variant: str
     seed: int
     conf_val: float | None
+    lr0: float | None
     augmentation: dict[str, Any]
 
 
@@ -131,7 +132,10 @@ def build_yolo_train_config(
     seed: int,
     workers: int | None,
     conf_val: float | None,
+    lr0: float | None,
 ) -> YoloTrainConfig:
+    if lr0 is not None and float(lr0) <= 0:
+        raise CoilAIError(f"YOLO learning rate must be positive: {lr0}")
     weights = _resolve_model_path(model)
     return YoloTrainConfig(
         weights=weights,
@@ -143,5 +147,6 @@ def build_yolo_train_config(
         variant=_resolve_variant(weights),
         seed=seed,
         conf_val=_resolve_conf_val(conf_val),
+        lr0=None if lr0 is None else float(lr0),
         augmentation=_build_augmentation_config(),
     )

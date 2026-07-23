@@ -31,11 +31,26 @@ class Yolo26CompatibilityTests(unittest.TestCase):
             seed=42,
             workers=0,
             conf_val=None,
+            lr0=None,
         )
 
         self.assertEqual(config.weights.name, "yolo26m.pt")
         self.assertEqual(config.weights.parent.name, "weights")
         self.assertEqual(config.variant, "yolo26m")
+
+    def test_fine_tune_learning_rate_is_preserved(self) -> None:
+        config = build_yolo_train_config(
+            model="yolo26n.pt",
+            epochs=40,
+            imgsz=1280,
+            batch=4,
+            device="cpu",
+            seed=42,
+            workers=0,
+            conf_val=None,
+            lr0=0.001,
+        )
+        self.assertEqual(config.lr0, 0.001)
 
     def test_onnx_export_uses_legacy_one_to_many_head(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

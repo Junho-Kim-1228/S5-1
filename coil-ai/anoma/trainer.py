@@ -5,7 +5,11 @@ import torch
 
 from anoma.config import AnomaConfig
 from anoma.exporter import export_artifacts, save_debug_artifacts, save_inference_config
-from anoma.metrics import compute_image_metrics, compute_score_distribution
+from anoma.metrics import (
+    compute_image_metrics,
+    compute_score_distribution,
+    compute_target_recall_operating_point,
+)
 from anoma.models.dinomaly import DinomalyModel
 from anoma.models.patchcore import PatchcoreModel
 from anoma.models.padim import PadimModel
@@ -99,10 +103,17 @@ def run_training(config: AnomaConfig) -> dict[str, object]:
 
     log_step("evaluate model")
     predictions = model.predict_scores(eval_loader)
-    metrics = compute_image_metrics(
-        labels=np.asarray(predictions["labels"], dtype=np.int64),
-        scores=np.asarray(predictions["scores"], dtype=np.float64),
-    )
+    labels = np.asarray(predictions["labels"], dtype=np.int64)
+    scores = np.asarray(predictions["scores"], dtype=np.float64)
+    metrics = compute_image_metrics(labels=labels, scores=scores)
+    if config.target_recall is not None:
+        metrics.update(
+            compute_target_recall_operating_point(
+                labels=labels,
+                scores=scores,
+                target_recall=config.target_recall,
+            )
+        )
     distribution = compute_score_distribution(
         labels=np.asarray(predictions["labels"], dtype=np.int64),
         scores=np.asarray(predictions["scores"], dtype=np.float64),

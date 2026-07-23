@@ -18,6 +18,7 @@ def build_train_parser(task_name: str) -> argparse.ArgumentParser:
         parser.add_argument("--seed", type=int, default=42)
         parser.add_argument("--workers", type=int, default=None)
         parser.add_argument("--conf-val", type=float, default=None)
+        parser.add_argument("--lr0", type=float, default=None)
     return parser
 
 

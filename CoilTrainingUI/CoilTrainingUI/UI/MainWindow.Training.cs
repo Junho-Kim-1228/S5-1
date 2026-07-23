@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -46,6 +47,8 @@ namespace CoilTrainingUI
         private TrainingPipelineMode _trainingPipelineMode = TrainingPipelineMode.AnomaThenYolo;
         private YoloTrainingMode _yoloTrainingMode = YoloTrainingMode.Fresh;
         private string _yoloFineTuneWeightsPath = "";
+        private string _yoloFineTuneParentModelId = "";
+        private IReadOnlyList<string> _yoloFineTuneReplayBatchKeys = Array.Empty<string>();
 
         private void TrainPipelineAnomaThenYolo_Click(object sender, RoutedEventArgs e)
         {
@@ -66,6 +69,8 @@ namespace CoilTrainingUI
         {
             _yoloTrainingMode = YoloTrainingMode.Fresh;
             _yoloFineTuneWeightsPath = "";
+            _yoloFineTuneParentModelId = "";
+            _yoloFineTuneReplayBatchKeys = Array.Empty<string>();
             UpdateYoloTrainingModeMenu();
         }
 
@@ -87,7 +92,36 @@ namespace CoilTrainingUI
 
             _yoloTrainingMode = YoloTrainingMode.FineTune;
             _yoloFineTuneWeightsPath = dialog.FileName;
+            _yoloFineTuneParentModelId = "";
+            _yoloFineTuneReplayBatchKeys = Array.Empty<string>();
             UpdateYoloTrainingModeMenu();
+            MessageBox.Show(
+                "외부 best.pt는 부모 학습 데이터 계보를 알 수 없어 현재 선택 데이터만 사용합니다.\n" +
+                "기존 데이터까지 자동 누적하려면 Train > 모델 관리에서 모델을 선택하세요.",
+                "외부 YOLO 체크포인트",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
+        private void ModelManagement_Click(object sender, RoutedEventArgs e)
+        {
+            var registry = CreateModelRegistryService();
+            var window = new ModelManagerWindow(registry) { Owner = this };
+            if (window.ShowDialog() != true || window.RequestedFineTuneModel == null)
+                return;
+
+            ModelRegistryEntry selected = window.RequestedFineTuneModel;
+            _yoloTrainingMode = YoloTrainingMode.FineTune;
+            _yoloFineTuneWeightsPath = selected.YoloBestPtPath;
+            _yoloFineTuneParentModelId = selected.Id;
+            _yoloFineTuneReplayBatchKeys = selected.SourceBatches.ToList();
+            UpdateYoloTrainingModeMenu();
+            MessageBox.Show(
+                $"파인튜닝 부모 모델: {selected.Id}\n" +
+                $"기존 배치 {selected.SourceBatches.Count}개를 새 검수 데이터와 함께 재사용합니다.",
+                "YOLO 파인튜닝",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
         private void UpdateYoloTrainingModeMenu()
@@ -195,12 +229,45 @@ namespace CoilTrainingUI
                 }
 
                 string projectRoot = FindProjectRoot("capstone_design");
-                var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
+                var settings = AppSettingsLoader.LoadOrThrow(
+                    projectRoot,
+                    requireYoloPython: trainYolo,
+                    requireAnomaPython: trainAnoma);
 
-                string runRoot = ResolveRunRoot(trainingInputs);
+                var scopedTrainingInputs = trainingInputs.ToList();
+                if (trainYolo
+                    && _yoloTrainingMode == YoloTrainingMode.FineTune
+                    && _yoloFineTuneReplayBatchKeys.Count > 0)
+                {
+                    IReadOnlyList<TrainingImageInput> replayInputs = BuildTrainingInputsForBatchKeys(
+                        _yoloFineTuneReplayBatchKeys);
+                    var replayedBatchKeys = replayInputs
+                        .Select(input => input.BatchKey)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var missingReplayBatches = _yoloFineTuneReplayBatchKeys
+                        .Where(batchKey => !replayedBatchKeys.Contains(batchKey))
+                        .ToList();
+                    if (missingReplayBatches.Count > 0)
+                    {
+                        throw new InvalidOperationException(
+                            "부모 모델의 학습 배치를 찾을 수 없어 파인튜닝을 중단했습니다.\n" +
+                            string.Join("\n", missingReplayBatches));
+                    }
+                    scopedTrainingInputs = scopedTrainingInputs
+                        .Concat(replayInputs)
+                        .GroupBy(input => input.ImagePath, StringComparer.OrdinalIgnoreCase)
+                        .Select(group => group.First())
+                        .ToList();
+                    progressWindow.AppendLog(
+                        $"[FINE-TUNE] parent={_yoloFineTuneParentModelId}, " +
+                        $"replay_batches={_yoloFineTuneReplayBatchKeys.Count}, " +
+                        $"replay_candidates={replayInputs.Count}");
+                }
+
+                string runRoot = ResolveRunRoot(scopedTrainingInputs);
                 Directory.CreateDirectory(runRoot);
 
-                TrainingDatasetSelection selection = _trainingDatasetSelector.Select(trainingInputs);
+                TrainingDatasetSelection selection = _trainingDatasetSelector.Select(scopedTrainingInputs);
                 var anomaTrainingInputs = trainAnoma
                     ? selection.AnomaInputs.ToList()
                     : new List<TrainingImageInput>();
@@ -300,7 +367,8 @@ namespace CoilTrainingUI
                 Directory.CreateDirectory(yoloOut);
                 Directory.CreateDirectory(anomaOut);
 
-                string pythonExe = settings.PythonExe;
+                string yoloPythonExe = settings.YoloPythonExe;
+                string anomaPythonExe = settings.AnomaPythonExe;
                 string aiProjectRoot = settings.AiProjectRoot;
                 string yoloPrepScript = IOPath.Combine(aiProjectRoot, "scripts", "prepare_yolo_workspace.py");
                 string yoloScript = IOPath.Combine(aiProjectRoot, "scripts", "train_yolo.py");
@@ -326,16 +394,13 @@ namespace CoilTrainingUI
                     progressWindow.UpdateProgress(trainAnoma ? 25 : 30, "YOLO workspace 생성 중...");
                     progressWindow.AppendLog("[YOLO-WS] START");
 
-                    string yoloPrepArgs =
-                        $"--raw-root \"{stagedRawRoot}\" " +
-                        $"--out-root \"{yoloWorkspaceRoot}\" " +
-                        $"--train-ratio {settings.Workspace.TrainRatio.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
-                        $"--seed {settings.Workspace.Seed} " +
-                        $"--max-background {settings.Workspace.YoloMaxBackground}" +
-                        BuildYoloBalanceArgs(settings);
+                    string yoloPrepArgs = TrainingCommandBuilder.BuildYoloWorkspaceArgs(
+                        settings,
+                        stagedRawRoot,
+                        yoloWorkspaceRoot);
 
                     int yoloPrepCode = await runner.RunAsync(
-                        pythonExe: pythonExe,
+                        pythonExe: yoloPythonExe,
                         scriptPath: yoloPrepScript,
                         args: yoloPrepArgs,
                         workingDir: aiProjectRoot,
@@ -360,10 +425,13 @@ namespace CoilTrainingUI
                     progressWindow.UpdateProgress(stageStart, "Anoma 학습 중...");
                     progressWindow.AppendLog("[ANOMA] START");
                     int anomaCode = await runner.RunAsync(
-                        pythonExe: pythonExe,
+                        pythonExe: anomaPythonExe,
                         scriptPath: anomaScript,
-                        args: $"--workspace \"{anomaStagedRawRoot}\" --out \"{anomaOut}\" " +
-                              $"--image-size {settings.AnomaInfer.InputSize}",
+                        args: TrainingCommandBuilder.BuildAnomaArgs(
+                            settings,
+                            anomaStagedRawRoot,
+                            anomaOut,
+                            IOPath.GetFileName(runDir)),
                         workingDir: aiProjectRoot,
                         logPath: IOPath.Combine(logsDir, "anoma.log"),
                         ct: cts.Token,
@@ -394,16 +462,15 @@ namespace CoilTrainingUI
 
                     progressWindow.UpdateProgress(stageStart, "YOLO 학습 중...");
                     progressWindow.AppendLog("[YOLO] START");
-                    string yoloModelArgs = _yoloTrainingMode == YoloTrainingMode.FineTune
-                        ? $" --model \"{_yoloFineTuneWeightsPath}\""
-                        : "";
                     int yoloCode = await runner.RunAsync(
-                        pythonExe: pythonExe,
+                        pythonExe: yoloPythonExe,
                         scriptPath: yoloScript,
-                        args: $"--workspace \"{yoloWorkspaceRoot}\" --out \"{yoloOut}\" " +
-                              $"--epochs {settings.Workspace.YoloEpochs} " +
-                              $"--imgsz {settings.YoloInfer.ImgSz} " +
-                              $"--batch {settings.Workspace.YoloBatch}{yoloModelArgs}",
+                        args: TrainingCommandBuilder.BuildYoloArgs(
+                            settings,
+                            yoloWorkspaceRoot,
+                            yoloOut,
+                            _yoloTrainingMode == YoloTrainingMode.FineTune,
+                            _yoloFineTuneWeightsPath),
                         workingDir: aiProjectRoot,
                         logPath: IOPath.Combine(logsDir, "yolo.log"),
                         ct: cts.Token,
@@ -475,11 +542,23 @@ namespace CoilTrainingUI
                 VerifyInferencePackageOrThrow(pkgDir, pipelineMode);
                 progressWindow.UpdateProgress(100, "학습 및 패키지 생성 완료");
 
+                var sourceBatches = effectiveTrainingInputs
+                    .Select(input => input.BatchKey)
+                    .Where(batchKey => !string.IsNullOrWhiteSpace(batchKey))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(batchKey => batchKey, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                bool isFineTuneRun = trainYolo && _yoloTrainingMode == YoloTrainingMode.FineTune;
+                string parentModelId = isFineTuneRun ? _yoloFineTuneParentModelId : "";
+                string parentWeightsPath = isFineTuneRun ? _yoloFineTuneWeightsPath : "";
+                string parentWeightsSha256 = ComputeSha256IfExists(parentWeightsPath);
+
                 WriteRunManifest(
                     runDir: runDir,
                     projectRoot: projectRoot,
                     aiProjectRoot: aiProjectRoot,
-                    pythonExe: pythonExe,
+                    yoloPythonExe: yoloPythonExe,
+                    anomaPythonExe: anomaPythonExe,
                     yoloScript: yoloScript,
                     anomaScript: anomaScript,
                     pipelineMode: pipelineMode,
@@ -491,13 +570,30 @@ namespace CoilTrainingUI
                     settings: settings,
                     totalImages: totalImages,
                     normalImages: normalImages,
-                    sourceBatches: effectiveTrainingInputs
-                        .Select(input => input.BatchKey)
-                        .Where(batchKey => !string.IsNullOrWhiteSpace(batchKey))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderBy(batchKey => batchKey, StringComparer.OrdinalIgnoreCase)
-                        .ToList()
+                    yoloTrainingMode: isFineTuneRun ? "fine_tune" : "fresh",
+                    parentModelId: parentModelId,
+                    parentWeightsPath: parentWeightsPath,
+                    parentWeightsSha256: parentWeightsSha256,
+                    sourceBatches: sourceBatches
                 );
+
+                CreateModelRegistryService().Register(new ModelRegistrationContext
+                {
+                    RunDirectory = runDir,
+                    InferencePackageDirectory = pkgDir,
+                    PipelineMode = GetTrainingPipelineModeToken(pipelineMode),
+                    TrainingMode = isFineTuneRun ? "fine_tune" : "fresh",
+                    ParentModelId = parentModelId,
+                    ParentWeightsPath = parentWeightsPath,
+                    ParentWeightsSha256 = parentWeightsSha256,
+                    SourceBatches = sourceBatches,
+                    TotalImages = totalImages,
+                    NormalImages = normalImages,
+                    YoloModel = trainYolo ? settings.YoloTraining.Model : "",
+                    AnomaModel = trainAnoma ? settings.AnomaTraining.Model : "",
+                    YoloOutDirectory = trainYolo ? yoloOut : "",
+                    AnomaOutDirectory = trainAnoma ? anomaOut : ""
+                });
 
                 MessageBox.Show($"{operationName} 완료\n\n{pkgDir}");
                 OpenFolder(pkgDir);
@@ -574,6 +670,32 @@ namespace CoilTrainingUI
             return inputsByImagePath.Values
                 .OrderBy(input => input.BatchKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(input => input.ImagePath, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private IReadOnlyList<TrainingImageInput> BuildTrainingInputsForBatchKeys(
+            IReadOnlyList<string> batchKeys)
+        {
+            if (batchKeys == null || batchKeys.Count == 0)
+                return Array.Empty<TrainingImageInput>();
+
+            var requested = new HashSet<string>(batchKeys, StringComparer.OrdinalIgnoreCase);
+            BatchImportLoadResult library = _batchImportService.LoadLibrary(
+                GetTrainingInboxRoot(),
+                includeHidden: true);
+            return library.Images
+                .Where(record => requested.Contains(record.BatchKey))
+                .Select(record => new TrainingImageInput
+                {
+                    ImagePath = record.ProcessedPath,
+                    InferJsonPath = record.InferJsonPath,
+                    RequiresInfer = record.RequiresInfer,
+                    ExpectedInferenceContextId = record.ExpectedInferenceContextId,
+                    BatchRoot = record.BatchRoot,
+                    BatchKey = record.BatchKey
+                })
+                .GroupBy(input => input.ImagePath, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
                 .ToList();
         }
 
@@ -796,27 +918,6 @@ namespace CoilTrainingUI
             }
         }
 
-        private static string BuildYoloBalanceArgs(AppSettings settings)
-        {
-            string oversampleClass = settings.Workspace.YoloOversampleClass?.Trim() ?? "";
-            string augmentClass = settings.Workspace.YoloAugmentClass?.Trim() ?? "";
-            var args = "";
-
-            if (!string.IsNullOrWhiteSpace(oversampleClass))
-            {
-                args += $" --oversample-class \"{oversampleClass}\" " +
-                        $"--oversample-factor {settings.Workspace.YoloOversampleFactor.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-            }
-
-            if (!string.IsNullOrWhiteSpace(augmentClass))
-            {
-                args += $" --augment-class \"{augmentClass}\" " +
-                        $"--augment-factor {settings.Workspace.YoloAugmentFactor.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-            }
-
-            return args;
-        }
-
         private static TrainingPipelineMode TryParseTrainingPipelineMode(string? modeToken)
         {
             return (modeToken ?? "").Trim().ToLowerInvariant() switch
@@ -1010,7 +1111,8 @@ namespace CoilTrainingUI
             string runDir,
             string projectRoot,
             string aiProjectRoot,
-            string pythonExe,
+            string yoloPythonExe,
+            string anomaPythonExe,
             string yoloScript,
             string anomaScript,
             TrainingPipelineMode pipelineMode,
@@ -1022,6 +1124,10 @@ namespace CoilTrainingUI
             AppSettings settings,
             int totalImages,
             int normalImages,
+            string yoloTrainingMode,
+            string parentModelId,
+            string parentWeightsPath,
+            string parentWeightsSha256,
             IReadOnlyList<string>? sourceBatches = null
         )
         {
@@ -1030,12 +1136,23 @@ namespace CoilTrainingUI
                 CreatedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 ProjectRoot = projectRoot,
                 AiProjectRoot = aiProjectRoot,
-                PythonExe = pythonExe,
+                Python = new
+                {
+                    Yolo = yoloPythonExe,
+                    Anoma = anomaPythonExe
+                },
                 Scripts = new { Yolo = yoloScript, Anoma = anomaScript },
                 Pipeline = new
                 {
                     Mode = GetTrainingPipelineModeToken(pipelineMode),
                     DisplayName = GetTrainingPipelineDisplayName(pipelineMode)
+                },
+                YoloTraining = new
+                {
+                    Mode = yoloTrainingMode,
+                    ParentModelId = parentModelId,
+                    ParentWeightsPath = parentWeightsPath,
+                    ParentWeightsSha256 = parentWeightsSha256
                 },
                 Workspaces = new { Yolo = yoloWorkspaceRoot, Anoma = anomaWorkspaceRoot },
                 Outputs = new { YoloOut = yoloOutDir, AnomaOut = anomaOutDir, InferencePackage = inferencePackageDir },
@@ -1053,6 +1170,20 @@ namespace CoilTrainingUI
             File.WriteAllText(path, json);
         }
 
+        private ModelRegistryService CreateModelRegistryService()
+        {
+            string registryDirectory = IOPath.Combine(GetTrainingInboxRoot(), "_model_registry");
+            return new ModelRegistryService(registryDirectory);
+        }
+
+        private static string ComputeSha256IfExists(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return "";
+            using var stream = File.OpenRead(path);
+            return Convert.ToHexString(SHA256.HashData(stream));
+        }
+
         private void BuildPackageOnly_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -1065,7 +1196,10 @@ namespace CoilTrainingUI
                 }
 
                 string projectRoot = FindProjectRoot("capstone_design");
-                var settings = AppSettingsLoader.LoadOrThrow(projectRoot);
+                var settings = AppSettingsLoader.LoadOrThrow(
+                    projectRoot,
+                    requireYoloPython: false,
+                    requireAnomaPython: false);
 
                 string runRoot = ResolveRunRoot(currentInputs);
                 if (!Directory.Exists(runRoot))
@@ -1118,6 +1252,14 @@ namespace CoilTrainingUI
 
                 if (RequiresYoloTraining(pipelineMode))
                     File.Copy(yoloOnnx, IOPath.Combine(modelsDir, "yolo.onnx"), true);
+
+                string yoloBestPt = IOPath.Combine(yoloOut, "best.pt");
+                if (RequiresYoloTraining(pipelineMode) && File.Exists(yoloBestPt))
+                {
+                    string trainingAssetsDir = IOPath.Combine(pkgDir, "training");
+                    Directory.CreateDirectory(trainingAssetsDir);
+                    File.Copy(yoloBestPt, IOPath.Combine(trainingAssetsDir, "yolo_best.pt"), true);
+                }
 
                 if (RequiresAnomaTraining(pipelineMode))
                     File.Copy(anomaOnnx, IOPath.Combine(modelsDir, "anoma.onnx"), true);

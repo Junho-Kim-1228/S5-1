@@ -47,6 +47,21 @@ class AnomaConfigTests(unittest.TestCase):
                 ]
             )
 
+    def test_target_recall_is_configurable(self) -> None:
+        config = parse_args(
+            [
+                "--workspace",
+                "raw",
+                "--out",
+                "out",
+                "--model",
+                "dinomaly",
+                "--target-recall",
+                "0.9",
+            ]
+        )
+        self.assertEqual(config.target_recall, 0.9)
+
 
 if __name__ == "__main__":
     unittest.main()
