@@ -34,7 +34,7 @@
     "model": "models/anoma.onnx",
     "mode": "stretch",
     "input_size": 448,
-    "score_thres": 0.035877570509910583,
+    "score_thres": 0.02454194,
     "crop_padding_px": 0
   }
 }
