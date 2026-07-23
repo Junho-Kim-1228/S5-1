@@ -40,6 +40,9 @@ obj/
 __pycache__/
 *.pt
 *.onnx
+!CoilInspectionApp/CoilInspectionApp/CoilInspectionApp/CoilInspectionApp/InferencePackage/models/
+CoilInspectionApp/CoilInspectionApp/CoilInspectionApp/CoilInspectionApp/InferencePackage/models/*
+!CoilInspectionApp/CoilInspectionApp/CoilInspectionApp/CoilInspectionApp/InferencePackage/models/mask.onnx
 coil-ai/runs/
 *.cache
 !coil-ai/assets/weights/yolov8n.pt
