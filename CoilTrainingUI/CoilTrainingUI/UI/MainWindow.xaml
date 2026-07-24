@@ -168,7 +168,23 @@
                         <TextBlock x:Name="YoloExcludedNoBoxCountText" Text="YOLO 박스 없는 불량 제외 0" Foreground="#FFCC80" FontSize="11"/>
                         <Border Margin="0,5,0,2" Padding="4,3" Background="#383838" CornerRadius="3">
                             <StackPanel>
-                                <TextBlock Text="색상 안내" Foreground="#F0F0F0" FontSize="10" FontWeight="SemiBold"/>
+                                <DockPanel LastChildFill="True">
+                                    <Button x:Name="RefreshImageListButton"
+                                            DockPanel.Dock="Right"
+                                            Style="{StaticResource SidebarIconButtonStyle}"
+                                            ToolTip="이미지 목록 새로고침"
+                                            Click="RefreshImageList_Click">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="14"
+                                                   Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                                                   Text="&#xE72C;"/>
+                                    </Button>
+                                    <TextBlock Text="색상 안내"
+                                               Foreground="#F0F0F0"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               VerticalAlignment="Center"/>
+                                </DockPanel>
                                 <WrapPanel Margin="0,2,0,0">
                                     <StackPanel Orientation="Horizontal" Margin="0,0,8,2" ToolTip="정상 판정 확정">
                                         <Border Width="10" Height="10" Background="#DCFFE1" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
@@ -201,16 +217,6 @@
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
-                        <Button x:Name="RefreshImageListButton"
-                                Style="{StaticResource SidebarIconButtonStyle}"
-                                HorizontalAlignment="Right"
-                                ToolTip="이미지 목록 새로고침"
-                                Click="RefreshImageList_Click">
-                            <TextBlock FontFamily="Segoe MDL2 Assets"
-                                       FontSize="14"
-                                       Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
-                                       Text="&#xE72C;"/>
-                        </Button>
                     </StackPanel>
 
                     <Expander DockPanel.Dock="Top"
