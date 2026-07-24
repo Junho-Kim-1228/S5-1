@@ -330,10 +330,10 @@ namespace CoilTrainingUI.Services
 
     public class AnomaInferSection
     {
-        public string Mode { get; set; } = "crop"; // "crop" 고정 권장
+        public string Mode { get; set; } = "stretch";
         public int InputSize { get; set; } = 448;
         public double ScoreThres { get; set; } = 0.02454194;
-        public int CropPaddingPx { get; set; } = 8;
+        public int CropPaddingPx { get; set; }
     }
 
     public class MaskInferSection

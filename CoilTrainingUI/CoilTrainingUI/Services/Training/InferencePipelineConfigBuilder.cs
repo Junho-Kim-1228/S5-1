@@ -14,7 +14,9 @@ public static class InferencePipelineConfigBuilder
         string pipelineMode,
         string displayName,
         int? calibratedAnomaInputSize = null,
-        double? calibratedAnomaThreshold = null)
+        double? calibratedAnomaThreshold = null,
+        string? calibratedAnomaResizeMode = null,
+        int? calibratedAnomaCropPaddingPx = null)
     {
         if (settings == null)
             throw new ArgumentNullException(nameof(settings));
@@ -24,6 +26,12 @@ public static class InferencePipelineConfigBuilder
         bool requiresYolo = mode is AnomaThenYolo or YoloOnly;
         int anomaInputSize = calibratedAnomaInputSize ?? settings.AnomaInfer.InputSize;
         double anomaThreshold = calibratedAnomaThreshold ?? settings.AnomaInfer.ScoreThres;
+        string anomaResizeMode = string.IsNullOrWhiteSpace(calibratedAnomaResizeMode)
+            ? settings.AnomaInfer.Mode
+            : calibratedAnomaResizeMode.Trim().ToLowerInvariant();
+        int anomaCropPaddingPx = calibratedAnomaCropPaddingPx ?? settings.AnomaInfer.CropPaddingPx;
+        if (!string.Equals(anomaResizeMode, "crop", StringComparison.OrdinalIgnoreCase))
+            anomaCropPaddingPx = 0;
         AutoReviewSection autoReview = settings.AutoReview ?? new AutoReviewSection();
         var requiredModels = new List<string> { "mask" };
         if (requiresAnoma) requiredModels.Add("anoma");
@@ -94,10 +102,10 @@ public static class InferencePipelineConfigBuilder
             root["anoma"] = new
             {
                 model = "models/anoma.onnx",
-                mode = settings.AnomaInfer.Mode,
+                mode = anomaResizeMode,
                 input_size = anomaInputSize,
                 score_thres = anomaThreshold,
-                crop_padding_px = settings.AnomaInfer.CropPaddingPx
+                crop_padding_px = anomaCropPaddingPx
             };
         }
 

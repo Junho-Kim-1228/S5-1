@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\CoilTrainingUI\Models\Review\ReviewState.cs" Link="Shared\ReviewState.cs" />
+    <Compile Include="..\CoilTrainingUI\Models\Review\AutoReviewModels.cs" Link="Shared\AutoReviewModels.cs" />
     <Compile Include="..\CoilTrainingUI\Models\InferenceBatch\InferenceBatchDtos.cs" Link="Shared\InferenceBatchDtos.cs" />
     <Compile Include="..\CoilTrainingUI\Services\Batch\InferenceBatchSchemaParser.cs" Link="Shared\InferenceBatchSchemaParser.cs" />
     <Compile Include="..\CoilTrainingUI\Services\State\ImageStateService.cs" Link="Shared\ImageStateService.cs" />

@@ -52,6 +52,7 @@ internal sealed class CoreReviewTests
             Run("image list colors distinguish pending box review", ImageListColorsDistinguishPendingBoxes);
             Run("Anoma alone controls accepted AI decision", AcceptAiDecisionUsesAnomaOnly);
             Run("pipeline contract is Anoma then YOLO without fusion", PipelineContractIsCorrect);
+            Run("Anoma package uses exported resize calibration", () => AnomaPackageUsesExportedResizeCalibration(root));
             Run("inference context mismatch is rejected", () => InferenceContextMismatchIsRejected(root));
             Run("inference result inconsistencies are rejected", () => InferenceResultInconsistenciesAreRejected(root));
             Run("final training commands are explicit", FinalTrainingCommandsAreExplicit);
@@ -70,7 +71,7 @@ internal sealed class CoreReviewTests
             Run("auto review never holds audit samples", AutoReviewNeverHoldsAuditSamples);
             Run("auto review protects existing user state", AutoReviewProtectsExistingState);
             Run("prediction-only boxes stay out of editable layer", PredictionOnlyBoxesStayOutOfEditableLayer);
-            Console.WriteLine($"PASS: {_passed}/34 core review tests");
+            Console.WriteLine($"PASS: {_passed} core review tests");
         }
         finally
         {
@@ -1092,6 +1093,11 @@ internal sealed class CoreReviewTests
             "YOLO inference size must match the exported 1280 model");
         Assert(root.GetProperty("mask").GetProperty("input_size").GetInt32() == 512,
             "Mask inference size must be 512");
+        JsonElement anoma = root.GetProperty("anoma");
+        Assert(anoma.GetProperty("mode").GetString() == "stretch",
+            "Anoma inference fallback must match exported stretch preprocessing");
+        Assert(anoma.GetProperty("crop_padding_px").GetInt32() == 0,
+            "stretch preprocessing must not emit crop padding");
         Assert(pipeline.GetProperty("required_models").EnumerateArray()
             .Any(item => item.GetString() == "mask"), "Mask must be a required package model");
         JsonElement autoReview = root.GetProperty("auto_review");
@@ -1107,6 +1113,59 @@ internal sealed class CoreReviewTests
         Assert(autoReview.GetProperty("audit_sample_rate").GetDouble() == 0,
             "removed audit sampling must remain disabled in exported packages");
         Assert(!root.TryGetProperty("fusion", out _), "legacy fusion section must not be emitted");
+    }
+
+    private static void AnomaPackageUsesExportedResizeCalibration(string root)
+    {
+        string outDirectory = Path.Combine(root, "anoma_calibration");
+        Directory.CreateDirectory(outDirectory);
+        File.WriteAllText(
+            Path.Combine(outDirectory, "inference_config.json"),
+            """
+            {
+              "schema_version": 2,
+              "input_size": 448,
+              "score_threshold": 0.03125,
+              "preprocessing": {
+                "resize": "stretch"
+              }
+            }
+            """);
+
+        AnomaInferenceCalibration calibration =
+            AnomaInferenceCalibrationReader.TryLoad(outDirectory)
+            ?? throw new InvalidOperationException("Anoma calibration was not loaded");
+        Assert(calibration.ResizeMode == "stretch", "exported resize mode was not loaded");
+        Assert(calibration.CropPaddingPx == 0, "stretch calibration must clear crop padding");
+
+        var settings = new AppSettings
+        {
+            AnomaInfer = new AnomaInferSection
+            {
+                Mode = "crop",
+                InputSize = 640,
+                ScoreThres = 0.5,
+                CropPaddingPx = 8
+            }
+        };
+        object config = InferencePipelineConfigBuilder.Build(
+            settings,
+            InferencePipelineConfigBuilder.AnomaThenYolo,
+            "2-stage",
+            calibration.InputSize,
+            calibration.ScoreThreshold,
+            calibration.ResizeMode,
+            calibration.CropPaddingPx);
+        using JsonDocument document = JsonDocument.Parse(JsonSerializer.Serialize(config));
+        JsonElement anoma = document.RootElement.GetProperty("anoma");
+        Assert(anoma.GetProperty("mode").GetString() == "stretch",
+            "package ignored exported Anoma resize mode");
+        Assert(anoma.GetProperty("input_size").GetInt32() == 448,
+            "package ignored calibrated Anoma input size");
+        Assert(Math.Abs(anoma.GetProperty("score_thres").GetDouble() - 0.03125) < 1e-12,
+            "package ignored calibrated Anoma threshold");
+        Assert(anoma.GetProperty("crop_padding_px").GetInt32() == 0,
+            "stretch package retained crop padding");
     }
 
     private void InferenceResultInconsistenciesAreRejected(string root)

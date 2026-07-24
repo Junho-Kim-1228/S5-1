@@ -38,12 +38,6 @@ namespace CoilTrainingUI
             public TrainingPipelineMode PipelineMode { get; set; } = TrainingPipelineMode.AnomaThenYolo;
         }
 
-        private sealed class AnomaInferenceCalibration
-        {
-            public int InputSize { get; set; }
-            public double ScoreThreshold { get; set; }
-        }
-
         private TrainingPipelineMode _trainingPipelineMode = TrainingPipelineMode.AnomaThenYolo;
         private YoloTrainingMode _yoloTrainingMode = YoloTrainingMode.Fresh;
         private string _yoloFineTuneWeightsPath = "";
@@ -541,7 +535,7 @@ namespace CoilTrainingUI
                 File.Copy(maskOnnxSource, IOPath.Combine(modelsDir, "mask.onnx"), true);
 
                 var anomaCalibration = trainAnoma
-                    ? TryLoadAnomaInferenceCalibration(anomaOut)
+                    ? AnomaInferenceCalibrationReader.TryLoad(anomaOut)
                     : null;
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
                 File.WriteAllText(
@@ -867,7 +861,9 @@ namespace CoilTrainingUI
                 GetTrainingPipelineModeToken(pipelineMode),
                 GetTrainingPipelineDisplayName(pipelineMode),
                 anomaCalibration?.InputSize,
-                anomaCalibration?.ScoreThreshold);
+                anomaCalibration?.ScoreThreshold,
+                anomaCalibration?.ResizeMode,
+                anomaCalibration?.CropPaddingPx);
         }
 
         private static string ResolveMaskOnnxPathOrThrow(AppSettings settings)
@@ -912,39 +908,6 @@ namespace CoilTrainingUI
                 return new RunManifestMetadata
                 {
                     PipelineMode = TryParseTrainingPipelineMode(modeToken)
-                };
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static AnomaInferenceCalibration? TryLoadAnomaInferenceCalibration(string anomaOutDir)
-        {
-            string configPath = IOPath.Combine(anomaOutDir, "inference_config.json");
-            if (!File.Exists(configPath))
-                return null;
-
-            try
-            {
-                using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
-                JsonElement root = doc.RootElement;
-                if (!root.TryGetProperty("input_size", out JsonElement inputSizeElement)
-                    || !inputSizeElement.TryGetInt32(out int inputSize)
-                    || inputSize <= 0
-                    || !root.TryGetProperty("score_threshold", out JsonElement thresholdElement)
-                    || !thresholdElement.TryGetDouble(out double scoreThreshold)
-                    || double.IsNaN(scoreThreshold)
-                    || double.IsInfinity(scoreThreshold))
-                {
-                    return null;
-                }
-
-                return new AnomaInferenceCalibration
-                {
-                    InputSize = inputSize,
-                    ScoreThreshold = scoreThreshold
                 };
             }
             catch
@@ -1334,7 +1297,7 @@ namespace CoilTrainingUI
                 File.Copy(maskOnnxSource, IOPath.Combine(modelsDir, "mask.onnx"), true);
 
                 var anomaCalibration = RequiresAnomaTraining(pipelineMode)
-                    ? TryLoadAnomaInferenceCalibration(anomaOut)
+                    ? AnomaInferenceCalibrationReader.TryLoad(anomaOut)
                     : null;
                 string pipelinePath = IOPath.Combine(cfgDir, "pipeline.json");
 
