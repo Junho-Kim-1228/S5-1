@@ -162,81 +162,118 @@
                     <Border DockPanel.Dock="Top"
                             Style="{StaticResource SidebarCardStyle}"
                             Margin="0,0,0,12">
-                    <StackPanel>
-                        <TextBlock x:Name="TotalCountText" Text="전체 0" Foreground="White" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="VisibleCountText" Text="필터 후 0" Foreground="#D0D0D0" FontSize="11"/>
-                        <WrapPanel Margin="0,3,0,0">
-                            <TextBlock x:Name="UnreviewedCountText" Text="미검수 0" Foreground="#FFD166" FontSize="11" Margin="0,0,10,0"/>
-                            <TextBlock x:Name="ReviewingCountText" Text="검수 중 0" Foreground="#7FDBFF" FontSize="11"/>
-                        </WrapPanel>
-                        <WrapPanel>
-                            <TextBlock x:Name="ConfirmedNormalCountText" Text="정상 확정 0" Foreground="#A0FFA0" FontSize="11" Margin="0,0,10,0"/>
-                            <TextBlock x:Name="ConfirmedDefectCountText" Text="불량 확정 0" Foreground="#FFA0A0" FontSize="11"/>
-                        </WrapPanel>
-                        <TextBlock x:Name="ExcludedCountText" Text="학습 사용 OFF 0" Foreground="#C0C0C0" FontSize="11"/>
-                        <TextBlock x:Name="AutoAcceptedCountText" Text="AI 자동수락 0" Foreground="#B9F6CA" FontSize="11"/>
-                        <WrapPanel Margin="0,3,0,0">
-                            <TextBlock x:Name="AnomaTrainEligibleCountText" Text="Anoma 학습 0" Foreground="#A0FFA0" FontSize="11" Margin="0,0,10,0"/>
-                            <TextBlock x:Name="AnomaEvalEligibleCountText" Text="Anoma 평가 0" Foreground="#FFB3B3" FontSize="11"/>
-                        </WrapPanel>
-                        <WrapPanel>
-                            <TextBlock x:Name="YoloPositiveEligibleCountText" Text="YOLO 양성 0" Foreground="#80C8FF" FontSize="11" Margin="0,0,10,0"/>
-                            <TextBlock x:Name="YoloBackgroundCandidateCountText" Text="YOLO 배경 후보 0" Foreground="#B9E6FF" FontSize="11"/>
-                        </WrapPanel>
-                        <TextBlock x:Name="YoloExcludedNoBoxCountText" Text="YOLO 박스 없는 불량 제외 0" Foreground="#FFCC80" FontSize="11"/>
-                        <TextBlock x:Name="YoloLowConfidenceBoxReviewCountText" Text="YOLO 저신뢰 박스 검수 필요 0" Foreground="#FFB74D" FontSize="11"/>
-                        <Border Margin="0,8,0,0" Padding="8,6" Background="#172033" CornerRadius="7">
-                            <StackPanel>
-                                <DockPanel LastChildFill="True">
-                                    <Button x:Name="RefreshImageListButton"
-                                            DockPanel.Dock="Right"
-                                            Style="{StaticResource SidebarIconButtonStyle}"
-                                            ToolTip="이미지 목록 새로고침"
-                                            Click="RefreshImageList_Click">
-                                        <TextBlock FontFamily="Segoe MDL2 Assets"
-                                                   FontSize="14"
-                                                   Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
-                                                   Text="&#xE72C;"/>
-                                    </Button>
-                                    <TextBlock Text="색상 안내"
-                                               Foreground="#F0F0F0"
-                                               FontSize="10"
-                                               FontWeight="SemiBold"
-                                               VerticalAlignment="Center"/>
-                                </DockPanel>
-                                <WrapPanel Margin="0,2,0,0">
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,8,2" ToolTip="정상 판정 확정">
-                                        <Border Width="10" Height="10" Background="#DCFFE1" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
-                                        <TextBlock Text="정상" Foreground="#E8E8E8" FontSize="10"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,8,2" ToolTip="불량 판정 및 박스 검수 완료">
-                                        <Border Width="10" Height="10" Background="#FFDCDC" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
-                                        <TextBlock Text="불량 완료" Foreground="#E8E8E8" FontSize="10"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,8,2" ToolTip="불량 판정 확정, 박스 검수 필요">
-                                        <Border Width="10" Height="10" Background="#FFE2B3" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
-                                        <TextBlock Text="박스 검수" Foreground="#E8E8E8" FontSize="10"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,8,2" ToolTip="아직 검수하지 않음">
-                                        <Border Width="10" Height="10" Background="#FFF7DC" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
-                                        <TextBlock Text="미검수" Foreground="#E8E8E8" FontSize="10"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,8,2" ToolTip="검수 진행 중">
-                                        <Border Width="10" Height="10" Background="#DCF0FF" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
-                                        <TextBlock Text="검수 중" Foreground="#E8E8E8" FontSize="10"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,2" ToolTip="판정은 유지하고 학습 사용만 OFF">
-                                        <Border Width="10" Height="10" Background="#E1E1E1" BorderBrush="#777" BorderThickness="1" Margin="0,1,3,0"/>
-                                        <TextBlock Text="학습 OFF" Foreground="#E8E8E8" FontSize="10"/>
-                                    </StackPanel>
-                                </WrapPanel>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,7">
+                                <Button x:Name="RefreshImageListButton"
+                                        DockPanel.Dock="Right"
+                                        Style="{StaticResource SidebarIconButtonStyle}"
+                                        ToolTip="이미지 목록 새로고침"
+                                        Click="RefreshImageList_Click">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                                               FontSize="14"
+                                               Foreground="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Foreground}"
+                                               Text="&#xE72C;"/>
+                                </Button>
+                                <TextBlock Text="검수 현황"
+                                           Foreground="#F8FAFC"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                            </DockPanel>
+
+                            <WrapPanel Margin="0,0,0,7">
+                                <TextBlock x:Name="TotalCountText"
+                                           Text="전체 0"
+                                           Foreground="White"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,10,0"/>
+                                <TextBlock x:Name="VisibleCountText"
+                                           Text="필터 후 0"
+                                           Foreground="#94A3B8"
+                                           FontSize="11"
+                                           VerticalAlignment="Bottom"
+                                           Margin="0,0,0,1"/>
+                            </WrapPanel>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="UnreviewedCountText" Grid.Row="0" Grid.Column="0" Text="미검수 0" Foreground="#FBBF24" FontSize="11" Margin="0,1,8,2"/>
+                                <TextBlock x:Name="ReviewingCountText" Grid.Row="0" Grid.Column="1" Text="검수 중 0" Foreground="#7DD3FC" FontSize="11" Margin="0,1,0,2"/>
+                                <TextBlock x:Name="ConfirmedNormalCountText" Grid.Row="1" Grid.Column="0" Text="정상 확정 0" Foreground="#86EFAC" FontSize="11" Margin="0,1,8,2"/>
+                                <TextBlock x:Name="ConfirmedDefectCountText" Grid.Row="1" Grid.Column="1" Text="불량 확정 0" Foreground="#FCA5A5" FontSize="11" Margin="0,1,0,2"/>
+                                <TextBlock x:Name="ExcludedCountText" Grid.Row="2" Grid.ColumnSpan="2" Text="학습 사용 OFF 0" Foreground="#CBD5E1" FontSize="11" Margin="0,1,0,0"/>
+                            </Grid>
+
+                            <Expander Header="학습 상세"
+                                      IsExpanded="False"
+                                      Margin="0,7,0,0"
+                                      Padding="0,3,0,0"
+                                      FontSize="11">
+                                <StackPanel Margin="2,4,0,0">
+                                    <TextBlock x:Name="AutoAcceptedCountText" Text="AI 자동수락 0" Foreground="#B9F6CA" FontSize="11"/>
+                                    <WrapPanel Margin="0,2,0,0">
+                                        <TextBlock x:Name="AnomaTrainEligibleCountText" Text="Anoma 학습 0" Foreground="#86EFAC" FontSize="11" Margin="0,0,12,0"/>
+                                        <TextBlock x:Name="AnomaEvalEligibleCountText" Text="Anoma 평가 0" Foreground="#FCA5A5" FontSize="11"/>
+                                    </WrapPanel>
+                                    <WrapPanel Margin="0,2,0,0">
+                                        <TextBlock x:Name="YoloPositiveEligibleCountText" Text="YOLO 양성 0" Foreground="#7DD3FC" FontSize="11" Margin="0,0,12,0"/>
+                                        <TextBlock x:Name="YoloBackgroundCandidateCountText" Text="YOLO 배경 후보 0" Foreground="#BAE6FD" FontSize="11"/>
+                                    </WrapPanel>
+                                    <TextBlock x:Name="YoloExcludedNoBoxCountText" Text="YOLO 박스 없는 불량 제외 0" Foreground="#FCD34D" FontSize="11" Margin="0,2,0,0"/>
+                                    <TextBlock x:Name="YoloLowConfidenceBoxReviewCountText" Text="YOLO 저신뢰 박스 검수 필요 0" Foreground="#FDBA74" FontSize="11" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
                     </Border>
 
                     <Expander DockPanel.Dock="Top"
-                              Margin="0,0,0,12"
+                              Margin="0,0,0,8"
+                              Padding="8,6"
+                              Background="#172033"
+                              BorderBrush="{StaticResource SidebarBorderBrush}"
+                              BorderThickness="1"
+                              Foreground="White"
+                              Header="색상 안내"
+                              IsExpanded="False">
+                        <WrapPanel Margin="0,5,0,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,10,3" ToolTip="정상 판정 확정">
+                                <Border Width="9" Height="9" Background="#DCFFE1" Margin="0,2,4,0"/>
+                                <TextBlock Text="정상" Foreground="#E8E8E8" FontSize="10"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,10,3" ToolTip="불량 판정 및 박스 검수 완료">
+                                <Border Width="9" Height="9" Background="#FFDCDC" Margin="0,2,4,0"/>
+                                <TextBlock Text="불량 완료" Foreground="#E8E8E8" FontSize="10"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,10,3" ToolTip="불량 판정 확정, 박스 검수 필요">
+                                <Border Width="9" Height="9" Background="#FFE2B3" Margin="0,2,4,0"/>
+                                <TextBlock Text="박스 검수" Foreground="#E8E8E8" FontSize="10"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,10,3" ToolTip="아직 검수하지 않음">
+                                <Border Width="9" Height="9" Background="#FFF7DC" Margin="0,2,4,0"/>
+                                <TextBlock Text="미검수" Foreground="#E8E8E8" FontSize="10"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,10,3" ToolTip="검수 진행 중">
+                                <Border Width="9" Height="9" Background="#DCF0FF" Margin="0,2,4,0"/>
+                                <TextBlock Text="검수 중" Foreground="#E8E8E8" FontSize="10"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,3" ToolTip="판정은 유지하고 학습 사용만 OFF">
+                                <Border Width="9" Height="9" Background="#E1E1E1" Margin="0,2,4,0"/>
+                                <TextBlock Text="학습 OFF" Foreground="#E8E8E8" FontSize="10"/>
+                            </StackPanel>
+                        </WrapPanel>
+                    </Expander>
+
+                    <Expander DockPanel.Dock="Top"
+                              Margin="0,0,0,8"
                               Padding="8"
                               Background="{StaticResource SidebarSurfaceBrush}"
                               BorderBrush="{StaticResource SidebarBorderBrush}"
