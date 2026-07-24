@@ -15,8 +15,6 @@ namespace CoilTrainingUI.Converters
 
             if (item.IsReviewExcluded)
                 return new SolidColorBrush(Color.FromRgb(225, 225, 225));
-            if (item.IsAutoReviewAudit)
-                return new SolidColorBrush(Color.FromRgb(232, 221, 255));
             if (item.IsReviewConfirmedDefect && !item.IsBoxReviewConfirmed)
                 return new SolidColorBrush(Color.FromRgb(255, 226, 179));
             if (item.IsReviewConfirmedDefect)

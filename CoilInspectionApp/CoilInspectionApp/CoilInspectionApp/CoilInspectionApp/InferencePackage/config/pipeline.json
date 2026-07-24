@@ -21,11 +21,11 @@
   },
   "auto_review": {
     "enabled": true,
-    "policy_version": "auto_review_v1",
-    "anoma_normal_threshold_multiplier": 0.5,
-    "anoma_defect_threshold_multiplier": 2.0,
+    "policy_version": "auto_review_v2_no_audit",
+    "anoma_normal_threshold_multiplier": 0.95,
+    "anoma_defect_threshold_multiplier": 1.6,
     "yolo_box_min_confidence": 0.85,
-    "audit_sample_rate": 0.1
+    "audit_sample_rate": 0.0
   },
   "mask": {
     "model": "models/mask.onnx",
@@ -60,7 +60,7 @@
     "model": "models/anoma.onnx",
     "mode": "stretch",
     "input_size": 448,
-    "score_thres": 0.02454194,
+    "score_thres": 0.02580488,
     "crop_padding_px": 0
   }
 }

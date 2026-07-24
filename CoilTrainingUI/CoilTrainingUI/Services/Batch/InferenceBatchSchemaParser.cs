@@ -129,16 +129,32 @@ public static class InferenceBatchSchemaParser
         }
 
         var final = GetRequiredProperty(root, "infer", "final", path);
-        _ = GetRequiredProperty(final, "infer.final", "is_defect", path);
+        var finalIsDefect = GetRequiredProperty(final, "infer.final", "is_defect", path);
+        if (finalIsDefect.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new InvalidDataException($"Invalid type for 'infer.final.is_defect' (boolean expected): {path}");
 
         if (schemaVersion >= 2)
         {
             _ = GetRequiredProperty(root, "infer", "inference_context_id", path);
             _ = GetRequiredProperty(yolo, "infer.yolo", "confidence_threshold", path);
             _ = GetRequiredProperty(yolo, "infer.yolo", "model_sha256", path);
+            var yoloExecuted = GetRequiredProperty(yolo, "infer.yolo", "executed", path);
+            if (yoloExecuted.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new InvalidDataException($"Invalid type for 'infer.yolo.executed' (boolean expected): {path}");
 
             var anoma = GetRequiredProperty(root, "infer", "anoma", path);
-            _ = GetRequiredProperty(anoma, "infer.anoma", "score_threshold", path);
+            var anomaExecuted = GetRequiredProperty(anoma, "infer.anoma", "executed", path);
+            if (anomaExecuted.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new InvalidDataException($"Invalid type for 'infer.anoma.executed' (boolean expected): {path}");
+            var anomaScore = GetRequiredProperty(anoma, "infer.anoma", "score", path);
+            if (!anomaScore.TryGetDouble(out _))
+                throw new InvalidDataException($"Invalid type for 'infer.anoma.score' (number expected): {path}");
+            var scoreThreshold = GetRequiredProperty(anoma, "infer.anoma", "score_threshold", path);
+            if (!scoreThreshold.TryGetDouble(out _))
+                throw new InvalidDataException($"Invalid type for 'infer.anoma.score_threshold' (number expected): {path}");
+            var anomaDecision = GetRequiredProperty(anoma, "infer.anoma", "decision", path);
+            if (anomaDecision.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException($"Invalid type for 'infer.anoma.decision' (string expected): {path}");
             _ = GetRequiredProperty(anoma, "infer.anoma", "model_sha256", path);
         }
     }

@@ -65,26 +65,17 @@ namespace CoilTrainingUI
                 return;
             }
 
-            var confirm = MessageBox.Show(
-                $"AI 예측 박스 {prediction.YoloDetectionCount}개를 편집 가능한 검수 박스로 수락할까요?\n" +
-                "수락 후 박스를 확인·수정하고 '박스 검수 완료'를 눌러야 최종 확정됩니다.",
-                "AI 박스 전체 수락",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-            if (confirm != MessageBoxResult.Yes)
-                return;
-
             try
             {
                 ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
-                ReviewState next = _reviewWorkflow.AcceptPredictionBoxes(current, prediction);
+                ReviewState next = _reviewWorkflow.AcceptAndConfirmPredictionBoxes(current, prediction);
                 _reviewRepository.Save(item.ProcessedPath, next);
-                ShowPredictionCheckBox.IsChecked = false;
+                HidePredictionOverlayAfterBoxCommit(item.ProcessedPath);
                 ReloadAfterExplicitReviewChange(item, reloadCanvas: true);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, "AI 박스 수락", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(ex.Message, "YOLO 판정 수락", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
@@ -111,57 +102,32 @@ namespace CoilTrainingUI
                 ReviewState edited = _reviewWorkflow.ReplaceBoxesAfterEdit(current, boxes);
                 ReviewState confirmed = _reviewWorkflow.ConfirmBoxes(edited);
                 _reviewRepository.Save(item.ProcessedPath, confirmed);
-                ShowPredictionCheckBox.IsChecked = false;
+                HidePredictionOverlayAfterBoxCommit(item.ProcessedPath);
                 ReloadAfterExplicitReviewChange(item, reloadCanvas: true);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, "박스 검수 완료", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(ex.Message, "박스 저장", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
-        private void ExcludeFromTraining_Click(object sender, RoutedEventArgs e)
+        private void TrainingUseToggle_Click(object sender, RoutedEventArgs e)
         {
             if (ImageListBox.SelectedItem is not ImageItem item)
                 return;
-            if (MessageBox.Show(
-                    $"{item.FileName}을 모든 학습 데이터에서 제외할까요?",
-                    "학습 제외",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question) != MessageBoxResult.Yes)
-            {
-                return;
-            }
 
             try
             {
                 ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
-                _reviewRepository.Save(item.ProcessedPath, _reviewWorkflow.Exclude(current, "사용자 학습 제외"));
-                ReloadAfterExplicitReviewChange(item, reloadCanvas: false);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, "학습 제외", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
-
-        private void YoloBackgroundCheckBox_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_isLoadingImage || ImageListBox.SelectedItem is not ImageItem item)
-                return;
-
-            try
-            {
-                ReviewState current = LoadReviewForExplicitEdit(item.ProcessedPath).State;
-                ReviewState next = _reviewWorkflow.SetYoloBackground(
+                ReviewState next = _reviewWorkflow.SetTrainingEnabled(
                     current,
-                    YoloBackgroundCheckBox.IsChecked == true);
+                    TrainingUseToggleButton.IsChecked == true);
                 _reviewRepository.Save(item.ProcessedPath, next);
                 ReloadAfterExplicitReviewChange(item, reloadCanvas: false);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, "YOLO 정상 배경", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(ex.Message, "학습 사용 설정", MessageBoxButton.OK, MessageBoxImage.Warning);
                 SyncAnomalyRadioFromSelectedItem();
             }
         }
@@ -208,7 +174,10 @@ namespace CoilTrainingUI
 
             string? selectedPath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
             RefreshAllImagesFromTrainingInbox(selectedPath, _currentBatchRoot);
-            ShowPredictionCheckBox.IsChecked = false;
+            if (!string.IsNullOrWhiteSpace(selectedPath))
+                HidePredictionOverlayAfterBoxCommit(selectedPath);
+            else
+                ShowPredictionCheckBox.IsChecked = false;
             MessageBox.Show($"저장 {saved}개 / 실패 {failures.Count}개" +
                             (failures.Count > 0 ? "\n" + string.Join("\n", failures.Take(10)) : ""));
         }
@@ -249,12 +218,24 @@ namespace CoilTrainingUI
 
         private void ReloadAfterExplicitReviewChange(ImageItem item, bool reloadCanvas)
         {
-            UpdateGtSummaryForImageItem(item, item.ProcessedPath);
-            if (reloadCanvas && string.Equals(_currentImagePath, item.ProcessedPath, StringComparison.OrdinalIgnoreCase))
-                LoadImage(item.ProcessedPath);
-            else
-                SyncAnomalyRadioFromSelectedItem();
-            ApplyImageFilters();
+            bool previousSuppress = _suppressFilterRefresh;
+            _suppressFilterRefresh = true;
+            try
+            {
+                UpdateGtSummaryForImageItem(item, item.ProcessedPath);
+                if (reloadCanvas && string.Equals(_currentImagePath, item.ProcessedPath, StringComparison.OrdinalIgnoreCase))
+                    LoadImage(item.ProcessedPath);
+                else
+                    SyncAnomalyRadioFromSelectedItem();
+            }
+            finally
+            {
+                _suppressFilterRefresh = previousSuppress;
+            }
+
+            if (!previousSuppress)
+                ApplyImageFilters();
+            UpdatePredictionFeatureUiState();
         }
 
         private string? TrySelectFolder(string description, string? initialPath = null)

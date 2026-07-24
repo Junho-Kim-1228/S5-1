@@ -39,14 +39,15 @@ public sealed class ImageItem : INotifyPropertyChanged
     private bool _isReviewConfirmedNormal;
     private bool _isReviewConfirmedDefect;
     private bool _isBoxReviewConfirmed;
+    private bool _isBoxReviewEdited;
     private bool _isReviewExcluded;
     private bool _isAutoAccepted;
-    private bool _isAutoReviewAudit;
     private bool _anomaTrainingEligible;
     private bool _anomaEvaluationEligible;
     private bool _yoloPositiveEligible;
     private bool _yoloBackgroundEligible;
     private bool _yoloExcludedNoBoxDefect;
+    private bool _yoloLowConfidenceBoxReviewRequired;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -79,14 +80,15 @@ public sealed class ImageItem : INotifyPropertyChanged
     public bool IsReviewConfirmedNormal { get => _isReviewConfirmedNormal; set => SetField(ref _isReviewConfirmedNormal, value); }
     public bool IsReviewConfirmedDefect { get => _isReviewConfirmedDefect; set => SetField(ref _isReviewConfirmedDefect, value); }
     public bool IsBoxReviewConfirmed { get => _isBoxReviewConfirmed; set => SetField(ref _isBoxReviewConfirmed, value); }
+    public bool IsBoxReviewEdited { get => _isBoxReviewEdited; set => SetField(ref _isBoxReviewEdited, value); }
     public bool IsReviewExcluded { get => _isReviewExcluded; set => SetField(ref _isReviewExcluded, value); }
     public bool IsAutoAccepted { get => _isAutoAccepted; set => SetField(ref _isAutoAccepted, value); }
-    public bool IsAutoReviewAudit { get => _isAutoReviewAudit; set => SetField(ref _isAutoReviewAudit, value); }
     public bool AnomaTrainingEligible { get => _anomaTrainingEligible; set => SetField(ref _anomaTrainingEligible, value); }
     public bool AnomaEvaluationEligible { get => _anomaEvaluationEligible; set => SetField(ref _anomaEvaluationEligible, value); }
     public bool YoloPositiveEligible { get => _yoloPositiveEligible; set => SetField(ref _yoloPositiveEligible, value); }
     public bool YoloBackgroundEligible { get => _yoloBackgroundEligible; set => SetField(ref _yoloBackgroundEligible, value); }
     public bool YoloExcludedNoBoxDefect { get => _yoloExcludedNoBoxDefect; set => SetField(ref _yoloExcludedNoBoxDefect, value); }
+    public bool YoloLowConfidenceBoxReviewRequired { get => _yoloLowConfidenceBoxReviewRequired; set => SetField(ref _yoloLowConfidenceBoxReviewRequired, value); }
 
     public bool HasRawFile => !string.IsNullOrWhiteSpace(RawPath);
 

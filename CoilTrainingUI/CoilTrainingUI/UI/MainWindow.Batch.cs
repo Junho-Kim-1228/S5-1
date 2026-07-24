@@ -494,7 +494,8 @@ namespace CoilTrainingUI
         {
             PredictionSnapshot prediction = _predictionReader.Read(
                 record.InferJsonPath,
-                record.ExpectedInferenceContextId);
+                record.ExpectedInferenceContextId,
+                record.ImageId);
             ReviewStateLoadResult review = _reviewRepository.Load(record.ProcessedPath);
             review = ApplyAutoReviewOnImport(record, prediction, review);
             TrainingEligibility eligibility = EvaluateTrainingEligibility(
@@ -543,14 +544,15 @@ namespace CoilTrainingUI
                 IsReviewConfirmedNormal = projection.IsConfirmedNormal,
                 IsReviewConfirmedDefect = projection.IsConfirmedDefect,
                 IsBoxReviewConfirmed = projection.IsBoxReviewConfirmed,
+                IsBoxReviewEdited = projection.IsBoxReviewEdited,
                 IsReviewExcluded = projection.IsExcluded,
                 IsAutoAccepted = projection.IsAutoAccepted,
-                IsAutoReviewAudit = projection.IsAutoReviewAudit,
                 AnomaTrainingEligible = eligibility.AnomaTraining,
                 AnomaEvaluationEligible = eligibility.AnomaEvaluation,
                 YoloPositiveEligible = eligibility.YoloPositive,
                 YoloBackgroundEligible = eligibility.YoloBackground,
-                YoloExcludedNoBoxDefect = eligibility.YoloExcludedDefectWithoutBoxes
+                YoloExcludedNoBoxDefect = eligibility.YoloExcludedDefectWithoutBoxes,
+                YoloLowConfidenceBoxReviewRequired = eligibility.YoloLowConfidencePredictionReviewRequired
             });
         }
 

@@ -83,7 +83,7 @@ public sealed class ReviewBox
 
 public sealed class ReviewState
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     [JsonPropertyName("schema_version")]
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
@@ -105,6 +105,9 @@ public sealed class ReviewState
 
     [JsonPropertyName("use_as_yolo_background")]
     public bool UseAsYoloBackground { get; set; }
+
+    [JsonPropertyName("include_in_training")]
+    public bool IncludeInTraining { get; set; } = true;
 
     [JsonPropertyName("exclusion_reason")]
     public string ExclusionReason { get; set; } = "";
@@ -138,6 +141,7 @@ public sealed class ReviewState
             BoxReviewSource = BoxReviewSource,
             Boxes = Boxes.ConvertAll(box => box.Clone()),
             UseAsYoloBackground = UseAsYoloBackground,
+            IncludeInTraining = IncludeInTraining,
             ExclusionReason = ExclusionReason,
             CreatedAtUtc = CreatedAtUtc,
             UpdatedAtUtc = UpdatedAtUtc,

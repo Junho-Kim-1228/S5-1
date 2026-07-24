@@ -77,6 +77,9 @@ public class InferYoloDto
     [JsonPropertyName("executed")]
     public bool Executed { get; set; }
 
+    [JsonPropertyName("skipped_reason")]
+    public string SkippedReason { get; set; } = "";
+
     [JsonPropertyName("confidence_threshold")]
     public double? ConfidenceThreshold { get; set; }
 

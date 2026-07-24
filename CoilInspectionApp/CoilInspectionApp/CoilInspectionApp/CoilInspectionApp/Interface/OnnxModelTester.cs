@@ -158,12 +158,13 @@ namespace CoilInspectionApp.Interface
             {
                 for (int x = 0; x < width; x++)
                 {
-                    // OpenCV stores pixels as BGR, while anomaly training uses RGB
-                    // followed by ImageNet normalization.
+                    // Anoma input is already converted from BGR to RGB by ImageProcessor.
+                    // Preserve that channel order and apply the same ImageNet normalization
+                    // used by coil-ai/anoma/workspace.py.
                     Vec3b color = image.At<Vec3b>(y, x);
-                    tensor[0, 0, y, x] = ((color.Item2 / 255.0f) - ImagenetMean[0]) / ImagenetStd[0];
+                    tensor[0, 0, y, x] = ((color.Item0 / 255.0f) - ImagenetMean[0]) / ImagenetStd[0];
                     tensor[0, 1, y, x] = ((color.Item1 / 255.0f) - ImagenetMean[1]) / ImagenetStd[1];
-                    tensor[0, 2, y, x] = ((color.Item0 / 255.0f) - ImagenetMean[2]) / ImagenetStd[2];
+                    tensor[0, 2, y, x] = ((color.Item2 / 255.0f) - ImagenetMean[2]) / ImagenetStd[2];
                 }
             }
 

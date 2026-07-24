@@ -96,15 +96,19 @@ public static class BatchFolderValidationService
                         : item.InferJson;
                     missingFiles.Add(missingInfer);
                 }
-                else if (!string.IsNullOrWhiteSpace(expectedContextId))
+                else
                 {
                     try
                     {
                         InferResultDto infer = InferenceBatchSchemaParser.ParseInferResult(inferPath);
-                        InferenceContextValidationService.ValidateInferContext(
-                            infer,
-                            expectedContextId,
-                            inferPath);
+                        if (!string.IsNullOrWhiteSpace(expectedContextId))
+                        {
+                            InferenceContextValidationService.ValidateInferContext(
+                                infer,
+                                expectedContextId,
+                                inferPath);
+                        }
+                        InferenceResultValidationService.Validate(infer, item.Id, inferPath);
                     }
                     catch (Exception ex)
                     {

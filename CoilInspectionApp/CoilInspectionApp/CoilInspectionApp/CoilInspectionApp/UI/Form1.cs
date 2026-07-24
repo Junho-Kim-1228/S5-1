@@ -1002,7 +1002,7 @@ namespace CoilInspectionApp
                         if (_config.RequiresAnoma)
                         {
                             int anomaInputSize = _config.anoma?.input_size ?? displaySize;
-                            using (Mat anomaImg = processor.PrepareExistingMaskedModelInput(result.ProcessedImagePath, anomaInputSize, anomaInputSize))
+                            using (Mat anomaImg = processor.PrepareExistingMaskedAnomaInput(result.ProcessedImagePath, anomaInputSize, anomaInputSize))
                             {
                                 if (anomaImg == null || anomaImg.Empty())
                                     throw new InvalidOperationException("Anoma preprocessing failed.");

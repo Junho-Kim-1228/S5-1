@@ -52,7 +52,8 @@ public static class InferencePipelineConfigBuilder
             anoma_normal_threshold_multiplier = autoReview.AnomaNormalThresholdMultiplier,
             anoma_defect_threshold_multiplier = autoReview.AnomaDefectThresholdMultiplier,
             yolo_box_min_confidence = autoReview.YoloBoxMinConfidence,
-            audit_sample_rate = autoReview.AuditSampleRate
+            // Kept in schema for backward compatibility; sampling is disabled.
+            audit_sample_rate = 0.0
         };
 
         root["mask"] = new

@@ -6,11 +6,12 @@ namespace CoilTrainingUI.Models.Review;
 public sealed class AutoReviewPolicy
 {
     public bool Enabled { get; init; } = true;
-    public string PolicyVersion { get; init; } = "auto_review_v1";
-    public double AnomaNormalThresholdMultiplier { get; init; } = 0.5;
-    public double AnomaDefectThresholdMultiplier { get; init; } = 2.0;
+    public string PolicyVersion { get; init; } = "auto_review_v2_no_audit";
+    public double AnomaNormalThresholdMultiplier { get; init; } = 0.95;
+    public double AnomaDefectThresholdMultiplier { get; init; } = 1.6;
     public double YoloBoxMinConfidence { get; init; } = 0.85;
-    public double AuditSampleRate { get; init; } = 0.10;
+    // Retained only for reading older batch contexts. Sampling is no longer applied.
+    public double AuditSampleRate { get; init; }
 
     public static AutoReviewPolicy Disabled { get; } = new() { Enabled = false };
 }

@@ -1,5 +1,6 @@
 using CoilTrainingUI.Models.InferenceBatch;
 using CoilTrainingUI.Models.Review;
+using CoilTrainingUI.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -17,6 +18,8 @@ public sealed class PredictionSnapshot
     public double AnomaScore { get; init; }
     public double? AnomaScoreThreshold { get; init; }
     public string InferenceContextId { get; init; } = "";
+    public bool YoloExecuted { get; init; }
+    public string YoloSkippedReason { get; init; } = "";
     public IReadOnlyList<ReviewBox> YoloBoxes { get; init; } = Array.Empty<ReviewBox>();
 
     public int YoloDetectionCount => YoloBoxes.Count;
@@ -27,7 +30,10 @@ public sealed class PredictionSnapshot
 
 public sealed class PredictionReader
 {
-    public PredictionSnapshot Read(string inferJsonPath, string? expectedInferenceContextId = null)
+    public PredictionSnapshot Read(
+        string inferJsonPath,
+        string? expectedInferenceContextId = null,
+        string? expectedImageId = null)
     {
         if (string.IsNullOrWhiteSpace(inferJsonPath) || !File.Exists(inferJsonPath))
             return new PredictionSnapshot();
@@ -38,6 +44,10 @@ public sealed class PredictionReader
             InferenceContextValidationService.ValidateInferContext(
                 infer,
                 expectedInferenceContextId,
+                inferJsonPath);
+            InferenceResultValidationService.Validate(
+                infer,
+                expectedImageId,
                 inferJsonPath);
             string decision = (infer.Anoma?.Decision ?? "").Trim().ToLowerInvariant();
             bool hasDecision = decision is "normal" or "anomaly";
@@ -55,6 +65,8 @@ public sealed class PredictionReader
                 AnomaScore = infer.Anoma?.Score ?? 0,
                 AnomaScoreThreshold = infer.Anoma?.ScoreThreshold,
                 InferenceContextId = infer.InferenceContextId ?? "",
+                YoloExecuted = infer.Yolo?.Executed == true,
+                YoloSkippedReason = infer.Yolo?.SkippedReason ?? "",
                 YoloBoxes = boxes
             };
         }

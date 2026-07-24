@@ -116,9 +116,6 @@ namespace CoilTrainingUI
 
                 NormalRadio.IsChecked = _currentReviewState.Decision == ImageReviewDecision.ConfirmedNormal;
                 AbnormalRadio.IsChecked = _currentReviewState.Decision == ImageReviewDecision.ConfirmedDefect;
-                YoloBackgroundCheckBox.IsChecked = _currentReviewState.UseAsYoloBackground;
-                YoloBackgroundCheckBox.IsEnabled = _currentReviewState.Decision == ImageReviewDecision.ConfirmedNormal;
-
                 UpdateMainImageDisplayFromToggle();
                 ImageCanvas.IsHitTestVisible = true;
 
@@ -229,12 +226,17 @@ namespace CoilTrainingUI
 
         private void ImageListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            UpdatePredictionFeatureUiState();
-
             if (ImageListBox.SelectedItem is ImageItem item)
+            {
                 LoadImage(item.ProcessedPath, fitToView: true);
+                RestorePredictionOverlayForNewSelection(item);
+            }
             else
+            {
                 ResetImageDisplay();
+            }
+
+            UpdatePredictionFeatureUiState();
         }
 
         private void StartRawViewLoad(

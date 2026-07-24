@@ -71,14 +71,15 @@ namespace CoilTrainingUI
             item.IsReviewConfirmedNormal = projection.IsConfirmedNormal;
             item.IsReviewConfirmedDefect = projection.IsConfirmedDefect;
             item.IsBoxReviewConfirmed = projection.IsBoxReviewConfirmed;
+            item.IsBoxReviewEdited = projection.IsBoxReviewEdited;
             item.IsReviewExcluded = projection.IsExcluded;
             item.IsAutoAccepted = projection.IsAutoAccepted;
-            item.IsAutoReviewAudit = projection.IsAutoReviewAudit;
             item.AnomaTrainingEligible = eligibility.AnomaTraining;
             item.AnomaEvaluationEligible = eligibility.AnomaEvaluation;
             item.YoloPositiveEligible = eligibility.YoloPositive;
             item.YoloBackgroundEligible = eligibility.YoloBackground;
             item.YoloExcludedNoBoxDefect = eligibility.YoloExcludedDefectWithoutBoxes;
+            item.YoloLowConfidenceBoxReviewRequired = eligibility.YoloLowConfidencePredictionReviewRequired;
         }
 
         private void SyncGtSummaryForImage(string imagePath)
@@ -107,7 +108,7 @@ namespace CoilTrainingUI
                 };
             }
 
-            return _trainingDatasetSelector.Evaluate(review);
+            return _trainingDatasetSelector.Evaluate(review, prediction);
         }
 
         private void ApplyAnomalyDecisionToItem(ImageItem item, bool isNormal, bool refreshSummary = true)
@@ -143,8 +144,8 @@ namespace CoilTrainingUI
             {
                 NormalRadio.IsChecked = state.Decision == ImageReviewDecision.ConfirmedNormal;
                 AbnormalRadio.IsChecked = state.Decision == ImageReviewDecision.ConfirmedDefect;
-                YoloBackgroundCheckBox.IsChecked = state.UseAsYoloBackground;
-                YoloBackgroundCheckBox.IsEnabled = state.Decision == ImageReviewDecision.ConfirmedNormal;
+                TrainingUseToggleButton.IsChecked = state.IncludeInTraining &&
+                                                    state.Decision != ImageReviewDecision.Excluded;
             }
             finally
             {

@@ -47,6 +47,7 @@ namespace CoilTrainingUI
         private readonly Dictionary<string, string> _expectedInferenceContextByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, PredictionSnapshot> _predictionByImagePath = new(StringComparer.OrdinalIgnoreCase);
         private const string PredictionOverlayTag = "__prediction_overlay";
+        private string? _predictionOverlayAutoHiddenImagePath;
         private const string AllBatchFilterLabel = "(전체 배치)";
         private string? _currentBatchRoot;
         private bool _currentBatchHasAnyInfer;
@@ -194,11 +195,49 @@ namespace CoilTrainingUI
             }
         }
 
+        private void ImageCanvas_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed ||
+                string.IsNullOrWhiteSpace(_currentImagePath))
+            {
+                return;
+            }
+
+            if (!_canvasInteractionManager.StartPan(e.GetPosition(ImageScrollViewer)))
+                return;
+
+            if (!ImageCanvas.CaptureMouse())
+            {
+                _canvasInteractionManager.EndPan();
+                return;
+            }
+
+            ImageCanvas.Cursor = Cursors.Hand;
+            e.Handled = true;
+        }
+
         private void ImageCanvas_PreviewMouseMove(object sender, MouseEventArgs e)
         {
-            _bboxManager.Drag(
-                e.GetPosition(ImageCanvas)
-            );
+            if (_canvasInteractionManager.IsPanning)
+            {
+                if (e.RightButton == MouseButtonState.Pressed)
+                {
+                    _canvasInteractionManager.UpdatePan(e.GetPosition(ImageScrollViewer));
+                }
+                else
+                {
+                    StopImagePan();
+                }
+
+                e.Handled = true;
+                return;
+            }
+
+            Point point = e.GetPosition(ImageCanvas);
+            if (e.LeftButton == MouseButtonState.Pressed)
+                _bboxManager.Drag(point);
+            else
+                _bboxManager.UpdateHoverCursor(e.OriginalSource as Rectangle, point);
         }
 
         private void ImageCanvas_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -217,6 +256,32 @@ namespace CoilTrainingUI
             {
                 SaveLabelsToStateJson(currentImagePath, markManualYoloDecision: true);
             }
+        }
+
+        private void ImageCanvas_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_canvasInteractionManager.IsPanning)
+                return;
+
+            StopImagePan();
+            e.Handled = true;
+        }
+
+        private void ImageCanvas_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            if (!_canvasInteractionManager.IsPanning)
+                return;
+
+            _canvasInteractionManager.EndPan();
+            ImageCanvas.Cursor = Cursors.Cross;
+        }
+
+        private void StopImagePan()
+        {
+            _canvasInteractionManager.EndPan();
+            if (ImageCanvas.IsMouseCaptured)
+                ImageCanvas.ReleaseMouseCapture();
+            ImageCanvas.Cursor = Cursors.Cross;
         }
 
         private void ImageCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
@@ -331,6 +396,7 @@ namespace CoilTrainingUI
             _currentReviewState = _reviewWorkflow.ReplaceBoxesAfterEdit(loaded.State, boxes);
             _reviewRepository.Save(imagePath, _currentReviewState);
             SyncGtSummaryForImage(imagePath);
+            UpdatePredictionFeatureUiState();
         }
 
         private void NormalRadio_Checked(object sender, RoutedEventArgs e)
@@ -420,7 +486,7 @@ namespace CoilTrainingUI
                     AnomaNormalThresholdMultiplier = section.AnomaNormalThresholdMultiplier,
                     AnomaDefectThresholdMultiplier = section.AnomaDefectThresholdMultiplier,
                     YoloBoxMinConfidence = section.YoloBoxMinConfidence,
-                    AuditSampleRate = section.AuditSampleRate
+                    AuditSampleRate = 0
                 };
             }
             catch (Exception ex)

@@ -1,4 +1,5 @@
 using CoilTrainingUI.Converters;
+using CoilTrainingUI.Managers;
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
@@ -6,8 +7,12 @@ using CoilTrainingUI.Services.Imaging;
 using CoilTrainingUI.Services.Review;
 using System.Globalization;
 using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Rectangle = System.Windows.Shapes.Rectangle;
 
 var suite = new CoreReviewTests();
 suite.RunAll();
@@ -38,14 +43,17 @@ internal sealed class CoreReviewTests
             Run("confirmed zero boxes never falls back", () => ConfirmedZeroBoxesSurviveReload(root));
             Run("defect without boxes is Anoma-only", () => DefectWithoutBoxesIsAnomaOnly(root));
             Run("unreviewed is excluded from all training", () => UnreviewedIsExcluded(root));
+            Run("training use toggle preserves decision and boxes", () => TrainingUseTogglePreservesReview(root));
             Run("legacy migration is backed up and idempotent", () => MigrationIsSafeAndIdempotent(root));
             Run("ambiguous legacy data stays reviewing", () => AmbiguousMigrationStaysReviewing(root));
             Run("selection stays inside supplied batch scope", () => SelectionStaysInScope(root));
+            Run("YOLO backgrounds are balanced automatically", () => YoloBackgroundsAreBalancedAutomatically(root));
             Run("projection flags match persisted state", () => ProjectionFlagsMatchState(root));
             Run("image list colors distinguish pending box review", ImageListColorsDistinguishPendingBoxes);
             Run("Anoma alone controls accepted AI decision", AcceptAiDecisionUsesAnomaOnly);
             Run("pipeline contract is Anoma then YOLO without fusion", PipelineContractIsCorrect);
             Run("inference context mismatch is rejected", () => InferenceContextMismatchIsRejected(root));
+            Run("inference result inconsistencies are rejected", () => InferenceResultInconsistenciesAreRejected(root));
             Run("final training commands are explicit", FinalTrainingCommandsAreExplicit);
             Run("fine-tune command uses warm-start policy", FineTuneCommandUsesWarmStartPolicy);
             Run("Python environment validation follows selected pipeline", () => PythonEnvironmentValidationFollowsPipeline(root));
@@ -53,14 +61,16 @@ internal sealed class CoreReviewTests
             Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
             Run("inference package rejects a missing mask model", () => MissingMaskModelIsRejected(root));
             Run("image cache reuses and invalidates frozen bitmaps", () => ImageCacheIsBoundedAndFresh(root));
+            Run("bounding box edges resize within image bounds", BoundingBoxEdgesResizeWithinBounds);
             Run("auto review accepts high-confidence normal", () => AutoReviewAcceptsNormal(root));
             Run("auto review confirms only high-confidence boxes", () => AutoReviewConfirmsHighConfidenceBoxes(root));
             Run("auto-reviewed boxless defect stays Anoma-only", () => AutoReviewBoxlessDefectIsAnomaOnly(root));
+            Run("YOLO exclusions distinguish low-confidence and missing boxes", YoloExclusionsDistinguishLowConfidenceAndMissingBoxes);
             Run("auto review leaves gray-zone prediction untouched", AutoReviewLeavesGrayZoneUntouched);
-            Run("auto review audit sample remains unreviewed", AutoReviewAuditSampleRemainsUnreviewed);
+            Run("auto review never holds audit samples", AutoReviewNeverHoldsAuditSamples);
             Run("auto review protects existing user state", AutoReviewProtectsExistingState);
             Run("prediction-only boxes stay out of editable layer", PredictionOnlyBoxesStayOutOfEditableLayer);
-            Console.WriteLine($"PASS: {_passed}/29 core review tests");
+            Console.WriteLine($"PASS: {_passed}/34 core review tests");
         }
         finally
         {
@@ -94,12 +104,77 @@ internal sealed class CoreReviewTests
             "changed image dimensions were not reloaded");
     }
 
+    private static void BoundingBoxEdgesResizeWithinBounds()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                BoundingBoxEdgesResizeWithinBoundsOnStaThread();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        if (failure != null)
+            throw new InvalidOperationException("STA bounding-box resize test failed", failure);
+    }
+
+    private static void BoundingBoxEdgesResizeWithinBoundsOnStaThread()
+    {
+        var canvas = new Canvas { Width = 200, Height = 200 };
+        var manager = new BoundingBoxManager(canvas);
+        var box = new BoundingBox
+        {
+            ClassName = "dent",
+            X = 0.5,
+            Y = 0.5,
+            Width = 0.4,
+            Height = 0.4
+        };
+        manager.AddFromModel(box, 200, 200);
+        Rectangle rect = canvas.Children.OfType<Rectangle>().Single();
+
+        manager.UpdateHoverCursor(rect, new Point(140, 100));
+        Assert(canvas.Cursor == Cursors.SizeWE,
+            "right edge did not show the horizontal resize cursor");
+
+        manager.Select(rect, new Point(140, 100));
+        manager.Drag(new Point(175, 100));
+        Assert(manager.EndDrag(200, 200), "right-edge resize was not detected");
+        Assert(Math.Abs(Canvas.GetLeft(rect) - 60) < 0.001 &&
+               Math.Abs(rect.Width - 115) < 0.001,
+            "right-edge resize changed the wrong side of the box");
+
+        manager.Select(rect, new Point(60, 60));
+        manager.Drag(new Point(-100, -100));
+        Assert(manager.EndDrag(200, 200), "corner resize was not detected");
+        Assert(Canvas.GetLeft(rect) >= 0 && Canvas.GetTop(rect) >= 0,
+            "corner resize moved the box outside the image");
+
+        double right = Canvas.GetLeft(rect) + rect.Width;
+        manager.Select(rect, new Point(Canvas.GetLeft(rect), 100));
+        manager.Drag(new Point(right + 500, 100));
+        Assert(manager.EndDrag(200, 200), "minimum-size resize was not detected");
+        Assert(rect.Width >= 8 && rect.Height >= 8,
+            "resize allowed the box to collapse below its minimum size");
+        Assert(box.X is >= 0 and <= 1 && box.Y is >= 0 and <= 1 &&
+               box.Width is > 0 and <= 1 && box.Height is > 0 and <= 1,
+            "resized normalized coordinates are outside the valid range");
+    }
+
     private void AutoReviewAcceptsNormal(string root)
     {
         string image = NewImage(root, "auto_normal.bmp");
         AutoReviewEvaluation evaluation = _autoReview.Evaluate(
             new ReviewStateLoadResult(),
-            NormalPrediction(score: 0.005, threshold: 0.02),
+            NormalPrediction(score: 0.018, threshold: 0.02),
             AutoPolicy(),
             "batch/auto_normal");
 
@@ -176,46 +251,92 @@ internal sealed class CoreReviewTests
             "boxless defect must be excluded from YOLO training");
     }
 
+    private void YoloExclusionsDistinguishLowConfidenceAndMissingBoxes()
+    {
+        PredictionSnapshot lowConfidencePrediction = DefectPrediction(
+            PredictionBox("loose", 0.2833411));
+        AutoReviewEvaluation lowConfidenceEvaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            lowConfidencePrediction,
+            AutoPolicy(),
+            "batch/low_confidence_display");
+        var lowConfidenceLoad = new ReviewStateLoadResult
+        {
+            HasReviewFile = true,
+            State = lowConfidenceEvaluation.StateToPersist ??
+                    throw new InvalidOperationException("low-confidence state is missing")
+        };
+
+        TrainingEligibility lowConfidence = _selector.Evaluate(
+            lowConfidenceLoad,
+            lowConfidencePrediction);
+        Assert(lowConfidence.YoloLowConfidencePredictionReviewRequired,
+            "low-confidence AI boxes were not classified as requiring box review");
+        Assert(!lowConfidence.YoloExcludedDefectWithoutBoxes,
+            "low-confidence AI boxes were incorrectly classified as no-box defects");
+        Assert(lowConfidence.ExclusionReason.Contains("0.283", StringComparison.Ordinal) &&
+               lowConfidence.ExclusionReason.Contains("0.850", StringComparison.Ordinal),
+            "low-confidence reason does not show the prediction and auto-confirm thresholds");
+
+        PredictionSnapshot noBoxPrediction = DefectPrediction();
+        AutoReviewEvaluation noBoxEvaluation = _autoReview.Evaluate(
+            new ReviewStateLoadResult(),
+            noBoxPrediction,
+            AutoPolicy(),
+            "batch/no_box_display");
+        var noBoxLoad = new ReviewStateLoadResult
+        {
+            HasReviewFile = true,
+            State = noBoxEvaluation.StateToPersist ??
+                    throw new InvalidOperationException("boxless state is missing")
+        };
+
+        TrainingEligibility noBox = _selector.Evaluate(noBoxLoad, noBoxPrediction);
+        Assert(noBox.YoloExcludedDefectWithoutBoxes,
+            "zero-detection defect was not classified as a no-box defect");
+        Assert(!noBox.YoloLowConfidencePredictionReviewRequired,
+            "zero-detection defect was incorrectly classified as low-confidence boxes");
+        Assert(noBox.ExclusionReason.Contains("미검출", StringComparison.Ordinal),
+            "zero-detection reason does not identify the YOLO miss");
+
+        ReviewState confirmedZero = _workflow.ConfirmBoxes(
+            _workflow.ConfirmDefect(new ReviewState()));
+        TrainingEligibility confirmedZeroEligibility = _selector.Evaluate(
+            new ReviewStateLoadResult { HasReviewFile = true, State = confirmedZero },
+            noBoxPrediction);
+        Assert(confirmedZeroEligibility.YoloExcludedDefectWithoutBoxes &&
+               confirmedZeroEligibility.ExclusionReason.Contains("0개로 검수 완료", StringComparison.Ordinal),
+            "explicitly confirmed zero boxes were not distinguished from an unreviewed miss");
+    }
+
     private void AutoReviewLeavesGrayZoneUntouched()
     {
         AutoReviewEvaluation evaluation = _autoReview.Evaluate(
             new ReviewStateLoadResult(),
-            DefectPredictionWithScore(score: 0.03, threshold: 0.02),
+            DefectPredictionWithScore(score: 0.03018, threshold: 0.02),
             AutoPolicy(),
             "batch/gray");
         Assert(!evaluation.ShouldPersist && evaluation.Disposition == AutoReviewDisposition.NotApplied,
             "gray-zone prediction changed review state");
     }
 
-    private void AutoReviewAuditSampleRemainsUnreviewed()
+    private void AutoReviewNeverHoldsAuditSamples()
     {
+        // A non-zero value can still arrive from an older inference context.
+        // It must be ignored now that sampling has been removed.
         AutoReviewPolicy policy = AutoPolicy(auditSampleRate: 1.0);
         AutoReviewEvaluation evaluation = _autoReview.Evaluate(
             new ReviewStateLoadResult(),
             NormalPrediction(score: 0.001, threshold: 0.02),
             policy,
-            "batch/audit");
-        Assert(evaluation.Disposition == AutoReviewDisposition.AuditHeld,
-            "audit sample was not held");
-        Assert(evaluation.StateToPersist?.Decision == ImageReviewDecision.Unreviewed,
-            "audit sample must remain unreviewed");
-        Assert(evaluation.StateToPersist?.AutoReview?.HeldForAudit == true,
-            "audit metadata is missing");
-
-        ReviewState manuallyConfirmed = _workflow.ConfirmNormal(
-            evaluation.StateToPersist ?? throw new InvalidOperationException("audit state is missing"),
-            useAsYoloBackground: true);
-        var manualLoad = new ReviewStateLoadResult
-        {
-            HasReviewFile = true,
-            State = manuallyConfirmed
-        };
-        ImageReviewProjection projection = new ReviewProjectionService().Create(
-            manualLoad,
-            NormalPrediction(score: 0.001, threshold: 0.02),
-            _selector.Evaluate(manualLoad));
-        Assert(!projection.IsAutoReviewAudit && projection.IsConfirmedNormal,
-            "completed audit remained displayed as pending");
+            "batch/legacy_audit_rate");
+        Assert(evaluation.Disposition == AutoReviewDisposition.AcceptedNormal,
+            "legacy audit rate still held an automatic decision");
+        Assert(evaluation.StateToPersist?.Decision == ImageReviewDecision.ConfirmedNormal,
+            "high-confidence normal was not auto-accepted");
+        Assert(evaluation.StateToPersist?.AutoReview?.HeldForAudit == false &&
+               evaluation.StateToPersist.AutoReview.AuditSampleRate == 0,
+            "removed sampling state was written to review metadata");
     }
 
     private void AutoReviewProtectsExistingState()
@@ -268,6 +389,44 @@ internal sealed class CoreReviewTests
             "explicit AI box acceptance was not recorded separately");
         Assert(ReviewBoxLayerPolicy.GetEditableBoxes(accepted).Count == 1,
             "explicitly accepted boxes were not exposed to the editor");
+
+        ReviewState acceptedAndConfirmed = _workflow.AcceptAndConfirmPredictionBoxes(
+            existingPredictionState,
+            prediction);
+        Assert(acceptedAndConfirmed.BoxReview == BoxReviewDecision.Confirmed &&
+               acceptedAndConfirmed.BoxReviewSource == BoxReviewSource.AcceptedAiPrediction &&
+               acceptedAndConfirmed.BoxesConfirmedAtUtc.HasValue,
+            "one-click YOLO acceptance did not confirm the prediction boxes");
+        Assert(!ReviewBoxLayerPolicy.CanSaveEditedBoxes(acceptedAndConfirmed),
+            "box save remained enabled after YOLO acceptance confirmed the boxes");
+        Assert(ReviewBoxLayerPolicy.CanAcceptPredictionBoxes(
+                hasUsablePrediction: true,
+                yoloExecuted: true,
+                predictionIsDefect: true,
+                isConfirmedNormal: false,
+                isConfirmedDefect: false,
+                isExcluded: false,
+                isBoxConfirmed: false,
+                isBoxEdited: false),
+            "YOLO acceptance was not available for an unaccepted defect prediction");
+        Assert(!ReviewBoxLayerPolicy.CanAcceptPredictionBoxes(
+                true, true, true, false, true, false, true, false),
+            "YOLO acceptance remained available after boxes were confirmed");
+        Assert(!ReviewBoxLayerPolicy.CanAcceptPredictionBoxes(
+                true, true, true, false, true, false, false, true),
+            "YOLO acceptance remained available after manual box editing started");
+        Assert(!ReviewBoxLayerPolicy.CanAcceptPredictionBoxes(
+                true, true, true, true, false, false, false, false),
+            "YOLO acceptance remained available after the image was confirmed normal");
+        Assert(!ReviewBoxLayerPolicy.CanAcceptPredictionBoxes(
+                true, false, false, false, true, false, false, false),
+            "YOLO acceptance was available even though YOLO did not execute");
+
+        ReviewState changedAfterConfirmation = _workflow.ReplaceBoxesAfterEdit(
+            acceptedAndConfirmed,
+            acceptedAndConfirmed.Boxes);
+        Assert(ReviewBoxLayerPolicy.CanSaveEditedBoxes(changedAfterConfirmation),
+            "box save did not become available after a confirmed box was edited");
 
         AutoReviewEvaluation highConfidence = _autoReview.Evaluate(
             new ReviewStateLoadResult(),
@@ -643,6 +802,63 @@ internal sealed class CoreReviewTests
             "unreviewed image became trainable");
     }
 
+    private void TrainingUseTogglePreservesReview(string root)
+    {
+        string image = NewImage(root, "training_toggle.bmp");
+        ReviewState confirmed = _workflow.ConfirmDefect(new ReviewState());
+        confirmed = _workflow.ReplaceBoxesAfterEdit(confirmed, new[]
+        {
+            new ReviewBox
+            {
+                ClassName = "dent",
+                X = 0.5,
+                Y = 0.5,
+                Width = 0.2,
+                Height = 0.2
+            }
+        });
+        confirmed = _workflow.ConfirmBoxes(confirmed);
+
+        ReviewState disabled = _workflow.SetTrainingEnabled(confirmed, enabled: false);
+        Assert(!disabled.IncludeInTraining &&
+               disabled.Decision == ImageReviewDecision.ConfirmedDefect &&
+               disabled.BoxReview == BoxReviewDecision.Confirmed &&
+               disabled.Boxes.Count == 1,
+            "turning training OFF changed the confirmed review data");
+        _repository.Save(image, disabled);
+
+        ReviewStateLoadResult disabledLoad = _repository.Load(image);
+        TrainingEligibility disabledEligibility = _selector.Evaluate(disabledLoad);
+        ImageReviewProjection disabledProjection = new ReviewProjectionService().Create(
+            disabledLoad,
+            new PredictionSnapshot(),
+            disabledEligibility);
+        Assert(disabledLoad.State.SchemaVersion == ReviewState.CurrentSchemaVersion,
+            "training toggle state did not persist with the current schema");
+        Assert(!disabledEligibility.AnyTrainingUse &&
+               disabledEligibility.ExclusionReason.Contains("OFF", StringComparison.Ordinal),
+            "training OFF image remained eligible for training");
+        Assert(disabledProjection.IsExcluded && disabledProjection.IsConfirmedDefect,
+            "training OFF projection lost the preserved defect decision");
+
+        ReviewState enabled = _workflow.SetTrainingEnabled(disabledLoad.State, enabled: true);
+        var enabledLoad = new ReviewStateLoadResult { HasReviewFile = true, State = enabled };
+        TrainingEligibility enabledEligibility = _selector.Evaluate(enabledLoad);
+        Assert(enabled.IncludeInTraining &&
+               enabled.Decision == ImageReviewDecision.ConfirmedDefect &&
+               enabled.BoxReview == BoxReviewDecision.Confirmed &&
+               enabled.Boxes.Count == 1 &&
+               enabledEligibility.AnomaEvaluation &&
+               enabledEligibility.YoloPositive,
+            "turning training ON did not restore eligibility from the preserved review");
+
+        ReviewState legacyExcluded = _workflow.SetTrainingEnabled(
+            _workflow.Exclude(new ReviewState(), "legacy"),
+            enabled: true);
+        Assert(legacyExcluded.Decision == ImageReviewDecision.Reviewing,
+            "legacy Excluded state was guessed as a confirmed decision");
+    }
+
     private void MigrationIsSafeAndIdempotent(string root)
     {
         string image = NewImage(root, "legacy_normal.bmp");
@@ -714,6 +930,85 @@ internal sealed class CoreReviewTests
         Assert(selection.AnomaInputs.All(input => input.ImagePath != bNormal), "unselected batch image included");
     }
 
+    private void YoloBackgroundsAreBalancedAutomatically(string root)
+    {
+        string normal1 = NewImage(root, "balance_normal_1.bmp");
+        string normal2 = NewImage(root, "balance_normal_2.bmp");
+        string normal3 = NewImage(root, "balance_normal_3.bmp");
+        string disabledNormal = NewImage(root, "balance_normal_disabled.bmp");
+        string defect1 = NewImage(root, "balance_defect_1.bmp");
+        string defect2 = NewImage(root, "balance_defect_2.bmp");
+
+        foreach (string normal in new[] { normal1, normal2, normal3 })
+            _repository.Save(normal, _workflow.ConfirmNormal(new ReviewState(), useAsYoloBackground: false));
+        ReviewState excludedBackground = _workflow.SetTrainingEnabled(
+            _workflow.ConfirmNormal(new ReviewState(), useAsYoloBackground: false),
+            enabled: false);
+        _repository.Save(disabledNormal, excludedBackground);
+
+        foreach (string defect in new[] { defect1, defect2 })
+        {
+            ReviewState state = _workflow.ConfirmDefect(new ReviewState());
+            state = _workflow.ReplaceBoxesAfterEdit(state, new[]
+            {
+                new ReviewBox
+                {
+                    ClassName = "dent",
+                    X = 0.5,
+                    Y = 0.5,
+                    Width = 0.2,
+                    Height = 0.2
+                }
+            });
+            _repository.Save(defect, _workflow.ConfirmBoxes(state));
+        }
+
+        var inputs = new[]
+        {
+            Input(normal1, "batch-a"),
+            Input(normal2, "batch-a"),
+            Input(normal3, "batch-b"),
+            Input(disabledNormal, "batch-b"),
+            Input(defect1, "batch-a"),
+            Input(defect2, "batch-b")
+        };
+        TrainingDatasetSelection selection = _selector.Select(inputs, yoloBackgroundToPositiveRatio: 1.0);
+
+        Assert(selection.YoloPositiveInputCount == 2 &&
+               selection.YoloBackgroundCandidateCount == 3 &&
+               selection.YoloBackgroundSelectedCount == 2 &&
+               selection.ExcludedNormalBackgroundByBalance == 1 &&
+               selection.YoloInputs.Count == 4,
+            "YOLO 1:1 positive/background balancing counts are incorrect");
+        Assert(selection.YoloInputs
+                .Where(input => _repository.Load(input.ImagePath).State.Decision == ImageReviewDecision.ConfirmedNormal)
+                .All(input => !_repository.Load(input.ImagePath).State.UseAsYoloBackground),
+            "automatic backgrounds still depended on the legacy per-image checkbox");
+        Assert(selection.YoloInputs.All(input => input.ImagePath != disabledNormal),
+            "training-disabled normal entered the background sample");
+
+        string[] firstBackgrounds = selection.YoloInputs
+            .Where(input => _repository.Load(input.ImagePath).State.Decision == ImageReviewDecision.ConfirmedNormal)
+            .Select(input => input.ImagePath)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] repeatedBackgrounds = _selector.Select(inputs.Reverse().ToArray(), 1.0).YoloInputs
+            .Where(input => _repository.Load(input.ImagePath).State.Decision == ImageReviewDecision.ConfirmedNormal)
+            .Select(input => input.ImagePath)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        Assert(firstBackgrounds.SequenceEqual(repeatedBackgrounds, StringComparer.OrdinalIgnoreCase),
+            "automatic background selection changed when candidate order changed");
+
+        TrainingDatasetSelection noPositive = _selector.Select(
+            inputs.Where(input => input.ImagePath != defect1 && input.ImagePath != defect2).ToArray(),
+            1.0);
+        Assert(noPositive.YoloBackgroundCandidateCount == 3 &&
+               noPositive.YoloBackgroundSelectedCount == 0 &&
+               noPositive.YoloInputs.Count == 0,
+            "normal backgrounds were selected without a YOLO-positive image");
+    }
+
     private void ProjectionFlagsMatchState(string root)
     {
         string normal = NewImage(root, "projection_normal.bmp");
@@ -757,9 +1052,6 @@ internal sealed class CoreReviewTests
         Assert(StatusColor(new ImageItem { IsReviewConfirmedNormal = true }) ==
                Color.FromRgb(220, 255, 225),
             "confirmed normal must be green");
-        Assert(StatusColor(new ImageItem { IsAutoReviewAudit = true }) ==
-               Color.FromRgb(232, 221, 255),
-            "audit sample must use its own highlight color");
         Assert(StatusColor(new ImageItem()) == Color.FromRgb(255, 247, 220),
             "unreviewed image must be yellow");
     }
@@ -804,13 +1096,173 @@ internal sealed class CoreReviewTests
             .Any(item => item.GetString() == "mask"), "Mask must be a required package model");
         JsonElement autoReview = root.GetProperty("auto_review");
         Assert(autoReview.GetProperty("enabled").GetBoolean(), "auto review must be enabled");
-        Assert(autoReview.GetProperty("anoma_normal_threshold_multiplier").GetDouble() == 0.5,
+        Assert(autoReview.GetProperty("policy_version").GetString() == "auto_review_v2_no_audit",
+            "audit-free auto review policy version mismatch");
+        Assert(autoReview.GetProperty("anoma_normal_threshold_multiplier").GetDouble() == 0.95,
             "auto normal multiplier mismatch");
-        Assert(autoReview.GetProperty("anoma_defect_threshold_multiplier").GetDouble() == 2.0,
+        Assert(autoReview.GetProperty("anoma_defect_threshold_multiplier").GetDouble() == 1.6,
             "auto defect multiplier mismatch");
         Assert(autoReview.GetProperty("yolo_box_min_confidence").GetDouble() == 0.85,
             "auto YOLO confidence mismatch");
+        Assert(autoReview.GetProperty("audit_sample_rate").GetDouble() == 0,
+            "removed audit sampling must remain disabled in exported packages");
         Assert(!root.TryGetProperty("fusion", out _), "legacy fusion section must not be emitted");
+    }
+
+    private void InferenceResultInconsistenciesAreRejected(string root)
+    {
+        const string contextId = "ctx_result_consistency";
+        var reader = new PredictionReader();
+
+        string consistentDefectPath = Path.Combine(root, "consistent_defect.infer.json");
+        WriteInfer(
+            consistentDefectPath,
+            imageId: "consistent_defect",
+            yoloExecuted: true,
+            detections: Array.Empty<object>(),
+            score: 0.0275331,
+            threshold: 0.02580488,
+            decision: "anomaly",
+            finalIsDefect: true);
+
+        PredictionSnapshot consistentDefect = reader.Read(
+            consistentDefectPath,
+            contextId,
+            "consistent_defect");
+        Assert(!consistentDefect.ParseFailed &&
+               consistentDefect.AnomaIsDefect &&
+               consistentDefect.YoloExecuted &&
+               consistentDefect.YoloDetectionCount == 0,
+            "consistent Anoma defect with zero YOLO detections was rejected");
+
+        var emptyReview = new ReviewStateLoadResult();
+        ImageReviewProjection defectProjection = new ReviewProjectionService().Create(
+            emptyReview,
+            consistentDefect,
+            _selector.Evaluate(emptyReview, consistentDefect));
+        Assert(defectProjection.AiAnomaText.Contains("불량", StringComparison.Ordinal) &&
+               defectProjection.AiYoloText == "YOLO 0개",
+            "projection did not use the persisted Anoma decision and YOLO execution state");
+
+        string consistentNormalPath = Path.Combine(root, "consistent_normal.infer.json");
+        WriteInfer(
+            consistentNormalPath,
+            imageId: "consistent_normal",
+            yoloExecuted: false,
+            detections: Array.Empty<object>(),
+            score: 0.018,
+            threshold: 0.02580488,
+            decision: "normal",
+            finalIsDefect: false);
+        PredictionSnapshot consistentNormal = reader.Read(
+            consistentNormalPath,
+            contextId,
+            "consistent_normal");
+        ImageReviewProjection normalProjection = new ReviewProjectionService().Create(
+            emptyReview,
+            consistentNormal,
+            _selector.Evaluate(emptyReview, consistentNormal));
+        Assert(!consistentNormal.ParseFailed &&
+               !consistentNormal.YoloExecuted &&
+               normalProjection.AiYoloText == "YOLO 미실행",
+            "projection did not show the actual skipped YOLO state");
+
+        string scoreMismatchPath = Path.Combine(root, "score_decision_mismatch.infer.json");
+        WriteInfer(
+            scoreMismatchPath,
+            imageId: "score_decision_mismatch",
+            yoloExecuted: false,
+            detections: Array.Empty<object>(),
+            score: 0.03,
+            threshold: 0.02,
+            decision: "normal",
+            finalIsDefect: false);
+        PredictionSnapshot scoreMismatch = reader.Read(scoreMismatchPath, contextId);
+        Assert(scoreMismatch.ParseFailed &&
+               scoreMismatch.Error.Contains("score/decision mismatch", StringComparison.OrdinalIgnoreCase),
+            "Anoma score/decision mismatch was accepted");
+
+        string finalMismatchPath = Path.Combine(root, "anoma_final_mismatch.infer.json");
+        WriteInfer(
+            finalMismatchPath,
+            imageId: "anoma_final_mismatch",
+            yoloExecuted: true,
+            detections: Array.Empty<object>(),
+            score: 0.03,
+            threshold: 0.02,
+            decision: "anomaly",
+            finalIsDefect: false);
+        PredictionSnapshot finalMismatch = reader.Read(finalMismatchPath, contextId);
+        Assert(finalMismatch.ParseFailed &&
+               finalMismatch.Error.Contains("Anoma/final decision mismatch", StringComparison.OrdinalIgnoreCase),
+            "Anoma/final decision mismatch was accepted");
+
+        string yoloMismatchPath = Path.Combine(root, "yolo_execution_mismatch.infer.json");
+        WriteInfer(
+            yoloMismatchPath,
+            imageId: "yolo_execution_mismatch",
+            yoloExecuted: false,
+            detections: new object[]
+            {
+                new
+                {
+                    class_name = "dent",
+                    conf = 0.9,
+                    bbox_xywh_norm = new[] { 0.5, 0.5, 0.2, 0.2 }
+                }
+            },
+            score: 0.01,
+            threshold: 0.02,
+            decision: "normal",
+            finalIsDefect: false);
+        PredictionSnapshot yoloMismatch = reader.Read(yoloMismatchPath, contextId);
+        Assert(yoloMismatch.ParseFailed &&
+               yoloMismatch.Error.Contains("YOLO detections", StringComparison.OrdinalIgnoreCase),
+            "YOLO execution/detection mismatch was accepted");
+
+        PredictionSnapshot imageMismatch = reader.Read(
+            consistentNormalPath,
+            contextId,
+            "different_image_id");
+        Assert(imageMismatch.ParseFailed &&
+               imageMismatch.Error.Contains("image_id mismatch", StringComparison.OrdinalIgnoreCase),
+            "manifest/infer image_id mismatch was accepted");
+
+        void WriteInfer(
+            string path,
+            string imageId,
+            bool yoloExecuted,
+            object[] detections,
+            double score,
+            double threshold,
+            string decision,
+            bool finalIsDefect)
+        {
+            File.WriteAllText(path, JsonSerializer.Serialize(new
+            {
+                schema_version = 2,
+                image_id = imageId,
+                inference_context_id = contextId,
+                image_size = new { w = 2448, h = 2048 },
+                yolo = new
+                {
+                    executed = yoloExecuted,
+                    skipped_reason = yoloExecuted ? "" : "stage1_normal",
+                    confidence_threshold = 0.25,
+                    model_sha256 = "yolo_hash",
+                    detections
+                },
+                anoma = new
+                {
+                    executed = true,
+                    score,
+                    score_threshold = threshold,
+                    model_sha256 = "anoma_hash",
+                    decision
+                },
+                final = new { is_defect = finalIsDefect, reason = Array.Empty<string>() }
+            }));
+        }
     }
 
     private void InferenceContextMismatchIsRejected(string root)
@@ -932,8 +1384,8 @@ internal sealed class CoreReviewTests
     {
         Enabled = true,
         PolicyVersion = "auto_review_test_v1",
-        AnomaNormalThresholdMultiplier = 0.5,
-        AnomaDefectThresholdMultiplier = 2.0,
+        AnomaNormalThresholdMultiplier = 0.95,
+        AnomaDefectThresholdMultiplier = 1.6,
         YoloBoxMinConfidence = 0.85,
         AuditSampleRate = auditSampleRate
     };

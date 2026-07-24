@@ -268,13 +268,24 @@ namespace CoilTrainingUI
                 string runRoot = ResolveRunRoot(scopedTrainingInputs);
                 Directory.CreateDirectory(runRoot);
 
-                TrainingDatasetSelection selection = _trainingDatasetSelector.Select(scopedTrainingInputs);
+                TrainingDatasetSelection selection = _trainingDatasetSelector.Select(
+                    scopedTrainingInputs,
+                    settings.Workspace.YoloBackgroundToPositiveRatio);
                 var anomaTrainingInputs = trainAnoma
                     ? selection.AnomaInputs.ToList()
                     : new List<TrainingImageInput>();
                 var yoloTrainingInputs = trainYolo
                     ? selection.YoloInputs.ToList()
                     : new List<TrainingImageInput>();
+                if (trainYolo)
+                {
+                    progressWindow.AppendLog(
+                        $"[YOLO-BALANCE] positive={selection.YoloPositiveInputCount}, " +
+                        $"background_candidates={selection.YoloBackgroundCandidateCount}, " +
+                        $"background_selected={selection.YoloBackgroundSelectedCount}, " +
+                        $"balance_excluded={selection.ExcludedNormalBackgroundByBalance}, " +
+                        $"ratio={selection.YoloBackgroundToPositiveRatio:0.###}");
+                }
                 var effectiveTrainingInputs = anomaTrainingInputs
                     .Concat(yoloTrainingInputs)
                     .GroupBy(input => input.ImagePath, StringComparer.OrdinalIgnoreCase)

@@ -19,6 +19,7 @@ public sealed class DatasetValidationResult
     public int YoloPositiveImages { get; set; }
     public int YoloBackgroundImages { get; set; }
     public int YoloExcludedDefectWithoutBoxes { get; set; }
+    public int YoloExcludedLowConfidencePredictedBoxes { get; set; }
     public List<string> Errors { get; } = new();
     public bool IsValid => Errors.Count == 0;
 
@@ -31,6 +32,7 @@ public sealed class DatasetValidationResult
             .AppendLine($"YOLO: 양성 {YoloPositiveImages}, 정상 배경 {YoloBackgroundImages}")
             .AppendLine($"YOLO 제외(박스 없는 불량): {YoloExcludedDefectWithoutBoxes}")
             .AppendLine($"오류: {Errors.Count}")
+            .AppendLine($"YOLO 제외(저신뢰 AI 박스 검수 필요): {YoloExcludedLowConfidencePredictedBoxes}")
             .AppendLine();
 
         const int maxShow = 80;
@@ -67,7 +69,8 @@ public sealed class TrainingDatasetValidator
             TotalCandidates = selection.TotalCandidates,
             AnomaImages = selection.AnomaInputs.Count,
             YoloImages = selection.YoloInputs.Count,
-            YoloExcludedDefectWithoutBoxes = selection.ExcludedDefectWithoutBoxes
+            YoloExcludedDefectWithoutBoxes = selection.ExcludedDefectWithoutBoxes,
+            YoloExcludedLowConfidencePredictedBoxes = selection.ExcludedLowConfidencePredictedBoxes
         };
 
         if (trainAnoma)

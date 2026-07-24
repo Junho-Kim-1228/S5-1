@@ -25,7 +25,7 @@ namespace CoilTrainingUI.Services
             public double TrainRatio { get; set; } = 0.8;
             public double ValRatio { get; set; } = 0.2;
             public int Seed { get; set; } = 42;
-            public int? YoloMaxBackground { get; set; }
+            public double YoloBackgroundToPositiveRatio { get; set; } = 1.0;
             public string YoloOversampleClass { get; set; } = "";
             public double YoloOversampleFactor { get; set; } = 1.0;
             public string YoloAugmentClass { get; set; } = "all";
@@ -358,11 +358,11 @@ namespace CoilTrainingUI.Services
     public class AutoReviewSection
     {
         public bool Enabled { get; set; } = true;
-        public string PolicyVersion { get; set; } = "auto_review_v1";
-        public double AnomaNormalThresholdMultiplier { get; set; } = 0.5;
-        public double AnomaDefectThresholdMultiplier { get; set; } = 2.0;
+        public string PolicyVersion { get; set; } = "auto_review_v2_no_audit";
+        public double AnomaNormalThresholdMultiplier { get; set; } = 0.95;
+        public double AnomaDefectThresholdMultiplier { get; set; } = 1.6;
         public double YoloBoxMinConfidence { get; set; } = 0.85;
-        public double AuditSampleRate { get; set; } = 0.10;
+        public double AuditSampleRate { get; set; }
     }
 
 }

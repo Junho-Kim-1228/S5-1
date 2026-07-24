@@ -14,7 +14,13 @@ namespace CoilTrainingUI.Managers
         private readonly BoundingBoxManager _bboxManager;
         private double _contentWidth;
         private double _contentHeight;
+        private bool _isPanning;
+        private Point _panStartPoint;
+        private double _panStartHorizontalOffset;
+        private double _panStartVerticalOffset;
         private const double MaxZoomScale = 10.0;
+
+        public bool IsPanning => _isPanning;
 
         public CanvasInteractionManager(
             ScrollViewer scrollViewer,
@@ -110,6 +116,55 @@ namespace CoilTrainingUI.Managers
             double v = Math.Clamp(_scrollViewer.VerticalOffset, 0, _scrollViewer.ScrollableHeight);
             _scrollViewer.ScrollToHorizontalOffset(h);
             _scrollViewer.ScrollToVerticalOffset(v);
+        }
+
+        // =========================
+        // Pan
+        // =========================
+        public bool StartPan(Point viewportPoint)
+        {
+            _scrollViewer.UpdateLayout();
+            if (_scrollViewer.ScrollableWidth <= 0.5 &&
+                _scrollViewer.ScrollableHeight <= 0.5)
+            {
+                return false;
+            }
+
+            _isPanning = true;
+            _panStartPoint = viewportPoint;
+            _panStartHorizontalOffset = _scrollViewer.HorizontalOffset;
+            _panStartVerticalOffset = _scrollViewer.VerticalOffset;
+            return true;
+        }
+
+        public bool UpdatePan(Point viewportPoint)
+        {
+            if (!_isPanning)
+                return false;
+
+            double deltaX = viewportPoint.X - _panStartPoint.X;
+            double deltaY = viewportPoint.Y - _panStartPoint.Y;
+            double horizontalOffset = Math.Clamp(
+                _panStartHorizontalOffset - deltaX,
+                0,
+                _scrollViewer.ScrollableWidth);
+            double verticalOffset = Math.Clamp(
+                _panStartVerticalOffset - deltaY,
+                0,
+                _scrollViewer.ScrollableHeight);
+
+            _scrollViewer.ScrollToHorizontalOffset(horizontalOffset);
+            _scrollViewer.ScrollToVerticalOffset(verticalOffset);
+            return true;
+        }
+
+        public bool EndPan()
+        {
+            if (!_isPanning)
+                return false;
+
+            _isPanning = false;
+            return true;
         }
 
         // =========================

@@ -78,6 +78,17 @@ public sealed class ReviewWorkflowService
         return Touch(next);
     }
 
+    public ReviewState AcceptAndConfirmPredictionBoxes(
+        ReviewState current,
+        PredictionSnapshot prediction)
+    {
+        ReviewState next = AcceptPredictionBoxes(current, prediction);
+        next.BoxReview = BoxReviewDecision.Confirmed;
+        next.BoxReviewSource = BoxReviewSource.AcceptedAiPrediction;
+        next.BoxesConfirmedAtUtc = DateTime.UtcNow;
+        return Touch(next);
+    }
+
     public ReviewState ReplaceBoxesAfterEdit(ReviewState current, IEnumerable<ReviewBox> boxes)
     {
         var next = Copy(current);
@@ -109,13 +120,28 @@ public sealed class ReviewWorkflowService
         return Touch(next);
     }
 
-    public ReviewState SetYoloBackground(ReviewState current, bool enabled)
+    public ReviewState SetTrainingEnabled(ReviewState current, bool enabled)
     {
-        if (current.Decision != ImageReviewDecision.ConfirmedNormal)
-            throw new InvalidOperationException("YOLO 정상 배경은 정상 확정 이미지에서만 선택할 수 있습니다.");
-
         var next = Copy(current);
-        next.UseAsYoloBackground = enabled;
+        next.IncludeInTraining = enabled;
+
+        // Older review files used Excluded as the decision itself, so their
+        // previous normal/defect decision cannot be reconstructed safely.
+        if (enabled && next.Decision == ImageReviewDecision.Excluded)
+        {
+            next.Decision = ImageReviewDecision.Reviewing;
+            next.DecisionSource = ReviewDecisionSource.None;
+            next.DecisionConfirmedAtUtc = null;
+            next.BoxReview = next.Boxes.Count > 0
+                ? BoxReviewDecision.Edited
+                : BoxReviewDecision.Predicted;
+            next.BoxReviewSource = next.Boxes.Count > 0
+                ? BoxReviewSource.Manual
+                : BoxReviewSource.None;
+            next.BoxesConfirmedAtUtc = null;
+        }
+
+        next.ExclusionReason = "";
         return Touch(next);
     }
 

@@ -119,6 +119,39 @@ namespace CoilInspectionApp.Preprocess
             }
         }
 
+        public Mat PrepareExistingMaskedAnomaInput(string imagePath, int width, int height)
+        {
+            try
+            {
+                using (Mat src = new Mat(imagePath, ImreadModes.Color))
+                {
+                    if (src.Empty()) return null;
+
+                    // Keep deployment preprocessing identical to coil-ai/anoma/workspace.py:
+                    // BGR -> RGB, INTER_AREA resize, then ImageNet normalization in OnnxModelTester.
+                    Mat resized = new Mat();
+                    Cv2.Resize(
+                        src,
+                        resized,
+                        new Size(width, height),
+                        0,
+                        0,
+                        InterpolationFlags.Area);
+
+                    Mat rgbImage = new Mat();
+                    Cv2.CvtColor(resized, rgbImage, ColorConversionCodes.BGR2RGB);
+                    resized.Dispose();
+
+                    return rgbImage;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Anoma 이미지 처리 오류: {ex.Message}");
+                return null;
+            }
+        }
+
         // --- 3. 질감 분석 기반 코일 마스킹 (파이썬 apply_texture_mask 대응) ---
         private Mat ApplyTextureMask(Mat src)
         {

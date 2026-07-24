@@ -21,9 +21,9 @@ public sealed class ImageReviewProjection
     public bool IsConfirmedNormal { get; init; }
     public bool IsConfirmedDefect { get; init; }
     public bool IsBoxReviewConfirmed { get; init; }
+    public bool IsBoxReviewEdited { get; init; }
     public bool IsExcluded { get; init; }
     public bool IsAutoAccepted { get; init; }
-    public bool IsAutoReviewAudit { get; init; }
 }
 
 public sealed class ReviewProjectionService
@@ -34,8 +34,8 @@ public sealed class ReviewProjectionService
         TrainingEligibility eligibility)
     {
         ReviewState state = review.State;
-        bool isAuditPending = state.Decision == ImageReviewDecision.Unreviewed &&
-                              state.AutoReview?.HeldForAudit == true;
+        bool isTrainingDisabled = !state.IncludeInTraining ||
+                                  state.Decision == ImageReviewDecision.Excluded;
         string exclusion = eligibility.ExclusionReason;
         if (review.ParseFailed)
             exclusion = "검수 상태 파일 해석 실패";
@@ -43,14 +43,10 @@ public sealed class ReviewProjectionService
             exclusion = string.IsNullOrWhiteSpace(review.Message)
                 ? "기존 state.json 마이그레이션 필요"
                 : $"기존 상태 마이그레이션 필요 ({review.Message})";
-        else if (isAuditPending)
-            exclusion = "고신뢰 AI 자동수락 표본 검수 대상";
 
         return new ImageReviewProjection
         {
-            DecisionText = isAuditPending
-                ? "표본 검수"
-                : GetDecisionText(state.Decision),
+            DecisionText = GetDecisionText(state.Decision),
             DecisionStatusKey = state.Decision.ToString(),
             DecisionSourceText = GetDecisionSourceText(state.DecisionSource),
             BoxStatusText = GetBoxStatusText(
@@ -60,12 +56,16 @@ public sealed class ReviewProjectionService
             AiAnomaText = prediction.ParseFailed
                 ? "Anoma 결과 오류"
                 : FormatAnomaPrediction(prediction),
-            AiYoloText = prediction.HasAnomaDecision && !prediction.AnomaIsDefect
-                ? "YOLO 미실행"
-                : $"YOLO {prediction.YoloDetectionCount}개",
+            AiYoloText = prediction.ParseFailed
+                ? "YOLO 결과 오류"
+                : !prediction.HasFile
+                    ? "YOLO 결과 없음"
+                    : prediction.YoloExecuted
+                        ? $"YOLO {prediction.YoloDetectionCount}개"
+                        : "YOLO 미실행",
             TrainingEligibilityText = eligibility.SummaryText,
             ExclusionReasonText = exclusion,
-            StatusColorMeaningText = GetStatusColorMeaningText(state, isAuditPending),
+            StatusColorMeaningText = GetStatusColorMeaningText(state, isTrainingDisabled),
             HasPersistentReview = review.HasReviewFile,
             NeedsMigration = review.IsLegacyProjection,
             IsUnreviewed = state.Decision == ImageReviewDecision.Unreviewed,
@@ -73,18 +73,18 @@ public sealed class ReviewProjectionService
             IsConfirmedNormal = state.Decision == ImageReviewDecision.ConfirmedNormal,
             IsConfirmedDefect = state.Decision == ImageReviewDecision.ConfirmedDefect,
             IsBoxReviewConfirmed = state.BoxReview == BoxReviewDecision.Confirmed,
-            IsExcluded = state.Decision == ImageReviewDecision.Excluded,
-            IsAutoAccepted = state.DecisionSource == ReviewDecisionSource.AutoAcceptedAiPrediction,
-            IsAutoReviewAudit = isAuditPending
+            IsBoxReviewEdited = state.BoxReview == BoxReviewDecision.Edited,
+            IsExcluded = isTrainingDisabled,
+            IsAutoAccepted = state.DecisionSource == ReviewDecisionSource.AutoAcceptedAiPrediction
         };
     }
 
-    private static string GetStatusColorMeaningText(ReviewState state, bool isAuditPending)
+    private static string GetStatusColorMeaningText(
+        ReviewState state,
+        bool isTrainingDisabled)
     {
-        if (state.Decision == ImageReviewDecision.Excluded)
-            return "회색: 학습에서 제외한 이미지입니다.";
-        if (isAuditPending)
-            return "보라색: 고신뢰 AI 자동수락 후보 중 표본 검수 대상으로 보류된 이미지입니다.";
+        if (isTrainingDisabled)
+            return "회색: 판정은 유지되고 학습 사용만 OFF인 이미지입니다.";
         if (state.Decision == ImageReviewDecision.ConfirmedDefect &&
             state.BoxReview != BoxReviewDecision.Confirmed)
         {

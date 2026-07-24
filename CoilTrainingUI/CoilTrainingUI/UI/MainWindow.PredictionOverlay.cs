@@ -25,6 +25,27 @@ namespace CoilTrainingUI
             UpdatePredictionOverlayVisibility();
         }
 
+        private void HidePredictionOverlayAfterBoxCommit(string imagePath)
+        {
+            _predictionOverlayAutoHiddenImagePath = imagePath;
+            ShowPredictionCheckBox.IsChecked = false;
+        }
+
+        private void RestorePredictionOverlayForNewSelection(ImageItem item)
+        {
+            if (string.IsNullOrWhiteSpace(_predictionOverlayAutoHiddenImagePath) ||
+                string.Equals(
+                    _predictionOverlayAutoHiddenImagePath,
+                    item.ProcessedPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _predictionOverlayAutoHiddenImagePath = null;
+            ShowPredictionCheckBox.IsChecked = _currentBatchHasAnyInfer;
+        }
+
         private void UpdatePredictionFeatureUiState()
         {
             bool predictionAvailableInBatch = _currentBatchHasAnyInfer;
@@ -42,19 +63,34 @@ namespace CoilTrainingUI
                 selectedReviewItem != null &&
                 selectedReviewItem.HasAiInfer;
 
-            bool canAcceptAiDecision =
-                canApplyCurrentImage &&
-                selectedReviewItem != null &&
-                _predictionByImagePath.TryGetValue(selectedReviewItem.ProcessedPath, out var selectedPrediction) &&
-                selectedPrediction.HasAnomaDecision;
+            PredictionSnapshot? selectedPrediction = null;
+            if (canApplyCurrentImage && selectedReviewItem != null &&
+                _predictionByImagePath.TryGetValue(selectedReviewItem.ProcessedPath, out var cachedPrediction))
+            {
+                selectedPrediction = cachedPrediction;
+            }
+
+            bool hasUsableSelectedPrediction = selectedPrediction != null &&
+                                               selectedPrediction.HasFile &&
+                                               !selectedPrediction.ParseFailed &&
+                                               selectedPrediction.HasAnomaDecision;
+            bool canAcceptAiDecision = hasUsableSelectedPrediction;
             AcceptAiDecisionButton.IsEnabled = canAcceptAiDecision;
-            bool canAcceptBoxes = canApplyCurrentImage &&
-                                  selectedReviewItem != null &&
-                                  (selectedReviewItem.AiAnomaDefect || selectedReviewItem.IsReviewConfirmedDefect);
+
+            bool canAcceptBoxes = selectedReviewItem != null &&
+                                  ReviewBoxLayerPolicy.CanAcceptPredictionBoxes(
+                                      hasUsableSelectedPrediction,
+                                      selectedPrediction?.YoloExecuted == true,
+                                      selectedReviewItem.AiAnomaDefect,
+                                      selectedReviewItem.IsReviewConfirmedNormal,
+                                      selectedReviewItem.IsReviewConfirmedDefect,
+                                      selectedReviewItem.IsReviewExcluded,
+                                      selectedReviewItem.IsBoxReviewConfirmed,
+                                      selectedReviewItem.IsBoxReviewEdited);
             AcceptPredictionBoxesButton.IsEnabled = canAcceptBoxes;
-            ConfirmBoxesButton.IsEnabled = ImageListBox.SelectedItem is ImageItem selectedItem &&
-                                           selectedItem.IsReviewConfirmedDefect;
-            ExcludeReviewButton.IsEnabled = ImageListBox.SelectedItem is ImageItem;
+            ConfirmBoxesButton.IsEnabled = selectedReviewItem?.IsReviewConfirmedDefect == true &&
+                                           selectedReviewItem.IsBoxReviewEdited;
+            TrainingUseToggleButton.IsEnabled = selectedReviewItem != null;
         }
 
         private void RenderPredictionOverlays(string imagePath)

@@ -88,10 +88,10 @@ namespace CoilInspectionApp
     public sealed class AutoReviewSection
     {
         public bool enabled { get; set; }
-        public string policy_version { get; set; } = "auto_review_v1";
-        public float anoma_normal_threshold_multiplier { get; set; } = 0.5f;
-        public float anoma_defect_threshold_multiplier { get; set; } = 2.0f;
+        public string policy_version { get; set; } = "auto_review_v2_no_audit";
+        public float anoma_normal_threshold_multiplier { get; set; } = 0.95f;
+        public float anoma_defect_threshold_multiplier { get; set; } = 1.6f;
         public float yolo_box_min_confidence { get; set; } = 0.85f;
-        public float audit_sample_rate { get; set; } = 0.10f;
+        public float audit_sample_rate { get; set; }
     }
 }

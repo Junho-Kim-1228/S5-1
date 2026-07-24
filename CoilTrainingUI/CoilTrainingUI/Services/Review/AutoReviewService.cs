@@ -1,15 +1,12 @@
 using CoilTrainingUI.Models.Review;
 using System;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace CoilTrainingUI.Services.Review;
 
 public enum AutoReviewDisposition
 {
     NotApplied,
-    AuditHeld,
     AcceptedNormal,
     AcceptedDefect,
     AcceptedDefectWithBoxes
@@ -78,28 +75,10 @@ public sealed class AutoReviewService
             NormalAutoMaxScore = normalMax,
             DefectAutoMinScore = defectMin,
             YoloBoxMinConfidence = policy.YoloBoxMinConfidence,
-            AuditSampleRate = policy.AuditSampleRate,
+            AuditSampleRate = 0,
             CandidateDecision = candidateDecision,
             AppliedAtUtc = DateTime.UtcNow
         };
-
-        if (IsAuditSample(stableSampleKey, prediction.InferenceContextId, policy.AuditSampleRate))
-        {
-            metadata.HeldForAudit = true;
-            return new AutoReviewEvaluation
-            {
-                Disposition = AutoReviewDisposition.AuditHeld,
-                StateToPersist = new ReviewState
-                {
-                    Decision = ImageReviewDecision.Unreviewed,
-                    DecisionSource = ReviewDecisionSource.None,
-                    BoxReview = BoxReviewDecision.NotApplicable,
-                    BoxReviewSource = BoxReviewSource.None,
-                    AutoReview = metadata
-                },
-                Reason = "high-confidence prediction held for audit"
-            };
-        }
 
         metadata.DecisionAutoAccepted = true;
         if (highConfidenceNormal)
@@ -165,23 +144,7 @@ public sealed class AutoReviewService
                IsFinite(policy.AnomaDefectThresholdMultiplier) &&
                policy.AnomaDefectThresholdMultiplier > 1 &&
                IsFinite(policy.YoloBoxMinConfidence) &&
-               policy.YoloBoxMinConfidence is >= 0 and <= 1 &&
-               IsFinite(policy.AuditSampleRate) &&
-               policy.AuditSampleRate is >= 0 and <= 1;
-    }
-
-    private static bool IsAuditSample(string stableSampleKey, string contextId, double sampleRate)
-    {
-        if (sampleRate <= 0)
-            return false;
-        if (sampleRate >= 1)
-            return true;
-
-        string material = $"{contextId}|{stableSampleKey}";
-        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(material));
-        uint bucket = BitConverter.ToUInt32(hash, 0);
-        double fraction = bucket / ((double)uint.MaxValue + 1.0);
-        return fraction < sampleRate;
+               policy.YoloBoxMinConfidence is >= 0 and <= 1;
     }
 
     private static AutoReviewEvaluation NotApplied(string reason) => new()

@@ -251,14 +251,17 @@ namespace CoilTrainingUI
             ReviewingCountText.Text = $"검수 중 {uniqueImages.Count(item => item.IsReviewing)}";
             ConfirmedNormalCountText.Text = $"정상 확정 {uniqueImages.Count(item => item.IsReviewConfirmedNormal)}";
             ConfirmedDefectCountText.Text = $"불량 확정 {uniqueImages.Count(item => item.IsReviewConfirmedDefect)}";
-            ExcludedCountText.Text = $"학습 제외 {uniqueImages.Count(item => item.IsReviewExcluded)}";
+            ExcludedCountText.Text = $"학습 사용 OFF {uniqueImages.Count(item => item.IsReviewExcluded)}";
             AutoAcceptedCountText.Text = $"AI 자동수락 {uniqueImages.Count(item => item.IsAutoAccepted)}";
-            AutoAuditCountText.Text = $"표본 검수 {uniqueImages.Count(item => item.IsAutoReviewAudit)}";
             AnomaTrainEligibleCountText.Text = $"Anoma 학습 {uniqueImages.Count(item => item.AnomaTrainingEligible)}";
             AnomaEvalEligibleCountText.Text = $"Anoma 평가 {uniqueImages.Count(item => item.AnomaEvaluationEligible)}";
             YoloPositiveEligibleCountText.Text = $"YOLO 양성 {uniqueImages.Count(item => item.YoloPositiveEligible)}";
+            YoloBackgroundCandidateCountText.Text =
+                $"YOLO 배경 후보 {uniqueImages.Count(item => item.YoloBackgroundEligible)}";
             YoloExcludedNoBoxCountText.Text =
                 $"YOLO 박스 없는 불량 제외 {uniqueImages.Count(item => item.YoloExcludedNoBoxDefect)}";
+            YoloLowConfidenceBoxReviewCountText.Text =
+                $"YOLO 저신뢰 박스 검수 필요 {uniqueImages.Count(item => item.YoloLowConfidenceBoxReviewRequired)}";
         }
 
         private void AcceptFilteredAnomaDecisions_Click(object sender, RoutedEventArgs e)

@@ -16,9 +16,6 @@ public static class TrainingCommandBuilder
             $"--train-ratio {Invariant(settings.Workspace.TrainRatio)} " +
             $"--seed {settings.Workspace.Seed}";
 
-        if (settings.Workspace.YoloMaxBackground.HasValue)
-            args += $" --max-background {settings.Workspace.YoloMaxBackground.Value}";
-
         string oversampleClass = settings.Workspace.YoloOversampleClass?.Trim() ?? "";
         if (!string.IsNullOrWhiteSpace(oversampleClass))
         {

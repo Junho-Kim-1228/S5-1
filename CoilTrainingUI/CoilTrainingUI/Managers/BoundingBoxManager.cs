@@ -12,15 +12,36 @@ namespace CoilTrainingUI.Managers
     public class BoundingBoxManager
     {
         private const double BoxStrokeThickness = 6;
+        private const double ResizeHitThickness = 10;
+        private const double MinimumBoxSize = 8;
+
+        private enum PointerDragMode
+        {
+            None,
+            Move,
+            Left,
+            Right,
+            Top,
+            Bottom,
+            TopLeft,
+            TopRight,
+            BottomLeft,
+            BottomRight
+        }
 
         private readonly Canvas _canvas;
         private readonly Dictionary<Rectangle, BoundingBox> _bboxMap = new();
 
-        private Rectangle _currentRect;
-        private Rectangle _selectedRect;
+        private Rectangle? _currentRect;
+        private Rectangle? _selectedRect;
 
         private Point _startPoint;
         private Point _dragStartPoint;
+        private double _dragStartLeft;
+        private double _dragStartTop;
+        private double _dragStartWidth;
+        private double _dragStartHeight;
+        private PointerDragMode _dragMode;
 
         private bool _isDrawing;
         private bool _isDragging;
@@ -93,7 +114,7 @@ namespace CoilTrainingUI.Managers
         }
 
 
-        public BoundingBox EndDraw(double imageWidth, double imageHeight)
+        public BoundingBox? EndDraw(double imageWidth, double imageHeight)
         {
             _isDrawing = false;
 
@@ -137,9 +158,9 @@ namespace CoilTrainingUI.Managers
         }
 
         // ========================
-        // 선택 / 이동
+        // 선택 / 이동 / 크기 조정
         // ========================
-        public BoundingBox Select(Rectangle rect, Point mousePoint)
+        public BoundingBox? Select(Rectangle rect, Point mousePoint)
         {
             if (!_bboxMap.ContainsKey(rect))
                 return null;
@@ -155,7 +176,13 @@ namespace CoilTrainingUI.Managers
             _isDragging = true;
             _dragMoved = false;
             _dragStartPoint = mousePoint;
+            _dragStartLeft = Canvas.GetLeft(_selectedRect);
+            _dragStartTop = Canvas.GetTop(_selectedRect);
+            _dragStartWidth = _selectedRect.Width;
+            _dragStartHeight = _selectedRect.Height;
+            _dragMode = GetPointerDragMode(_selectedRect, mousePoint);
             _selectedRect.CaptureMouse();
+            _canvas.Cursor = GetCursor(_dragMode);
 
             SelectedBBox = _bboxMap[_selectedRect];
 
@@ -173,10 +200,42 @@ namespace CoilTrainingUI.Managers
             if (Math.Abs(dx) > 0.01 || Math.Abs(dy) > 0.01)
                 _dragMoved = true;
 
-            Canvas.SetLeft(_selectedRect, Canvas.GetLeft(_selectedRect) + dx);
-            Canvas.SetTop(_selectedRect, Canvas.GetTop(_selectedRect) + dy);
+            double canvasWidth = Math.Max(GetCanvasWidth(), _dragStartLeft + _dragStartWidth);
+            double canvasHeight = Math.Max(GetCanvasHeight(), _dragStartTop + _dragStartHeight);
+            double left = _dragStartLeft;
+            double top = _dragStartTop;
+            double right = _dragStartLeft + _dragStartWidth;
+            double bottom = _dragStartTop + _dragStartHeight;
 
-            _dragStartPoint = currentPoint;
+            if (_dragMode == PointerDragMode.Move)
+            {
+                left = Math.Clamp(
+                    _dragStartLeft + dx,
+                    0,
+                    Math.Max(0, canvasWidth - _dragStartWidth));
+                top = Math.Clamp(
+                    _dragStartTop + dy,
+                    0,
+                    Math.Max(0, canvasHeight - _dragStartHeight));
+                right = left + _dragStartWidth;
+                bottom = top + _dragStartHeight;
+            }
+            else
+            {
+                if (ResizesLeft(_dragMode))
+                    left = Math.Clamp(_dragStartLeft + dx, 0, right - MinimumBoxSize);
+                if (ResizesRight(_dragMode))
+                    right = Math.Clamp(right + dx, left + MinimumBoxSize, canvasWidth);
+                if (ResizesTop(_dragMode))
+                    top = Math.Clamp(_dragStartTop + dy, 0, bottom - MinimumBoxSize);
+                if (ResizesBottom(_dragMode))
+                    bottom = Math.Clamp(bottom + dy, top + MinimumBoxSize, canvasHeight);
+            }
+
+            Canvas.SetLeft(_selectedRect, left);
+            Canvas.SetTop(_selectedRect, top);
+            _selectedRect.Width = right - left;
+            _selectedRect.Height = bottom - top;
         }
 
         public bool EndDrag(double imageWidth, double imageHeight)
@@ -186,6 +245,8 @@ namespace CoilTrainingUI.Managers
 
             _isDragging = false;
             _selectedRect.ReleaseMouseCapture();
+            _dragMode = PointerDragMode.None;
+            _canvas.Cursor = Cursors.Arrow;
 
             if (!_dragMoved)
                 return false;
@@ -194,10 +255,20 @@ namespace CoilTrainingUI.Managers
             return true;
         }
 
+        public void UpdateHoverCursor(Rectangle? rect, Point mousePoint)
+        {
+            if (_isDragging)
+                return;
+
+            _canvas.Cursor = rect != null && _bboxMap.ContainsKey(rect)
+                ? GetCursor(GetPointerDragMode(rect, mousePoint))
+                : Cursors.Cross;
+        }
+
         // ========================
         // 삭제
         // ========================
-        public BoundingBox DeleteSelected()
+        public BoundingBox? DeleteSelected()
         {
             if (_selectedRect == null)
                 return null;
@@ -206,6 +277,8 @@ namespace CoilTrainingUI.Managers
             RemoveRect(_selectedRect);
             _selectedRect = null;
             SelectedBBox = null;
+            _dragMode = PointerDragMode.None;
+            _canvas.Cursor = Cursors.Cross;
 
             return bbox;
         }
@@ -213,6 +286,74 @@ namespace CoilTrainingUI.Managers
         // ========================
         // 유틸
         // ========================
+        private PointerDragMode GetPointerDragMode(Rectangle rect, Point mousePoint)
+        {
+            double left = Canvas.GetLeft(rect);
+            double top = Canvas.GetTop(rect);
+            double right = left + rect.Width;
+            double bottom = top + rect.Height;
+
+            double leftDistance = Math.Abs(mousePoint.X - left);
+            double rightDistance = Math.Abs(mousePoint.X - right);
+            double topDistance = Math.Abs(mousePoint.Y - top);
+            double bottomDistance = Math.Abs(mousePoint.Y - bottom);
+
+            double horizontalTolerance = Math.Min(ResizeHitThickness, rect.Width / 3.0);
+            double verticalTolerance = Math.Min(ResizeHitThickness, rect.Height / 3.0);
+            bool nearHorizontalEdge = Math.Min(leftDistance, rightDistance) <= horizontalTolerance;
+            bool nearVerticalEdge = Math.Min(topDistance, bottomDistance) <= verticalTolerance;
+            bool useLeft = leftDistance <= rightDistance;
+            bool useTop = topDistance <= bottomDistance;
+
+            if (nearHorizontalEdge && nearVerticalEdge)
+            {
+                if (useLeft && useTop) return PointerDragMode.TopLeft;
+                if (!useLeft && useTop) return PointerDragMode.TopRight;
+                if (useLeft) return PointerDragMode.BottomLeft;
+                return PointerDragMode.BottomRight;
+            }
+
+            if (nearHorizontalEdge)
+                return useLeft ? PointerDragMode.Left : PointerDragMode.Right;
+            if (nearVerticalEdge)
+                return useTop ? PointerDragMode.Top : PointerDragMode.Bottom;
+            return PointerDragMode.Move;
+        }
+
+        private static Cursor GetCursor(PointerDragMode mode) => mode switch
+        {
+            PointerDragMode.Left or PointerDragMode.Right => Cursors.SizeWE,
+            PointerDragMode.Top or PointerDragMode.Bottom => Cursors.SizeNS,
+            PointerDragMode.TopLeft or PointerDragMode.BottomRight => Cursors.SizeNWSE,
+            PointerDragMode.TopRight or PointerDragMode.BottomLeft => Cursors.SizeNESW,
+            PointerDragMode.Move => Cursors.SizeAll,
+            _ => Cursors.Arrow
+        };
+
+        private static bool ResizesLeft(PointerDragMode mode)
+            => mode is PointerDragMode.Left or PointerDragMode.TopLeft or PointerDragMode.BottomLeft;
+
+        private static bool ResizesRight(PointerDragMode mode)
+            => mode is PointerDragMode.Right or PointerDragMode.TopRight or PointerDragMode.BottomRight;
+
+        private static bool ResizesTop(PointerDragMode mode)
+            => mode is PointerDragMode.Top or PointerDragMode.TopLeft or PointerDragMode.TopRight;
+
+        private static bool ResizesBottom(PointerDragMode mode)
+            => mode is PointerDragMode.Bottom or PointerDragMode.BottomLeft or PointerDragMode.BottomRight;
+
+        private double GetCanvasWidth()
+        {
+            double width = _canvas.Width;
+            return double.IsNaN(width) || width <= 0 ? _canvas.ActualWidth : width;
+        }
+
+        private double GetCanvasHeight()
+        {
+            double height = _canvas.Height;
+            return double.IsNaN(height) || height <= 0 ? _canvas.ActualHeight : height;
+        }
+
         private void UpdateBBoxModel(Rectangle rect, double imgW, double imgH)
         {
             var bbox = _bboxMap[rect];
@@ -253,6 +394,9 @@ namespace CoilTrainingUI.Managers
                 _bboxMap.Clear();
                 _selectedRect = null;
                 SelectedBBox = null;
+                _isDragging = false;
+                _dragMode = PointerDragMode.None;
+                _canvas.Cursor = Cursors.Cross;
             }
         }
 
@@ -305,6 +449,9 @@ namespace CoilTrainingUI.Managers
                 RestoreSelectedColor();
                 _selectedRect = null;
                 SelectedBBox = null;
+                _isDragging = false;
+                _dragMode = PointerDragMode.None;
+                _canvas.Cursor = Cursors.Cross;
             }
         }
 

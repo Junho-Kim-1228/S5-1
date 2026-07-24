@@ -108,7 +108,7 @@ public sealed class BatchImportService
             AnomaNormalThresholdMultiplier = context.AnomaNormalThresholdMultiplier,
             AnomaDefectThresholdMultiplier = context.AnomaDefectThresholdMultiplier,
             YoloBoxMinConfidence = context.YoloBoxMinConfidence,
-            AuditSampleRate = context.AuditSampleRate
+            AuditSampleRate = 0
         };
     }
 }
