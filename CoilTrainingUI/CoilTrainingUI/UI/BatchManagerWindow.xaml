@@ -100,7 +100,6 @@
 
         <WrapPanel Grid.Row="2"
                    Margin="0,16,0,0"
-                   ItemHeight="34"
                    ItemWidth="160">
             <Button Content="배치 폴더 열기"
                     Margin="0,0,8,8"
