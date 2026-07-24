@@ -2,13 +2,13 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="배치명 변경"
-        Width="420"
-        Height="160"
+        Width="480"
+        Height="210"
         MinWidth="360"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
-    <Grid Margin="12">
+    <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -16,18 +16,19 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="새 배치명을 입력하세요."
+        <TextBlock Text="배치명 변경"
+                   FontSize="20"
                    FontWeight="SemiBold"/>
 
         <TextBox x:Name="BatchNameTextBox"
                  Grid.Row="1"
-                 Margin="0,8,0,0"
-                 Height="30"
+                 Margin="0,12,0,0"
+                 Height="36"
                  VerticalContentAlignment="Center"/>
 
         <TextBlock Grid.Row="2"
                    Margin="0,8,0,0"
-                   Foreground="#606060"
+                   Foreground="{StaticResource TextSecondaryBrush}"
                    Text="폴더명은 유지되고 manifest.json의 batch_id만 변경됩니다."/>
 
         <StackPanel Grid.Row="3"
@@ -35,6 +36,7 @@
                     Orientation="Horizontal"
                     HorizontalAlignment="Right">
             <Button Content="확인"
+                    Style="{StaticResource PrimaryButtonStyle}"
                     Width="84"
                     Margin="0,0,8,0"
                     Click="Confirm_Click"/>

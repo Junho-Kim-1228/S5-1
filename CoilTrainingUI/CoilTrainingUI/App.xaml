@@ -5,6 +5,11 @@
              StartupUri="UI/MainWindow.xaml">
 
     <Application.Resources>
-        <conv:ImageStatusToColorConverter x:Key="ImageStatusToColorConverter"/>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Styles/ModernTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <conv:ImageStatusToColorConverter x:Key="ImageStatusToColorConverter"/>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

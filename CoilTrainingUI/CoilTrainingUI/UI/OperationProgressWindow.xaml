@@ -2,14 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="진행 상황"
-        Width="640"
-        Height="420"
+        Width="720"
+        Height="500"
         MinWidth="520"
         MinHeight="320"
         ResizeMode="CanMinimize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
-    <Grid Margin="14">
+    <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -17,19 +17,20 @@
         </Grid.RowDefinitions>
 
         <TextBlock x:Name="StatusTextBlock"
-                   FontSize="15"
+                   FontSize="20"
                    FontWeight="SemiBold"
                    Text="작업 준비 중..."/>
 
         <StackPanel Grid.Row="1" Margin="0,12,0,12">
             <ProgressBar x:Name="OperationProgressBar"
-                         Height="20"
+                         Height="10"
                          Minimum="0"
                          Maximum="100"
                          Value="0"/>
             <TextBlock x:Name="PercentTextBlock"
                        Margin="0,6,0,0"
-                       Foreground="#606060"
+                       Foreground="{StaticResource AccentBrush}"
+                       FontWeight="SemiBold"
                        Text="0%"/>
             <TextBlock x:Name="ProgressDetailTextBlock"
                        Margin="0,4,0,0"
@@ -44,6 +45,11 @@
                  VerticalScrollBarVisibility="Auto"
                  HorizontalScrollBarVisibility="Auto"
                  TextWrapping="NoWrap"
-                 FontFamily="Consolas"/>
+                 FontFamily="Cascadia Mono, Consolas"
+                 FontSize="12"
+                 Padding="12"
+                 Background="#0F172A"
+                 Foreground="#D1FAE5"
+                 BorderBrush="#1E293B"/>
     </Grid>
 </Window>
