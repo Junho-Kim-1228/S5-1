@@ -427,6 +427,7 @@ namespace CoilTrainingUI
                 {
                     int stageStart = trainYolo ? 40 : 40;
                     int stageSpan = trainYolo ? 20 : 45;
+                    var anomaEtaEstimator = new TrainingEtaEstimator();
 
                     progressWindow.UpdateProgress(stageStart, "Anoma 학습 중...");
                     progressWindow.AppendLog("[ANOMA] START");
@@ -444,6 +445,26 @@ namespace CoilTrainingUI
                         onOutputLine: line =>
                         {
                             progressWindow.AppendLog("[ANOMA] " + line);
+                            TrainingProgressSnapshot? stepProgress =
+                                anomaEtaEstimator.ObserveDinomalyStep(line);
+                            if (stepProgress != null)
+                            {
+                                // Dinomaly fitting occupies the script's 40%~70% interval.
+                                int scriptPercent = 40 + (int)Math.Round(stepProgress.Percent * 0.30);
+                                int mapped = MapStagePercent(scriptPercent, stageStart, stageSpan);
+                                string etaText = stepProgress.EstimatedRemaining.HasValue
+                                    ? $"예상 남은 시간 {TrainingEtaEstimator.FormatDuration(stepProgress.EstimatedRemaining.Value)}"
+                                    : "예상 남은 시간 계산 중...";
+                                string detail =
+                                    $"{stepProgress.CurrentUnit:N0} / {stepProgress.TotalUnits:N0} step · " +
+                                    $"경과 {TrainingEtaEstimator.FormatDuration(stepProgress.Elapsed)} · {etaText}";
+                                progressWindow.UpdateProgress(
+                                    mapped,
+                                    $"Anoma 학습 중... ({stepProgress.Percent}%)",
+                                    detail: detail);
+                                return;
+                            }
+
                             int? logPercent = TryParseTrainingPercentFromLog(line);
                             if (logPercent.HasValue)
                             {
@@ -465,6 +486,10 @@ namespace CoilTrainingUI
                 {
                     int stageStart = trainAnoma ? 65 : 40;
                     int stageSpan = trainAnoma ? 20 : 45;
+                    int yoloTotalEpochs = _yoloTrainingMode == YoloTrainingMode.FineTune
+                        ? settings.YoloTraining.FineTuneEpochs
+                        : settings.YoloTraining.Epochs;
+                    var yoloEtaEstimator = new TrainingEtaEstimator();
 
                     progressWindow.UpdateProgress(stageStart, "YOLO 학습 중...");
                     progressWindow.AppendLog("[YOLO] START");
@@ -483,6 +508,26 @@ namespace CoilTrainingUI
                         onOutputLine: line =>
                         {
                             progressWindow.AppendLog("[YOLO] " + line);
+                            TrainingProgressSnapshot? epochProgress =
+                                yoloEtaEstimator.ObserveYoloEpoch(line, yoloTotalEpochs);
+                            if (epochProgress != null)
+                            {
+                                // YOLO fitting occupies the script's 0%~90% interval.
+                                int scriptPercent = (int)Math.Round(epochProgress.Percent * 0.90);
+                                int mapped = MapStagePercent(scriptPercent, stageStart, stageSpan);
+                                string etaText = epochProgress.EstimatedRemaining.HasValue
+                                    ? $"예상 남은 시간 {TrainingEtaEstimator.FormatDuration(epochProgress.EstimatedRemaining.Value)}"
+                                    : "예상 남은 시간 계산 중...";
+                                string detail =
+                                    $"{epochProgress.CurrentUnit:N0} / {epochProgress.TotalUnits:N0} epoch · " +
+                                    $"경과 {TrainingEtaEstimator.FormatDuration(epochProgress.Elapsed)} · {etaText}";
+                                progressWindow.UpdateProgress(
+                                    mapped,
+                                    $"YOLO 학습 중... ({epochProgress.Percent}%)",
+                                    detail: detail);
+                                return;
+                            }
+
                             int? logPercent = TryParseTrainingPercentFromLog(line);
                             if (logPercent.HasValue)
                             {
@@ -1057,16 +1102,6 @@ namespace CoilTrainingUI
                 totalEpoch > 0)
             {
                 return Math.Clamp((int)Math.Round((currentEpoch * 100.0) / totalEpoch), 0, 100);
-            }
-
-            var ratioMatch = Regex.Match(line, @"\b(\d+)\s*/\s*(\d+)\b");
-            if (ratioMatch.Success &&
-                int.TryParse(ratioMatch.Groups[1].Value, out int current) &&
-                int.TryParse(ratioMatch.Groups[2].Value, out int total) &&
-                total > 0 &&
-                current <= total)
-            {
-                return Math.Clamp((int)Math.Round((current * 100.0) / total), 0, 100);
             }
 
             return null;

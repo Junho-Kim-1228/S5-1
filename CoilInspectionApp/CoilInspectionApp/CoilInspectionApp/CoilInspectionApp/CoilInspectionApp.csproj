@@ -117,6 +117,9 @@
     <Compile Include="UI\Form1.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="UI\Form1.Theme.cs">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </Compile>
     <Compile Include="UI\Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>

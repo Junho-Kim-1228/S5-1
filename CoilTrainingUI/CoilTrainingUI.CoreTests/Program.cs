@@ -57,6 +57,7 @@ internal sealed class CoreReviewTests
             Run("inference result inconsistencies are rejected", () => InferenceResultInconsistenciesAreRejected(root));
             Run("final training commands are explicit", FinalTrainingCommandsAreExplicit);
             Run("fine-tune command uses warm-start policy", FineTuneCommandUsesWarmStartPolicy);
+            Run("training ETA tracks Anoma steps and YOLO epochs", TrainingEtaTracksAnomaAndYolo);
             Run("Python environment validation follows selected pipeline", () => PythonEnvironmentValidationFollowsPipeline(root));
             Run("model registry tracks lifecycle and lineage", () => ModelRegistryTracksLifecycle(root));
             Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
@@ -77,6 +78,47 @@ internal sealed class CoreReviewTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static void TrainingEtaTracksAnomaAndYolo()
+    {
+        var startedAt = new DateTimeOffset(2026, 7, 24, 9, 0, 0, TimeSpan.Zero);
+        var anomaEstimator = new TrainingEtaEstimator();
+
+        TrainingProgressSnapshot firstStep = anomaEstimator.ObserveDinomalyStep(
+            "Dinomaly step 1/5000 loss=1.0",
+            startedAt) ?? throw new InvalidOperationException("first Dinomaly step was not parsed");
+        Assert(firstStep.CurrentUnit == 1 && firstStep.TotalUnits == 5000 &&
+               firstStep.EstimatedRemaining == null,
+            "Anoma ETA should wait for a measured step interval");
+
+        TrainingProgressSnapshot laterStep = anomaEstimator.ObserveDinomalyStep(
+            "Dinomaly step 101/5000 loss=0.5",
+            startedAt.AddSeconds(50)) ?? throw new InvalidOperationException("later Dinomaly step was not parsed");
+        Assert(laterStep.Percent == 2 && laterStep.Elapsed == TimeSpan.FromSeconds(50),
+            "Anoma step progress was calculated incorrectly");
+        Assert(laterStep.EstimatedRemaining.HasValue &&
+               Math.Abs(laterStep.EstimatedRemaining.Value.TotalSeconds - 2449.5) < 0.01,
+            "Anoma remaining time was calculated incorrectly");
+
+        var yoloEstimator = new TrainingEtaEstimator();
+        TrainingProgressSnapshot firstEpoch = yoloEstimator.ObserveYoloEpoch(
+            "[ERR]        1/100       12.3G",
+            expectedTotalEpochs: 100,
+            observedAt: startedAt) ?? throw new InvalidOperationException("first YOLO epoch was not parsed");
+        TrainingProgressSnapshot laterEpoch = yoloEstimator.ObserveYoloEpoch(
+            "[ERR]       11/100       12.3G",
+            expectedTotalEpochs: 100,
+            observedAt: startedAt.AddMinutes(5)) ?? throw new InvalidOperationException("later YOLO epoch was not parsed");
+        Assert(firstEpoch.Percent == 1 && laterEpoch.Percent == 11,
+            "YOLO epoch progress was calculated incorrectly");
+        Assert(laterEpoch.EstimatedRemaining.HasValue &&
+               Math.Abs(laterEpoch.EstimatedRemaining.Value.TotalMinutes - 44.5) < 0.01,
+            "YOLO remaining time was calculated incorrectly");
+        Assert(yoloEstimator.ObserveYoloEpoch("158/158 batches", 100, startedAt) == null,
+            "YOLO batch progress was mistaken for epoch progress");
+        Assert(TrainingEtaEstimator.FormatDuration(TimeSpan.FromSeconds(3661)) == "01:01:01",
+            "training duration formatting is incorrect");
     }
 
     private static void ImageCacheIsBoundedAndFresh(string root)

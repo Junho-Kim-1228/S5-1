@@ -65,6 +65,7 @@ namespace CoilInspectionApp
             buttonZoomOut.BringToFront();
             buttonZoomFit.BringToFront();
             InitializeResultContextMenu();
+            ApplyModernVisualTheme();
             InitSystem();
             InitializeAutoCloseTimer();
         }
@@ -1271,9 +1272,7 @@ namespace CoilInspectionApp
         {
             _isAutoClosePaused = !buttonToggleAutoClose.Checked;
             buttonToggleAutoClose.Text = _isAutoClosePaused ? "자동 마감 OFF" : "자동 마감 ON";
-            buttonToggleAutoClose.BackColor = _isAutoClosePaused
-                ? System.Drawing.Color.MistyRose
-                : System.Drawing.Color.Honeydew;
+            StyleAutoCloseToggle();
 
             if (_isAutoClosePaused)
             {
@@ -1914,7 +1913,7 @@ namespace CoilInspectionApp
         {
             item.UseItemStyleForSubItems = false;
             for (int index = 0; index < item.SubItems.Count; index++)
-                item.SubItems[index].ForeColor = System.Drawing.SystemColors.ControlText;
+                item.SubItems[index].ForeColor = ThemeTextPrimary;
 
             item.SubItems[2].ForeColor = ResolveStatusColor(item.SubItems[2].Text);
             item.SubItems[3].ForeColor = ResolveStatusColor(item.SubItems[3].Text);
@@ -1928,23 +1927,23 @@ namespace CoilInspectionApp
                 || string.Equals(status, "정상", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(status, "미검출", StringComparison.OrdinalIgnoreCase))
             {
-                return System.Drawing.Color.SeaGreen;
+                return ThemeSuccess;
             }
 
             if (string.Equals(status, "이상", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(status, "검출", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(status, "진행 중", StringComparison.OrdinalIgnoreCase))
             {
-                return System.Drawing.Color.DarkOrange;
+                return ThemeWarning;
             }
 
             if (string.Equals(status, "불량", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(status, "실패", StringComparison.OrdinalIgnoreCase))
             {
-                return System.Drawing.Color.Firebrick;
+                return ThemeDanger;
             }
 
-            return System.Drawing.SystemColors.ControlText;
+            return ThemeTextPrimary;
         }
 
         private static string ResolvePreprocessStatus(InspectionResultViewModel result)
@@ -2133,6 +2132,7 @@ namespace CoilInspectionApp
             labelValueScore.Text = result.ScoreText;
             labelValueDetections.Text = result.DetectionCount.ToString();
             labelValueReasons.Text = result.ReasonText;
+            ApplySelectedResultStatusColors(result);
 
             string imagePath = File.Exists(result.ProcessedImagePath) ? result.ProcessedImagePath : result.RawImagePath;
             if (!string.IsNullOrWhiteSpace(imagePath) && File.Exists(imagePath))
@@ -2176,6 +2176,7 @@ namespace CoilInspectionApp
             buttonRefreshInput.Enabled = _servicesInitialized;
             buttonStatistics.Enabled = _servicesInitialized;
             button2.Enabled = _servicesInitialized;
+            UpdateThemeHeaderStatus();
         }
 
         private void ClearSelectionDetails()
@@ -2187,6 +2188,7 @@ namespace CoilInspectionApp
             labelValueScore.Text = "-";
             labelValueDetections.Text = "-";
             labelValueReasons.Text = "-";
+            ResetSelectedResultStatusColors();
             SetInferenceProgress(0, 0, "자동 검사 대기 중");
         }
 

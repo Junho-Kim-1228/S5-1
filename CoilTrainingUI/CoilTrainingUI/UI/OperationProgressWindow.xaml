@@ -31,6 +31,11 @@
                        Margin="0,6,0,0"
                        Foreground="#606060"
                        Text="0%"/>
+            <TextBlock x:Name="ProgressDetailTextBlock"
+                       Margin="0,4,0,0"
+                       Foreground="#404040"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed"/>
         </StackPanel>
 
         <TextBox x:Name="LogTextBox"

@@ -11,7 +11,11 @@ namespace CoilTrainingUI
             Title = title;
         }
 
-        public void UpdateProgress(int percent, string status, bool isIndeterminate = false)
+        public void UpdateProgress(
+            int percent,
+            string status,
+            bool isIndeterminate = false,
+            string? detail = null)
         {
             RunOnUi(() =>
             {
@@ -20,6 +24,10 @@ namespace CoilTrainingUI
                 OperationProgressBar.IsIndeterminate = isIndeterminate;
                 if (!isIndeterminate)
                     OperationProgressBar.Value = clamped;
+                ProgressDetailTextBlock.Text = detail ?? "";
+                ProgressDetailTextBlock.Visibility = string.IsNullOrWhiteSpace(detail)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
                 PercentTextBlock.Text = isIndeterminate ? "진행 중..." : $"{clamped}%";
             });
         }
