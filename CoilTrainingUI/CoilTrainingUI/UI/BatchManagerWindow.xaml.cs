@@ -3,6 +3,7 @@ using CoilTrainingUI.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -31,6 +32,7 @@ namespace CoilTrainingUI
         private readonly InferenceBatchImportService _batchImportService = new();
         private readonly ObservableCollection<BatchLibraryItem> _batches = new();
         private bool _isRefreshing;
+        private bool _isUpdatingSelection;
 
         public bool HasLibraryChanges { get; private set; }
         public BatchManagerRequestedAction RequestedAction { get; private set; }
@@ -55,12 +57,62 @@ namespace CoilTrainingUI
             _isRefreshing = true;
             var scan = _batchLibraryService.Scan(_inboxRoot, includeHidden: true);
 
+            foreach (var batch in _batches)
+                batch.PropertyChanged -= Batch_PropertyChanged;
+
             _batches.Clear();
             foreach (var batch in scan.Batches)
+            {
+                batch.PropertyChanged += Batch_PropertyChanged;
                 _batches.Add(batch);
+            }
 
             UpdateSummary(scan.Skipped.Count);
             _isRefreshing = false;
+            UpdateSelectAllBatchesState();
+        }
+
+        private void Batch_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_isRefreshing || _isUpdatingSelection ||
+                e.PropertyName != nameof(BatchLibraryItem.IsSelected))
+                return;
+
+            UpdateSelectAllBatchesState();
+        }
+
+        private void SelectAllBatchesCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            bool selectAll = _batches.Count > 0 && _batches.Any(batch => !batch.IsSelected);
+            SetAllBatchesSelected(selectAll);
+        }
+
+        private void SetAllBatchesSelected(bool isSelected)
+        {
+            _isUpdatingSelection = true;
+            try
+            {
+                foreach (var batch in _batches)
+                    batch.IsSelected = isSelected;
+            }
+            finally
+            {
+                _isUpdatingSelection = false;
+            }
+
+            UpdateSelectAllBatchesState();
+        }
+
+        private void UpdateSelectAllBatchesState()
+        {
+            SelectAllBatchesCheckBox.IsEnabled = _batches.Count > 0;
+            int selectedCount = _batches.Count(batch => batch.IsSelected);
+            SelectAllBatchesCheckBox.IsChecked = selectedCount switch
+            {
+                0 => false,
+                _ when selectedCount == _batches.Count => true,
+                _ => null
+            };
         }
 
         private void NotifyLibraryChanged(string? preferredBatchRoot = null)
@@ -262,8 +314,7 @@ namespace CoilTrainingUI
 
         private void ClearSelection_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var batch in _batches)
-                batch.IsSelected = false;
+            SetAllBatchesSelected(false);
         }
 
         private void HiddenCheckBox_Click(object sender, RoutedEventArgs e)

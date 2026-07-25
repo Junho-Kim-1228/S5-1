@@ -77,7 +77,7 @@
                           Click="ShowReviewQueue_Click"/>
             </MenuItem>
 
-            <MenuItem Header="Train">
+            <MenuItem x:Name="TrainMenuItem" Header="Train">
                 <MenuItem Header="학습 파이프라인">
                     <MenuItem x:Name="TrainPipelineAnomaThenYoloMenuItem"
                               Header="2단계 (Anoma → YOLO)"

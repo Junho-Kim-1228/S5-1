@@ -3,8 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 
 namespace CoilTrainingUI.Services
 {
@@ -22,6 +22,44 @@ namespace CoilTrainingUI.Services
         {
             Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
 
+            var logChannel = Channel.CreateUnbounded<(string Message, string OutputLine)>(
+                new UnboundedChannelOptions
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    AllowSynchronousContinuations = false
+                });
+
+            async Task WriteLogAsync()
+            {
+                await using var stream = new FileStream(
+                    logPath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    bufferSize: 4096,
+                    useAsync: true);
+                await using var writer = new StreamWriter(stream, new UTF8Encoding(false))
+                {
+                    AutoFlush = true
+                };
+
+                await foreach (var entry in logChannel.Reader.ReadAllAsync())
+                {
+                    await writer.WriteLineAsync(entry.Message);
+                    try
+                    {
+                        onOutputLine?.Invoke(entry.OutputLine);
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.WriteLine($"PythonRunner output callback failed: {ex}");
+                    }
+                }
+            }
+
+            Task logWriterTask = WriteLogAsync();
+
             var psi = new ProcessStartInfo
             {
                 FileName = pythonExe,
@@ -35,32 +73,49 @@ namespace CoilTrainingUI.Services
 
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-            var sb = new StringBuilder();
-            void Append(string line)
+            void Enqueue(string line)
             {
                 var msg = $"[{DateTime.Now:HH:mm:ss}] {line}";
-                sb.AppendLine(msg);
-                File.AppendAllText(logPath, msg + Environment.NewLine, Encoding.UTF8);
-                onOutputLine?.Invoke(line);
+                logChannel.Writer.TryWrite((msg, line));
             }
 
-            proc.OutputDataReceived += (s, e) => { if (e.Data != null) Append(e.Data); };
-            proc.ErrorDataReceived += (s, e) => { if (e.Data != null) Append("[ERR] " + e.Data); };
+            proc.OutputDataReceived += (s, e) => { if (e.Data != null) Enqueue(e.Data); };
+            proc.ErrorDataReceived += (s, e) => { if (e.Data != null) Enqueue("[ERR] " + e.Data); };
 
-            proc.Start();
-            proc.BeginOutputReadLine();
-            proc.BeginErrorReadLine();
+            try
+            {
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
 
-            // 취소 처리
-            using (ct.Register(() =>
-            {
-                try { if (!proc.HasExited) proc.Kill(true); } catch { }
-            }))
-            {
-                await proc.WaitForExitAsync(ct);
+                // 취소 처리
+                using (ct.Register(() =>
+                {
+                    try { if (!proc.HasExited) proc.Kill(true); } catch { }
+                }))
+                {
+                    try
+                    {
+                        await proc.WaitForExitAsync(ct);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try { if (!proc.HasExited) proc.Kill(true); } catch { }
+                        try { await proc.WaitForExitAsync(CancellationToken.None); } catch { }
+                        proc.WaitForExit();
+                        throw;
+                    }
+                }
+
+                // 비동기 stdout/stderr 이벤트가 모두 전달될 때까지 기다린다.
+                proc.WaitForExit();
+                return proc.ExitCode;
             }
-
-            return proc.ExitCode;
+            finally
+            {
+                logChannel.Writer.TryComplete();
+                await logWriterTask;
+            }
         }
     }
 }

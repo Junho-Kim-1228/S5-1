@@ -43,6 +43,7 @@ namespace CoilTrainingUI
         private string _yoloFineTuneWeightsPath = "";
         private string _yoloFineTuneParentModelId = "";
         private IReadOnlyList<string> _yoloFineTuneReplayBatchKeys = Array.Empty<string>();
+        private bool _isTraining;
 
         private void TrainPipelineAnomaThenYolo_Click(object sender, RoutedEventArgs e)
         {
@@ -189,6 +190,16 @@ namespace CoilTrainingUI
             string operationName,
             TrainingPipelineMode pipelineMode)
         {
+            if (_isTraining)
+            {
+                MessageBox.Show(
+                    "이미 학습이 진행 중입니다. 현재 학습이 끝난 뒤 다시 시도하세요.",
+                    "학습 진행 중",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
             string pipelineDisplayName = GetTrainingPipelineDisplayName(pipelineMode);
             bool trainYolo = RequiresYoloTraining(pipelineMode);
             bool trainAnoma = RequiresAnomaTraining(pipelineMode);
@@ -205,15 +216,19 @@ namespace CoilTrainingUI
                 return;
             }
 
-            var progressWindow = new OperationProgressWindow($"{operationName} 진행")
-            {
-                Owner = this
-            };
-            progressWindow.UpdateProgress(0, $"작업 준비 중... ({pipelineDisplayName})");
-            progressWindow.Show();
+            _isTraining = true;
+            TrainMenuItem.IsEnabled = false;
+            OperationProgressWindow? progressWindow = null;
 
             try
             {
+                progressWindow = new OperationProgressWindow($"{operationName} 진행")
+                {
+                    Owner = this
+                };
+                progressWindow.UpdateProgress(0, $"작업 준비 중... ({pipelineDisplayName})");
+                progressWindow.Show();
+
                 await Task.Delay(50);
 
                 if (trainingInputs == null || trainingInputs.Count == 0)
@@ -336,8 +351,11 @@ namespace CoilTrainingUI
                     trainAnoma ? anomaImagePaths : imagePaths,
                     trainAnoma ? normalImagePaths : Array.Empty<string>());
 
-                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string runDir = IOPath.Combine(runRoot, $"run_{stamp}_{GetTrainingPipelineModeToken(pipelineMode)}");
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                string runId = Guid.NewGuid().ToString("N")[..8];
+                string runDir = IOPath.Combine(
+                    runRoot,
+                    $"run_{stamp}_{GetTrainingPipelineModeToken(pipelineMode)}_{runId}");
                 string logsDir = IOPath.Combine(runDir, "logs");
                 Directory.CreateDirectory(logsDir);
 
@@ -657,7 +675,9 @@ namespace CoilTrainingUI
             }
             finally
             {
-                progressWindow.Close();
+                progressWindow?.Close();
+                TrainMenuItem.IsEnabled = true;
+                _isTraining = false;
             }
         }
 

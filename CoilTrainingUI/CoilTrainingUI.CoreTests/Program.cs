@@ -58,6 +58,7 @@ internal sealed class CoreReviewTests
             Run("final training commands are explicit", FinalTrainingCommandsAreExplicit);
             Run("fine-tune command uses warm-start policy", FineTuneCommandUsesWarmStartPolicy);
             Run("training ETA tracks Anoma steps and YOLO epochs", TrainingEtaTracksAnomaAndYolo);
+            Run("Python runner serializes stdout and stderr logs", () => PythonRunnerSerializesLogs(root));
             Run("Python environment validation follows selected pipeline", () => PythonEnvironmentValidationFollowsPipeline(root));
             Run("model registry tracks lifecycle and lineage", () => ModelRegistryTracksLifecycle(root));
             Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
@@ -119,6 +120,46 @@ internal sealed class CoreReviewTests
             "YOLO batch progress was mistaken for epoch progress");
         Assert(TrainingEtaEstimator.FormatDuration(TimeSpan.FromSeconds(3661)) == "01:01:01",
             "training duration formatting is incorrect");
+    }
+
+    private static void PythonRunnerSerializesLogs(string root)
+    {
+        const int linesPerStream = 250;
+        string testRoot = Path.Combine(root, "python-runner-log-test");
+        Directory.CreateDirectory(testRoot);
+        string scriptPath = Path.Combine(testRoot, "emit-output.cmd");
+        string logPath = Path.Combine(testRoot, "combined.log");
+        File.WriteAllText(
+            scriptPath,
+            "@echo off" + Environment.NewLine +
+            $"for /L %%i in (1,1,{linesPerStream}) do (" + Environment.NewLine +
+            "  echo out-%%i" + Environment.NewLine +
+            "  echo err-%%i 1>&2" + Environment.NewLine +
+            ")" + Environment.NewLine);
+
+        var observed = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var runner = new PythonRunner();
+        int exitCode = runner.RunAsync(
+                pythonExe: Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe",
+                scriptPath: "/d",
+                args: $"/c call \"{scriptPath}\"",
+                workingDir: testRoot,
+                logPath: logPath,
+                ct: CancellationToken.None,
+                onOutputLine: observed.Add)
+            .GetAwaiter()
+            .GetResult();
+
+        Assert(exitCode == 0, "PythonRunner test process failed");
+        string[] logLines = File.ReadAllLines(logPath);
+        Assert(logLines.Length == linesPerStream * 2,
+            $"PythonRunner log lost output: expected {linesPerStream * 2}, actual {logLines.Length}");
+        Assert(observed.Count == linesPerStream * 2,
+            $"PythonRunner callback lost output: expected {linesPerStream * 2}, actual {observed.Count}");
+        Assert(logLines.Any(line => line.Contains("out-250", StringComparison.Ordinal)),
+            "PythonRunner stdout tail was not logged");
+        Assert(logLines.Any(line => line.Contains("[ERR] err-250", StringComparison.Ordinal)),
+            "PythonRunner stderr tail was not logged");
     }
 
     private static void ImageCacheIsBoundedAndFresh(string root)

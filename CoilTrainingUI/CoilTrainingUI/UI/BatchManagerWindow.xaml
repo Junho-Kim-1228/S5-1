@@ -36,9 +36,18 @@
                   SelectionMode="Extended"
                   SelectionUnit="FullRow">
             <DataGrid.Columns>
-                <DataGridCheckBoxColumn Header="선택"
-                                        Width="60"
-                                        Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                <DataGridCheckBoxColumn Width="72"
+                                        Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                    <DataGridCheckBoxColumn.Header>
+                        <CheckBox x:Name="SelectAllBatchesCheckBox"
+                                  Content="전체"
+                                  IsThreeState="True"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  ToolTip="전체 배치 선택/해제"
+                                  Click="SelectAllBatchesCheckBox_Click"/>
+                    </DataGridCheckBoxColumn.Header>
+                </DataGridCheckBoxColumn>
                 <DataGridTextColumn Header="배치명"
                                     Width="220"
                                     IsReadOnly="True"
