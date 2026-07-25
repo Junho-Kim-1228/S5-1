@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from yolo.config import build_yolo_train_config
 from yolo.exporter import export_yolo_to_onnx
+from yolo.trainer import _build_stable_detection_trainer
 
 
 class _FakeYoloModel:
@@ -21,6 +23,42 @@ class _FakeYoloModel:
 
 
 class Yolo26CompatibilityTests(unittest.TestCase):
+    def test_finite_zero_fitness_does_not_roll_training_back(self) -> None:
+        import torch
+
+        trainer_type = _build_stable_detection_trainer()
+        base_trainer_type = trainer_type.__mro__[1]
+        trainer = object.__new__(trainer_type)
+        trainer.loss = torch.tensor(1.0)
+        trainer.fitness = 0.0
+        trainer.best_fitness = 0.01
+
+        with patch.object(base_trainer_type, "_handle_nan_recovery") as upstream_recovery:
+            recovered = trainer._handle_nan_recovery(epoch=3)
+
+        self.assertFalse(recovered)
+        upstream_recovery.assert_not_called()
+
+    def test_non_finite_loss_keeps_upstream_recovery(self) -> None:
+        import torch
+
+        trainer_type = _build_stable_detection_trainer()
+        base_trainer_type = trainer_type.__mro__[1]
+        trainer = object.__new__(trainer_type)
+        trainer.loss = torch.tensor(float("nan"))
+        trainer.fitness = 0.0
+        trainer.best_fitness = 0.01
+
+        with patch.object(
+            base_trainer_type,
+            "_handle_nan_recovery",
+            return_value=True,
+        ) as upstream_recovery:
+            recovered = trainer._handle_nan_recovery(epoch=3)
+
+        self.assertTrue(recovered)
+        upstream_recovery.assert_called_once_with(3)
+
     def test_official_yolo26_identifier_maps_to_local_weight_cache(self) -> None:
         config = build_yolo_train_config(
             model="yolo26m.pt",

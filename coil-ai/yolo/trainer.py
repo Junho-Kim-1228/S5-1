@@ -17,6 +17,58 @@ from yolo.workspace import validate_yolo_workspace
 logger = get_logger(__name__)
 
 
+def _build_stable_detection_trainer():
+    """Build a detector trainer that only recovers from non-finite numerics.
+
+    Ultralytics treats any transition from a positive fitness to exactly zero
+    as checkpoint corruption. On small validation sets a single early
+    detection can make fitness briefly positive, so the next zero-valued
+    validation repeatedly rolls training back even though every loss and
+    weight is finite.
+    """
+    import numpy as np
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import LOGGER, RANK
+
+    class StableDetectionTrainer(DetectionTrainer):
+        def _handle_nan_recovery(self, epoch):
+            loss_finite = self.loss is None or bool(self.loss.isfinite().all())
+            fitness_finite = self.fitness is None or bool(np.isfinite(self.fitness))
+
+            if loss_finite and fitness_finite:
+                fitness_dropped_to_zero = (
+                    self.best_fitness
+                    and self.best_fitness > 0
+                    and self.fitness == 0
+                )
+                if fitness_dropped_to_zero and not getattr(
+                    self,
+                    "_finite_fitness_drop_logged",
+                    False,
+                ):
+                    LOGGER.warning(
+                        "Finite fitness drop to zero detected; continuing without checkpoint rollback."
+                    )
+                    self._finite_fitness_drop_logged = True
+
+                if RANK == -1:
+                    return False
+
+                # DDP ranks must still participate in the upstream broadcast.
+                # Temporarily clearing best_fitness disables only the
+                # finite-fitness collapse predicate on every rank.
+                saved_best_fitness = self.best_fitness
+                self.best_fitness = None
+                try:
+                    return super()._handle_nan_recovery(epoch)
+                finally:
+                    self.best_fitness = saved_best_fitness
+
+            return super()._handle_nan_recovery(epoch)
+
+    return StableDetectionTrainer
+
+
 def _resolve_best_weights(train_results, artifacts_dir: Path) -> Path | None:
     save_dir = getattr(train_results, "save_dir", None)
     if save_dir:
@@ -88,6 +140,10 @@ def run_yolo_training(
         log_info(logger, "Workers: %s", config.workers)
         log_info(logger, "Val confidence: %s", config.conf_val)
         log_info(logger, "Augmentation: %s", config.augmentation)
+        log_info(
+            logger,
+            "Recovery policy: preserve NaN/Inf recovery and ignore finite fitness-to-zero rollback",
+        )
         use_one_to_many_head = config.variant.startswith("yolo26")
         if use_one_to_many_head:
             log_info(
@@ -126,6 +182,7 @@ def run_yolo_training(
             train_kwargs["lr0"] = config.lr0
 
         train_results = model_obj.train(
+            trainer=_build_stable_detection_trainer(),
             **train_kwargs,
         )
 
