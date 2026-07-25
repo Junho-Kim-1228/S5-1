@@ -1,5 +1,6 @@
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Automation;
 using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -14,14 +15,19 @@ public partial class ModelManagerWindow : Window
 {
     private readonly ModelRegistryService _registry;
     private readonly ObservableCollection<ModelRegistryEntry> _models = new();
+    private readonly AutomationSettings _automationSettings;
+    private readonly ActivationRequestService _activationRequests;
 
-    public ModelManagerWindow(ModelRegistryService registry)
+    public ModelManagerWindow(ModelRegistryService registry, AutomationSettings? automationSettings = null)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _automationSettings = (automationSettings ?? new AutomationSettings()).Normalize();
+        _activationRequests = new ActivationRequestService(_automationSettings.ExchangeRoot);
         InitializeComponent();
         ModelsGrid.ItemsSource = _models;
         RegistryPathText.Text = _registry.RegistryPath;
         RefreshModels();
+        RefreshActivationStatus();
     }
 
     public ModelRegistryEntry? RequestedFineTuneModel { get; private set; }
@@ -48,7 +54,84 @@ public partial class ModelManagerWindow : Window
 
     private void Refresh_Click(object sender, RoutedEventArgs e)
     {
-        TryAction(() => RefreshModels());
+        TryAction(() =>
+        {
+            RefreshModels();
+            RefreshActivationStatus();
+        });
+    }
+
+    private void RequestActivation_Click(object sender, RoutedEventArgs e)
+    {
+        TryAction(() =>
+        {
+            if (!_automationSettings.Enabled)
+                throw new InvalidOperationException("Automation 메뉴에서 로컬 자동화를 먼저 켜세요.");
+            ModelRegistryEntry selected = RequireSelection();
+            if (!string.Equals(selected.PipelineMode, InferencePipelineConfigBuilder.AnomaThenYolo, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("전체 Anoma → YOLO 파이프라인 모델만 운영 적용할 수 있습니다.");
+            if (MessageBox.Show(
+                    $"모델 {selected.Id}를 운영 적용 요청할까요?\n\n" +
+                    "추론 UI의 현재 배치가 비어 있을 때만 적용되며, 실패하면 기존 모델을 유지합니다.",
+                    "운영 적용 요청",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            ActivationRequest request = _activationRequests.Create(selected.Id);
+            ActivationStatusText.Text = $"적용 요청 대기: {request.ModelId} ({request.RequestId})";
+        });
+    }
+
+    private void PublishRelease_Click(object sender, RoutedEventArgs e)
+    {
+        TryAction(() =>
+        {
+            if (!_automationSettings.Enabled)
+                throw new InvalidOperationException("Automation 메뉴에서 로컬 자동화를 먼저 켜세요.");
+            ModelRegistryEntry selected = RequireSelection();
+            ModelPublishResult result = new ModelReleasePublisher(_automationSettings.ExchangeRoot).Publish(selected);
+            ActivationStatusText.Text = result.AlreadyPublished
+                ? $"릴리스 검증 완료: {selected.Id}"
+                : $"릴리스 발행 완료: {selected.Id}";
+        });
+    }
+
+    private void CancelActivation_Click(object sender, RoutedEventArgs e)
+    {
+        TryAction(() =>
+        {
+            if (MessageBox.Show(
+                    "현재 대기 중인 운영 적용 요청을 취소할까요?",
+                    "적용 요청 취소",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
+            _activationRequests.CancelPending(out string message);
+            ActivationStatusText.Text = message;
+        });
+    }
+
+    private void RefreshActivationStatus()
+    {
+        try
+        {
+            ActivationRequest? request = _activationRequests.TryReadRequest();
+            ActivationResult? result = _activationRequests.TryReadResult();
+            if (request == null)
+            {
+                ActivationStatusText.Text = $"운영 적용 요청 없음 · ExchangeRoot: {_automationSettings.ExchangeRoot}";
+                return;
+            }
+            if (result != null && string.Equals(result.RequestId, request.RequestId, StringComparison.OrdinalIgnoreCase))
+                ActivationStatusText.Text = $"{request.ModelId} · {result.Status}: {result.Message}";
+            else
+                ActivationStatusText.Text = $"{request.ModelId} · 적용 요청 대기";
+        }
+        catch (Exception ex)
+        {
+            ActivationStatusText.Text = "적용 상태 확인 실패: " + ex.Message;
+        }
     }
 
     private void SetReference_Click(object sender, RoutedEventArgs e)
@@ -130,15 +213,12 @@ public partial class ModelManagerWindow : Window
             InferencePackageDeploymentResult result = deployment.Deploy(
                 selected.InferencePackageDirectory,
                 dialog.FolderName);
-            _registry.SetReference(selected.Id);
-            RefreshModels(selected.Id);
-
             string backupText = string.IsNullOrWhiteSpace(result.BackupDirectory)
                 ? "기존 패키지 없음"
                 : result.BackupDirectory;
             MessageBox.Show(
                 $"추론 패키지 배포를 완료했습니다.\n\n대상: {result.TargetDirectory}\n백업: {backupText}\n\n" +
-                "추론 UI가 실행 중이었다면 재시작하세요.",
+                "이 기능은 장애 복구용 직접 배포이며 자동 적용 상태와는 별개입니다.",
                 "배포 완료",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);

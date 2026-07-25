@@ -399,8 +399,9 @@ namespace CoilTrainingUI
             OpenFolder(inboxRoot);
         }
 
-        private void RefreshImageList_Click(object sender, RoutedEventArgs e)
+        private async void RefreshImageList_Click(object sender, RoutedEventArgs e)
         {
+            await ReconcileAutomationNowAsync();
             string? preferredImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
             RefreshAllImagesFromTrainingInbox(preferredImagePath, _currentBatchRoot);
         }

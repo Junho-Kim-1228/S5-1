@@ -120,7 +120,30 @@
                           Click="ModelManagement_Click"/>
             </MenuItem>
 
+            <MenuItem Header="Automation">
+                <MenuItem x:Name="AutomationEnabledMenuItem"
+                          Header="로컬 자동화 사용"
+                          IsCheckable="True"
+                          Click="AutomationEnabled_Click"/>
+                <MenuItem Header="ExchangeRoot 선택..." Click="SelectExchangeRoot_Click"/>
+                <MenuItem Header="기본 ExchangeRoot로 재설정" Click="ResetExchangeRoot_Click"/>
+                <Separator/>
+                <MenuItem x:Name="ExchangeRootMenuItem" Header="ExchangeRoot" IsEnabled="False"/>
+                <MenuItem Header="지금 동기화" Click="AutomationReconcileNow_Click"/>
+            </MenuItem>
+
         </Menu>
+
+        <StatusBar DockPanel.Dock="Bottom" Background="#172033" Foreground="White" Padding="8,3">
+            <StatusBarItem><TextBlock x:Name="AutomationStatusText" Text="로컬 자동화 준비 중"/></StatusBarItem>
+            <Separator/>
+            <StatusBarItem><TextBlock x:Name="ModelPublishStatusText" Text="모델 발행 이력 없음"/></StatusBarItem>
+            <Separator/>
+            <StatusBarItem><TextBlock x:Name="ModelActivationStatusText" Text="모델 적용 요청 없음"/></StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="AutomationPathWarningText" Foreground="#FBBF24"/>
+            </StatusBarItem>
+        </StatusBar>
 
         <!-- 메인 영역 -->
         <Grid>

@@ -103,6 +103,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Automation\LocalAutomation.cs" />
     <Compile Include="Configuration\RuntimePathSettingsStore.cs" />
     <Compile Include="Configuration\PipelinePackageConfig.cs" />
     <Compile Include="Interface\BatchExporter.cs" />
@@ -118,6 +119,10 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="UI\Form1.Theme.cs">
+      <DependentUpon>Form1.cs</DependentUpon>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="UI\Form1.Automation.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
     <Compile Include="UI\Form1.Designer.cs">

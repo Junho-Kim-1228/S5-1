@@ -72,6 +72,14 @@ namespace CoilTrainingUI
             UpdateSelectAllBatchesState();
         }
 
+        public void RefreshFromAutomation()
+        {
+            string? selectedRoot = GetSelectedBatches().FirstOrDefault()?.BatchRoot;
+            RefreshBatches();
+            if (!string.IsNullOrWhiteSpace(selectedRoot))
+                SelectBatchByRoot(selectedRoot);
+        }
+
         private void Batch_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (_isRefreshing || _isUpdatingSelection ||

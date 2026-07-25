@@ -5,6 +5,7 @@ using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
 using CoilTrainingUI.Services.Imaging;
 using CoilTrainingUI.Services.Review;
+using CoilTrainingUI.Services.Automation;
 using System.Globalization;
 using System.Text.Json;
 using System.Windows;
@@ -73,6 +74,13 @@ internal sealed class CoreReviewTests
             Run("auto review never holds audit samples", AutoReviewNeverHoldsAuditSamples);
             Run("auto review protects existing user state", AutoReviewProtectsExistingState);
             Run("prediction-only boxes stay out of editable layer", PredictionOnlyBoxesStayOutOfEditableLayer);
+            Run("automation imports completed batches exactly once", () => AutomationImportsCompletedBatchExactlyOnce(root));
+            Run("automation rejects batch id conflicts", () => AutomationRejectsBatchIdConflict(root));
+            Run("automation cleans failed batch staging", () => AutomationCleansFailedBatchStaging(root));
+            Run("full model release is immutable and deterministic", () => FullModelReleaseIsImmutable(root));
+            Run("activation requests are single-pending and cancellable", () => ActivationRequestsAreSinglePending(root));
+            Run("activation result alone advances model reference", () => ActivationResultAdvancesReference(root));
+            Run("release path traversal is rejected", () => ReleasePathTraversalIsRejected(root));
             Console.WriteLine($"PASS: {_passed} core review tests");
         }
         finally
@@ -118,6 +126,25 @@ internal sealed class CoreReviewTests
             "YOLO remaining time was calculated incorrectly");
         Assert(yoloEstimator.ObserveYoloEpoch("158/158 batches", 100, startedAt) == null,
             "YOLO batch progress was mistaken for epoch progress");
+
+        var shortYoloEstimator = new TrainingEtaEstimator();
+        TrainingProgressSnapshot shortFirstEpoch = shortYoloEstimator.ObserveYoloEpoch(
+            "[ERR] \u001b[K      1/5      3.29G      1.693      16.65",
+            expectedTotalEpochs: 5,
+            observedAt: startedAt) ?? throw new InvalidOperationException("ANSI YOLO epoch was not parsed");
+        Assert(shortFirstEpoch.Percent == 20,
+            "short YOLO epoch progress was calculated incorrectly");
+        Assert(shortYoloEstimator.ObserveYoloEpoch(
+                "[ERR] \u001b[K Class Images Instances: 100% 5/5 1.7s",
+                expectedTotalEpochs: 5,
+                observedAt: startedAt.AddMinutes(1)) == null,
+            "YOLO validation batch progress was mistaken for final epoch progress");
+        TrainingProgressSnapshot shortSecondEpoch = shortYoloEstimator.ObserveYoloEpoch(
+            "[ERR] \u001b[K      2/5      3.29G      1.512      12.30",
+            expectedTotalEpochs: 5,
+            observedAt: startedAt.AddMinutes(2)) ?? throw new InvalidOperationException("second short YOLO epoch was not parsed");
+        Assert(shortSecondEpoch.Percent == 40,
+            "YOLO progress did not continue after validation output");
         Assert(TrainingEtaEstimator.FormatDuration(TimeSpan.FromSeconds(3661)) == "01:01:01",
             "training duration formatting is incorrect");
     }
@@ -723,6 +750,240 @@ internal sealed class CoreReviewTests
             rejected = true;
         }
         Assert(rejected, "package validation accepted a missing mask.onnx");
+    }
+
+    private static void AutomationImportsCompletedBatchExactlyOnce(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_import_once");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string library = Path.Combine(testRoot, "library");
+        string source = CreateAutomationBatch(AutomationPaths.Outbox(exchange), "batch-once", "image-a");
+        string unfinished = CreateAutomationBatch(AutomationPaths.Outbox(exchange), "batch-unfinished", "image-b", done: false);
+
+        var reconciler = new BatchInboxReconciler(exchange, library);
+        BatchReconcileResult first = reconciler.Reconcile();
+        BatchReconcileResult second = reconciler.Reconcile();
+
+        Assert(first.ImportedCount == 1 && Directory.Exists(Path.Combine(library, "batch-once")),
+            "completed batch was not imported");
+        Assert(second.ImportedCount == 0 && second.DuplicateCount == 1,
+            "duplicate watcher reconciliation imported a second copy");
+        Assert(Directory.Exists(source) && Directory.Exists(unfinished),
+            "outbox source was modified or deleted");
+        Assert(!Directory.Exists(Path.Combine(library, "batch-unfinished")),
+            "batch without DONE.flag was imported");
+        Assert(Directory.GetDirectories(library)
+                .Count(path => Path.GetFileName(path).StartsWith("batch-once", StringComparison.OrdinalIgnoreCase)) == 1,
+            "idempotent import created a suffixed batch");
+        Assert(Directory.GetFiles(AutomationPaths.Receipts(exchange), "*.json").Length == 1 &&
+               !Directory.GetFiles(AutomationPaths.Receipts(exchange), "*.tmp-*", SearchOption.TopDirectoryOnly).Any(),
+            "receipt was not atomically recorded");
+    }
+
+    private static void AutomationRejectsBatchIdConflict(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_import_conflict");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string outbox = AutomationPaths.Outbox(exchange);
+        CreateAutomationBatch(outbox, "source-a", "image-a", manifestBatchId: "same-id");
+        CreateAutomationBatch(outbox, "source-b", "image-b", manifestBatchId: "same-id");
+
+        BatchReconcileResult result = new BatchInboxReconciler(exchange, Path.Combine(testRoot, "library")).Reconcile();
+        Assert(result.ImportedCount == 1 && result.ConflictCount == 1,
+            "same batch_id with a different manifest was not reported as a conflict");
+        Assert(!Directory.Exists(Path.Combine(testRoot, "library", "same-id_2")),
+            "conflicting batch was silently renamed");
+    }
+
+    private static void AutomationCleansFailedBatchStaging(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_import_copy_failure");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string library = Path.Combine(testRoot, "library");
+        CreateAutomationBatch(AutomationPaths.Outbox(exchange), "batch-fail", "image-fail");
+        int copies = 0;
+        var reconciler = new BatchInboxReconciler(exchange, library, (source, destination) =>
+        {
+            if (++copies > 1) throw new IOException("simulated copy failure");
+            File.Copy(source, destination);
+        });
+
+        BatchReconcileResult result = reconciler.Reconcile();
+        string staging = Path.Combine(library, "_importing");
+        Assert(result.FailedCount == 1 && !Directory.Exists(Path.Combine(library, "batch-fail")),
+            "copy failure exposed a partial final batch");
+        Assert(!Directory.Exists(staging) || !Directory.EnumerateFileSystemEntries(staging).Any(),
+            "failed staging directory was not cleaned");
+        Assert(new BatchLibraryService().Scan(library, includeHidden: true).Batches.Count == 0,
+            "staging batch leaked into the library scan");
+    }
+
+    private static void FullModelReleaseIsImmutable(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_release");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string package = CreateFullInferencePackage(Path.Combine(testRoot, "run-a", "inference_package"));
+        var entry = new ModelRegistryEntry
+        {
+            Id = "model-a",
+            PipelineMode = InferencePipelineConfigBuilder.AnomaThenYolo,
+            RunDirectory = Path.Combine(testRoot, "run-a"),
+            InferencePackageDirectory = package
+        };
+        var publisher = new ModelReleasePublisher(exchange);
+        ModelPublishResult first = publisher.Publish(entry);
+        ModelPublishResult second = publisher.Publish(entry);
+
+        string releaseManifest = Path.Combine(first.ReleaseDirectory, "release.json");
+        Assert(!first.AlreadyPublished && second.AlreadyPublished,
+            "identical model release was not idempotent");
+        Assert(File.Exists(releaseManifest) &&
+               !File.Exists(Path.Combine(first.PackageDirectory, "release.json")),
+            "release.json must be outside InferencePackage");
+        Assert(first.PackageHash == AutomationHash.PackageSha256(first.PackageDirectory),
+            "published package hash was not deterministic");
+
+        File.WriteAllBytes(Path.Combine(package, "models", "yolo.onnx"), new byte[] { 9, 9, 9, 9 });
+        bool conflict = false;
+        try { publisher.Publish(entry); } catch (IOException) { conflict = true; }
+        Assert(conflict, "same model-id with different package content was overwritten");
+
+        var partial = new ModelRegistryEntry
+        {
+            Id = "model-partial",
+            PipelineMode = "yolo_only",
+            RunDirectory = testRoot,
+            InferencePackageDirectory = package
+        };
+        bool partialRejected = false;
+        try { publisher.Publish(partial); } catch (InvalidOperationException) { partialRejected = true; }
+        Assert(partialRejected, "partial pipeline model was auto-published");
+    }
+
+    private static void ActivationRequestsAreSinglePending(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_request");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string package = CreateFullInferencePackage(Path.Combine(testRoot, "run", "inference_package"));
+        var entry = new ModelRegistryEntry
+        {
+            Id = "model-request",
+            PipelineMode = InferencePipelineConfigBuilder.AnomaThenYolo,
+            RunDirectory = Path.Combine(testRoot, "run"),
+            InferencePackageDirectory = package
+        };
+        var publisher = new ModelReleasePublisher(exchange);
+        publisher.Publish(entry);
+        var requests = new ActivationRequestService(exchange, publisher);
+        ActivationRequest first = requests.Create(entry.Id);
+        bool blocked = false;
+        try { requests.Create(entry.Id); } catch (PendingActivationRequestException) { blocked = true; }
+        Assert(blocked, "pending activation request was overwritten");
+        Assert(requests.CancelPending(out _) && !File.Exists(AutomationPaths.ActivationRequest(exchange)),
+            "pending activation request was not explicitly cancelled");
+        ActivationRequest second = requests.Create(entry.Id);
+        Assert(first.RequestId != second.RequestId, "new activation request did not receive a new request_id");
+    }
+
+    private static void ActivationResultAdvancesReference(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_reference_sync");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string registryRoot = Path.Combine(testRoot, "registry");
+        string package = CreateFullInferencePackage(Path.Combine(testRoot, "run", "inference_package"));
+        var registry = new ModelRegistryService(registryRoot);
+        ModelRegistryEntry entry = registry.Register(new ModelRegistrationContext
+        {
+            RunDirectory = Path.Combine(testRoot, "run"),
+            InferencePackageDirectory = package,
+            PipelineMode = InferencePipelineConfigBuilder.AnomaThenYolo,
+            SourceBatches = new[] { "batch-a" }
+        });
+        var publisher = new ModelReleasePublisher(exchange);
+        publisher.Publish(entry);
+        var requests = new ActivationRequestService(exchange, publisher);
+        ActivationRequest request = requests.Create(entry.Id);
+
+        new ActivationResultSynchronizer(requests, registry).Reconcile();
+        Assert(registry.Find(entry.Id)?.Status == ModelLifecycleStatus.Candidate,
+            "request creation changed the reference before inspection applied it");
+
+        AtomicJsonFile.Write(AutomationPaths.ActivationResult(exchange), new ActivationResult
+        {
+            RequestId = request.RequestId,
+            ModelId = request.ModelId,
+            PackageHash = request.PackageHash,
+            Status = "applied",
+            Message = "ok",
+            AppliedAtUtc = DateTime.UtcNow
+        });
+        new ActivationResultSynchronizer(requests, registry).Reconcile();
+        Assert(registry.Find(entry.Id)?.Status == ModelLifecycleStatus.Reference,
+            "matching applied result did not advance the model reference");
+    }
+
+    private static void ReleasePathTraversalIsRejected(string root)
+    {
+        bool absoluteRejected = false;
+        bool traversalRejected = false;
+        try { AutomationPaths.ResolveReleasePackagePath(root, Path.Combine(root, "outside")); }
+        catch (InvalidDataException) { absoluteRejected = true; }
+        try { AutomationPaths.ResolveReleasePackagePath(root, "../outside/InferencePackage"); }
+        catch (InvalidDataException) { traversalRejected = true; }
+        Assert(absoluteRejected && traversalRejected, "unsafe activation package path was accepted");
+    }
+
+    private static string CreateAutomationBatch(
+        string outbox,
+        string folderName,
+        string imageId,
+        bool done = true,
+        string? manifestBatchId = null)
+    {
+        string batch = Path.Combine(outbox, folderName);
+        Directory.CreateDirectory(Path.Combine(batch, "images"));
+        Directory.CreateDirectory(Path.Combine(batch, "meta"));
+        File.WriteAllBytes(Path.Combine(batch, "images", imageId + ".bmp"), new byte[] { 0x42, 0x4D });
+        File.WriteAllText(Path.Combine(batch, "meta", "manifest.json"), JsonSerializer.Serialize(new
+        {
+            schema_version = 2,
+            batch_type = "no_infer",
+            batch_id = manifestBatchId ?? folderName,
+            created_at = "2026-07-25T00:00:00",
+            items = new[] { new { id = imageId, processed_image = "images/" + imageId + ".bmp" } }
+        }));
+        if (done) File.WriteAllText(Path.Combine(batch, "meta", "DONE.flag"), "READY_FOR_TRAINING_UI");
+        return batch;
+    }
+
+    private static string CreateFullInferencePackage(string package)
+    {
+        Directory.CreateDirectory(Path.Combine(package, "config"));
+        Directory.CreateDirectory(Path.Combine(package, "models"));
+        File.WriteAllBytes(Path.Combine(package, "models", "mask.onnx"), new byte[] { 1, 2, 3 });
+        File.WriteAllBytes(Path.Combine(package, "models", "anoma.onnx"), new byte[] { 4, 5, 6 });
+        File.WriteAllBytes(Path.Combine(package, "models", "yolo.onnx"), new byte[] { 7, 8, 9 });
+        File.WriteAllText(Path.Combine(package, "config", "pipeline.json"), JsonSerializer.Serialize(new
+        {
+            schema_version = 3,
+            pipeline = new
+            {
+                mode = "anoma_then_yolo",
+                skip_yolo_when_stage1_normal = true,
+                required_models = new[] { "mask", "anoma", "yolo" }
+            },
+            mask = new
+            {
+                model = "models/mask.onnx",
+                input_size = 512,
+                resize_mode = "letterbox",
+                image_mean = new[] { 0.485, 0.456, 0.406 },
+                image_std = new[] { 0.229, 0.224, 0.225 }
+            },
+            anoma = new { model = "models/anoma.onnx", input_size = 448 },
+            yolo = new { model = "models/yolo.onnx", imgsz = 1280 }
+        }));
+        return package;
     }
 
     private static ModelRegistryEntry RegisterFakeModel(

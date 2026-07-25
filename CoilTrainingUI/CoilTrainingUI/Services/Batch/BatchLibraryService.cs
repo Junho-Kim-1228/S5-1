@@ -28,7 +28,9 @@ public sealed class BatchLibraryService
         {
             string folderName = Path.GetFileName(candidateFolder);
             if (string.Equals(folderName, "_train_runs", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(folderName, "_model_registry", StringComparison.OrdinalIgnoreCase))
+                || string.Equals(folderName, "_model_registry", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(folderName, "_importing", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(folderName, ".automation", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var validation = BatchFolderValidationService.Validate(candidateFolder);

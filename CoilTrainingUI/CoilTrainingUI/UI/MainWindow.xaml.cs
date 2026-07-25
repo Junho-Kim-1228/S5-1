@@ -452,6 +452,7 @@ namespace CoilTrainingUI
 
             Loaded += (s, e) =>
             {
+                InitializeAutomation();
                 TryRestoreLastLoadedBatch();
 
                 _canvasInteractionManager.FitToView(
@@ -462,6 +463,8 @@ namespace CoilTrainingUI
 
             Closed += (s, e) =>
             {
+                _automationCoordinator?.Dispose();
+                _automationCoordinator = null;
                 _imageLoadRequestId++;
                 CancelAndDispose(ref _imageLoadCancellation);
                 CancelAndDispose(ref _imagePrefetchCancellation);

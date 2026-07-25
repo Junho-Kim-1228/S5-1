@@ -4,6 +4,7 @@ using CoilInspectionApp.Configuration;
 using CoilInspectionApp.Preprocess;
 using CoilInspectionApp.UI;
 using CoilInspectionApp.Watcher;
+using CoilInspectionApp.Automation;
 using Newtonsoft.Json;
 using OpenCvSharp;
 using OpenCvSharp.Extensions;
@@ -37,6 +38,7 @@ namespace CoilInspectionApp
         private string _inputPath = "";
         private string _packagePath = "";
         private string _exportBasePath = "";
+        private string _manualExportBasePath = "";
         private RuntimePathSettings _runtimePathSettings = new RuntimePathSettings();
         private bool _servicesInitialized;
         private volatile bool _isPreprocessing;
@@ -66,7 +68,9 @@ namespace CoilInspectionApp
             buttonZoomFit.BringToFront();
             InitializeResultContextMenu();
             ApplyModernVisualTheme();
+            InitializeAutomationSettingsAndUi();
             InitSystem();
+            InitializeAutomationRuntime();
             InitializeAutoCloseTimer();
         }
 
@@ -194,10 +198,13 @@ namespace CoilInspectionApp
                     @".\InferencePackage");
                 // 사용자가 선택한 출력 경로가 있으면 복원하고,
                 // 최초 실행에는 EXE 기준 TrainingBatches 폴더를 사용한다.
-                _exportBasePath = ResolveSavedOrConfiguredPath(
+                _manualExportBasePath = ResolveSavedOrConfiguredPath(
                     _runtimePathSettings.ExportBaseDirectory,
                     ConfigurationManager.AppSettings["ExportBasePath"],
                     @".\TrainingBatches");
+                _exportBasePath = _automationSettings.Enabled
+                    ? AutomationPaths.Outbox(_automationSettings.ExchangeRoot)
+                    : _manualExportBasePath;
                 Directory.CreateDirectory(_exportBasePath);
 
                 _config = LoadPipelinePackageOrThrow(_packagePath);
@@ -1326,6 +1333,7 @@ namespace CoilInspectionApp
                 {
                     _batchExporter.CloseBatch();
                     string exportedBatchDirectory = _batchExporter.LastExportDirectory;
+                    _lastClosedBatchPath = exportedBatchDirectory ?? "";
                     DeleteBatchInputFiles();
                     _batchExporter.StartNewBatch();
                     _results.Clear();
@@ -1350,6 +1358,8 @@ namespace CoilInspectionApp
                 finally
                 {
                     _isClosingBatch = false;
+                    if (IsHandleCreated && !IsDisposed)
+                        BeginInvoke(new Action(delegate { ScheduleAutomationReconcile(0); }));
                 }
             }
             catch (Exception ex)
@@ -1422,7 +1432,7 @@ namespace CoilInspectionApp
             {
                 _runtimePathSettings.InputDirectory = _inputPath;
                 _runtimePathSettings.InferencePackageDirectory = _packagePath;
-                _runtimePathSettings.ExportBaseDirectory = _exportBasePath;
+            _runtimePathSettings.ExportBaseDirectory = _manualExportBasePath;
                 _runtimePathSettingsStore.Save(_runtimePathSettings);
             }
             catch (Exception ex)
@@ -1485,40 +1495,9 @@ namespace CoilInspectionApp
             if (string.IsNullOrWhiteSpace(selectedPath))
                 return;
 
-            OnnxModelTester candidateTester = null;
-            MaskOnnxRunner candidateMaskRunner = null;
-            BatchExporter candidateExporter = null;
-            bool packageApplied = false;
             try
             {
-                PipelinePackageConfig candidateConfig = LoadPipelinePackageOrThrow(selectedPath);
-                candidateTester = new OnnxModelTester();
-                candidateMaskRunner = LoadMaskOnnxRunnerOrThrow(selectedPath, candidateConfig);
-                LoadRequiredModelsOrThrow(candidateTester, selectedPath, candidateConfig);
-
-                if (_servicesInitialized)
-                {
-                    candidateExporter = CreateBatchExporter(_exportBasePath, selectedPath, candidateConfig);
-                    candidateExporter.StartOrResumeBatch();
-                }
-
-                OnnxModelTester previousTester = _modelTester;
-                MaskOnnxRunner previousMaskRunner = _maskOnnxRunner;
-                _modelTester = candidateTester;
-                candidateTester = null;
-                _maskOnnxRunner = candidateMaskRunner;
-                candidateMaskRunner = null;
-                _config = candidateConfig;
-                _packagePath = selectedPath;
-                if (candidateExporter != null)
-                    _batchExporter = candidateExporter;
-                previousTester?.Dispose();
-                previousMaskRunner?.Dispose();
-                packageApplied = true;
-
-                PersistRuntimePathSettings();
-                InitializeOperationalServices();
-                UpdateStaticUi();
+                ApplyInferencePackageSafely(selectedPath);
 
                 MessageBox.Show(
                     "추론 패키지를 검증하고 적용했습니다.\n새 입력부터 선택한 모델을 사용합니다.",
@@ -1528,13 +1507,9 @@ namespace CoilInspectionApp
             }
             catch (Exception ex)
             {
-                candidateTester?.Dispose();
-                candidateMaskRunner?.Dispose();
                 LogException(ex);
                 MessageBox.Show(
-                    packageApplied
-                        ? $"패키지는 적용됐지만 실행 서비스 초기화에 실패했습니다.\n{ex.Message}"
-                        : $"패키지 검증에 실패해 기존 패키지를 유지합니다.\n{ex.Message}",
+                    $"패키지 검증 또는 적용에 실패해 기존 패키지를 유지합니다.\n{ex.Message}",
                     "패키지 변경",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -1542,8 +1517,86 @@ namespace CoilInspectionApp
             }
         }
 
+        private PackageActivationOutcome ApplyInferencePackageSafely(string selectedPath)
+        {
+            string candidatePath = Path.GetFullPath(selectedPath);
+            PipelinePackageConfig candidateConfig = LoadPipelinePackageOrThrow(candidatePath);
+            OnnxModelTester candidateTester = new OnnxModelTester();
+            MaskOnnxRunner candidateMaskRunner = null;
+            BatchExporter candidateExporter = null;
+            OnnxModelTester previousTester = _modelTester;
+            MaskOnnxRunner previousMaskRunner = _maskOnnxRunner;
+            BatchExporter previousExporter = _batchExporter;
+            PipelinePackageConfig previousConfig = _config;
+            string previousPath = _packagePath;
+            string previousStoredPath = _runtimePathSettings.InferencePackageDirectory;
+            bool swapped = false;
+            try
+            {
+                candidateMaskRunner = LoadMaskOnnxRunnerOrThrow(candidatePath, candidateConfig);
+                LoadRequiredModelsOrThrow(candidateTester, candidatePath, candidateConfig);
+                if (_servicesInitialized)
+                {
+                    candidateExporter = CreateBatchExporter(_exportBasePath, candidatePath, candidateConfig);
+                    candidateExporter.StartOrResumeBatch();
+                    if (candidateExporter.HasCurrentItems)
+                        throw new InvalidOperationException("새 모델 컨텍스트의 exporter가 비어 있지 않습니다.");
+                }
+
+                _modelTester = candidateTester;
+                _maskOnnxRunner = candidateMaskRunner;
+                _batchExporter = candidateExporter ?? previousExporter;
+                _config = candidateConfig;
+                _packagePath = candidatePath;
+                swapped = true;
+
+                _runtimePathSettings.InputDirectory = _inputPath;
+                _runtimePathSettings.InferencePackageDirectory = candidatePath;
+                _runtimePathSettings.ExportBaseDirectory = _manualExportBasePath;
+                _runtimePathSettingsStore.Save(_runtimePathSettings);
+
+                InitializeOperationalServices();
+                UpdateStaticUi();
+                try { previousTester?.Dispose(); } catch (Exception disposeException) { LogException(disposeException); }
+                try { previousMaskRunner?.Dispose(); } catch (Exception disposeException) { LogException(disposeException); }
+                return new PackageActivationOutcome
+                {
+                    PreviousModelPath = previousPath,
+                    ActiveModelPath = candidatePath
+                };
+            }
+            catch
+            {
+                if (swapped)
+                {
+                    _modelTester = previousTester;
+                    _maskOnnxRunner = previousMaskRunner;
+                    _batchExporter = previousExporter;
+                    _config = previousConfig;
+                    _packagePath = previousPath;
+                    _runtimePathSettings.InferencePackageDirectory = previousStoredPath;
+                    try { _runtimePathSettingsStore.Save(_runtimePathSettings); }
+                    catch (Exception restoreException) { LogException(restoreException); }
+                }
+                candidateTester.Dispose();
+                if (candidateMaskRunner != null) candidateMaskRunner.Dispose();
+                UpdateStaticUi();
+                throw;
+            }
+        }
+
         private void buttonSelectBatch_Click(object sender, EventArgs e)
         {
+            if (_automationSettings.Enabled)
+            {
+                MessageBox.Show(
+                    "로컬 자동화가 켜져 있어 배치 출력은 ExchangeRoot\\batches\\outbox을 사용합니다.\n" +
+                    "수동 출력 경로를 사용하려면 하단 자동화 상태를 우클릭해 자동화를 끄세요.",
+                    "배치 출력 폴더",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
             if (!CanChangeRuntimePath("배치 출력 폴더"))
                 return;
 
@@ -1575,6 +1628,7 @@ namespace CoilInspectionApp
                     }
                 }
 
+                _manualExportBasePath = selectedPath;
                 _exportBasePath = selectedPath;
                 if (candidateExporter != null)
                 {
@@ -1747,6 +1801,7 @@ namespace CoilInspectionApp
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            DisposeAutomation();
             _autoCloseTimer.Stop();
             _autoCloseTimer.Dispose();
             _dw?.Dispose();
@@ -1764,6 +1819,7 @@ namespace CoilInspectionApp
             UpdateStaticUi();
             ClearSelectionDetails();
             StartAutomaticInferenceIfNeeded();
+            ScheduleAutomationReconcile(0);
         }
 
         private void listViewResults_SelectedIndexChanged(object sender, EventArgs e)

@@ -19,6 +19,7 @@ namespace CoilTrainingUI.Services
         public AnomaInferSection AnomaInfer { get; set; } = new();
         public MaskInferSection MaskInfer { get; set; } = new();
         public AutoReviewSection AutoReview { get; set; } = new();
+        public AutomationSection Automation { get; set; } = new();
 
         public class WorkspaceSection
         {
@@ -41,7 +42,7 @@ namespace CoilTrainingUI.Services
             public int ImageSize { get; set; } = 1280;
             public int Batch { get; set; } = 4;
             public string Device { get; set; } = "auto";
-            public int Seed { get; set; } = 42;
+            public int Seed { get; set; } = 0;
         }
 
         public class AnomaTrainingSection
@@ -81,6 +82,16 @@ namespace CoilTrainingUI.Services
             string localPath = Path.Combine(settingsRoot, "config", "appsettings.local.json");
             if (File.Exists(localPath))
             {
+                bool localHasAutomation = false;
+                try
+                {
+                    using JsonDocument localDocument = JsonDocument.Parse(File.ReadAllText(localPath));
+                    localHasAutomation = localDocument.RootElement.ValueKind == JsonValueKind.Object &&
+                                         localDocument.RootElement.TryGetProperty("Automation", out _);
+                }
+                catch
+                {
+                }
                 var local = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(localPath));
                 if (local != null)
                 {
@@ -99,6 +110,9 @@ namespace CoilTrainingUI.Services
 
                     if (!string.IsNullOrWhiteSpace(local.AiProjectRoot))
                         baseSettings.AiProjectRoot = local.AiProjectRoot;
+
+                    if (localHasAutomation && local.Automation != null)
+                        baseSettings.Automation = local.Automation;
                 }
             }
 
@@ -363,6 +377,16 @@ namespace CoilTrainingUI.Services
         public double AnomaDefectThresholdMultiplier { get; set; } = 1.6;
         public double YoloBoxMinConfidence { get; set; } = 0.85;
         public double AuditSampleRate { get; set; }
+    }
+
+    public class AutomationSection
+    {
+        public bool Enabled { get; set; }
+        public string ExchangeRoot { get; set; } = "";
+        public bool AutoImportBatches { get; set; } = true;
+        public bool AutoPublishModels { get; set; } = true;
+        public bool AutoApplyApprovedModels { get; set; } = true;
+        public int ReconcileIntervalSeconds { get; set; } = 10;
     }
 
 }

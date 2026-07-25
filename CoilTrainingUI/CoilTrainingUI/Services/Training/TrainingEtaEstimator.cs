@@ -18,8 +18,8 @@ public sealed class TrainingEtaEstimator
         @"\bDinomaly\s+step\s+(\d+)\s*/\s*(\d+)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private static readonly Regex RatioPattern = new(
-        @"(?<!\d)(\d{1,7})\s*/\s*(\d{1,7})(?!\d)",
+    private static readonly Regex YoloEpochPattern = new(
+        @"^(?:\[ERR\]\s*)?(?:\x1B\[[0-?]*[ -/]*[@-~])*\s*(\d{1,7})\s*/\s*(\d{1,7})\b",
         RegexOptions.Compiled);
 
     private int _baselineUnit;
@@ -48,16 +48,10 @@ public sealed class TrainingEtaEstimator
         if (string.IsNullOrWhiteSpace(line) || expectedTotalEpochs <= 0)
             return null;
 
-        foreach (Match match in RatioPattern.Matches(line))
-        {
-            if (int.TryParse(match.Groups[2].Value, out int total) &&
-                total == expectedTotalEpochs)
-            {
-                return ObserveMatch(match, expectedTotalEpochs, observedAt);
-            }
-        }
-
-        return null;
+        Match match = YoloEpochPattern.Match(line);
+        return match.Success
+            ? ObserveMatch(match, expectedTotalEpochs, observedAt)
+            : null;
     }
 
     private TrainingProgressSnapshot? ObserveMatch(

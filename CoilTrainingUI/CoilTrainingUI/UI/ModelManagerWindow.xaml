@@ -16,9 +16,10 @@
 
         <StackPanel Grid.Row="0" Margin="0,0,0,16">
             <TextBlock Text="모델 및 배포 패키지" Style="{StaticResource PageTitleStyle}"/>
-            <TextBlock Text="대표 모델을 비교 기준으로 지정하고, 검증된 패키지를 명시적으로 추론 UI에 배포할 수 있습니다."
+            <TextBlock Text="발행된 전체 파이프라인 모델만 운영 적용을 요청하며, 실제 적용 성공 후 대표 모델이 바뀝니다."
                        Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0"/>
             <TextBlock x:Name="RegistryPathText" Foreground="#94A3B8" FontSize="11" Margin="0,6,0,0"/>
+            <TextBlock x:Name="ActivationStatusText" Foreground="{StaticResource AccentBrush}" FontSize="11" Margin="0,4,0,0"/>
         </StackPanel>
 
         <DataGrid x:Name="ModelsGrid"
@@ -45,16 +46,19 @@
         </DataGrid>
 
         <DockPanel Grid.Row="2" Margin="0,16,0,0">
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+            <WrapPanel DockPanel.Dock="Left">
                 <Button Content="새로고침" Width="88" Margin="0,0,8,0" Click="Refresh_Click"/>
                 <Button Content="대표 모델로 지정" Style="{StaticResource PrimaryButtonStyle}" Width="125" Margin="0,0,8,0" Click="SetReference_Click"/>
                 <Button Content="보관" Width="72" Margin="0,0,8,0" Click="Archive_Click"/>
                 <Button Content="대표 모델과 비교" Width="125" Margin="0,0,8,0" Click="Compare_Click"/>
                 <Button Content="이 모델로 파인튜닝" Width="140" Margin="0,0,8,0" Click="FineTune_Click"/>
-                <Button Content="추론 UI에 배포..." Style="{StaticResource PrimaryButtonStyle}" Width="125" Margin="0,0,8,0" Click="Deploy_Click"/>
+                <Button Content="릴리스 발행/검증" Width="125" Margin="0,0,8,0" Click="PublishRelease_Click"/>
+                <Button Content="운영 적용 요청" Style="{StaticResource PrimaryButtonStyle}" Width="125" Margin="0,0,8,0" Click="RequestActivation_Click"/>
+                <Button Content="대기 요청 취소" Width="110" Margin="0,0,8,0" Click="CancelActivation_Click"/>
+                <Button Content="직접 폴더 배포..." Width="125" Margin="0,0,8,0" Click="Deploy_Click" ToolTip="장애 복구용 고급 기능"/>
                 <Button Content="패키지 열기" Width="95" Margin="0,0,8,0" Click="OpenPackage_Click"/>
                 <Button Content="Run 폴더 열기" Width="100" Click="OpenRun_Click"/>
-            </StackPanel>
+            </WrapPanel>
             <Button Content="닫기" Width="80" HorizontalAlignment="Right" Click="Close_Click"/>
         </DockPanel>
     </Grid>

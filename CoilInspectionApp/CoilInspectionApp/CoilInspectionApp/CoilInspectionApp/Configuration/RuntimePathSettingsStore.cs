@@ -61,9 +61,22 @@ namespace CoilInspectionApp.Configuration
 
             settings.SchemaVersion = 1;
             settings.UpdatedAt = DateTime.Now.ToString("O");
-            File.WriteAllText(
-                _settingsPath,
-                JsonConvert.SerializeObject(settings, Formatting.Indented));
+            string temporaryPath = _settingsPath + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.WriteAllText(
+                    temporaryPath,
+                    JsonConvert.SerializeObject(settings, Formatting.Indented));
+                if (File.Exists(_settingsPath))
+                    File.Replace(temporaryPath, _settingsPath, null);
+                else
+                    File.Move(temporaryPath, _settingsPath);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
         }
     }
 }

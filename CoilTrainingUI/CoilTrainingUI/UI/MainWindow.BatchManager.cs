@@ -17,6 +17,7 @@ namespace CoilTrainingUI
             {
                 Owner = this
             };
+            _openBatchManager = window;
             bool refreshedWhileOpen = false;
             window.LibraryChanged += (sender, args) =>
             {
@@ -27,7 +28,14 @@ namespace CoilTrainingUI
                     preferredBatchRoot: args.PreferredBatchRoot);
             };
 
-            window.ShowDialog();
+            try
+            {
+                window.ShowDialog();
+            }
+            finally
+            {
+                _openBatchManager = null;
+            }
 
             if (window.HasLibraryChanges && !refreshedWhileOpen)
             {

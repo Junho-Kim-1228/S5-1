@@ -2,6 +2,7 @@ using CoilTrainingUI.Models;
 using CoilTrainingUI.Models.Review;
 using CoilTrainingUI.Services;
 using CoilTrainingUI.Services.Review;
+using CoilTrainingUI.Services.Automation;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -101,7 +102,12 @@ namespace CoilTrainingUI
         private void ModelManagement_Click(object sender, RoutedEventArgs e)
         {
             var registry = CreateModelRegistryService();
-            var window = new ModelManagerWindow(registry) { Owner = this };
+            AppSettings appSettings = AppSettingsLoader.LoadOrThrow(
+                FindProjectRoot("capstone_design"),
+                requireYoloPython: false,
+                requireAnomaPython: false);
+            _automationSettings = _automationSettingsStore.Load(appSettings.Automation);
+            var window = new ModelManagerWindow(registry, _automationSettings) { Owner = this };
             if (window.ShowDialog() != true || window.RequestedFineTuneModel == null)
                 return;
 
@@ -648,7 +654,7 @@ namespace CoilTrainingUI
                     sourceBatches: sourceBatches
                 );
 
-                CreateModelRegistryService().Register(new ModelRegistrationContext
+                ModelRegistryEntry registeredModel = CreateModelRegistryService().Register(new ModelRegistrationContext
                 {
                     RunDirectory = runDir,
                     InferencePackageDirectory = pkgDir,
@@ -666,7 +672,12 @@ namespace CoilTrainingUI
                     AnomaOutDirectory = trainAnoma ? anomaOut : ""
                 });
 
-                MessageBox.Show($"{operationName} 완료\n\n{pkgDir}");
+                ModelPublishResult? publishResult = TryAutoPublishModel(registeredModel, settings.Automation);
+
+                string publishMessage = publishResult == null
+                    ? _lastModelPublishStatus
+                    : $"운영 후보 발행: {publishResult.ReleaseDirectory}";
+                MessageBox.Show($"{operationName} 완료\n\n{pkgDir}\n\n{publishMessage}");
                 OpenFolder(pkgDir);
             }
             catch (Exception ex)
