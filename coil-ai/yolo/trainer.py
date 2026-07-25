@@ -87,6 +87,23 @@ def _resolve_best_weights(train_results, artifacts_dir: Path) -> Path | None:
     return None
 
 
+def _build_validation_kwargs(config, data_yaml: Path, use_one_to_many_head: bool) -> dict:
+    # A reloaded checkpoint can retain the CUDA device used when it was
+    # originally created. Always enforce the device selected for this run.
+    kwargs = {
+        "data": str(data_yaml),
+        "imgsz": config.imgsz,
+        "device": config.device,
+        "workers": config.workers,
+        "plots": False,
+    }
+    if config.conf_val is not None:
+        kwargs["conf"] = config.conf_val
+    if use_one_to_many_head:
+        kwargs["end2end"] = False
+    return kwargs
+
+
 def run_yolo_training(
     *,
     workspace: str,
@@ -195,15 +212,7 @@ def run_yolo_training(
             log_warn(logger, "Best checkpoint was not found. Using in-memory trained model for val/export.")
 
         log_progress(logger, 90)
-        val_kwargs = {
-            "data": str(data_yaml),
-            "workers": config.workers,
-            "plots": False,
-        }
-        if config.conf_val is not None:
-            val_kwargs["conf"] = config.conf_val
-        if use_one_to_many_head:
-            val_kwargs["end2end"] = False
+        val_kwargs = _build_validation_kwargs(config, data_yaml, use_one_to_many_head)
         val_results = eval_model.val(**val_kwargs)
         metrics = extract_yolo_metrics(val_results)
 

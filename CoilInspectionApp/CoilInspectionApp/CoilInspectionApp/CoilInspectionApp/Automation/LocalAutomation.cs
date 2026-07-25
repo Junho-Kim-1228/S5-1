@@ -98,6 +98,7 @@ namespace CoilInspectionApp.Automation
         }
 
         public static string Outbox(string root) { return Path.Combine(NormalizeExchangeRoot(root), "batches", "outbox"); }
+        public static string Archive(string root) { return Path.Combine(NormalizeExchangeRoot(root), "batches", "archive"); }
         public static string Receipts(string root) { return Path.Combine(NormalizeExchangeRoot(root), "batches", "receipts"); }
         public static string Releases(string root) { return Path.Combine(NormalizeExchangeRoot(root), "models", "releases"); }
         public static string Control(string root) { return Path.Combine(NormalizeExchangeRoot(root), "models", "control"); }
@@ -108,6 +109,7 @@ namespace CoilInspectionApp.Automation
         public static void EnsureLayout(string root)
         {
             Directory.CreateDirectory(Outbox(root));
+            Directory.CreateDirectory(Archive(root));
             Directory.CreateDirectory(Receipts(root));
             Directory.CreateDirectory(Releases(root));
             Directory.CreateDirectory(Control(root));

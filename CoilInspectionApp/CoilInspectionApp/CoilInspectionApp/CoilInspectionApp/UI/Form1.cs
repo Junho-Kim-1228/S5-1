@@ -38,7 +38,6 @@ namespace CoilInspectionApp
         private string _inputPath = "";
         private string _packagePath = "";
         private string _exportBasePath = "";
-        private string _manualExportBasePath = "";
         private RuntimePathSettings _runtimePathSettings = new RuntimePathSettings();
         private bool _servicesInitialized;
         private volatile bool _isPreprocessing;
@@ -196,15 +195,8 @@ namespace CoilInspectionApp
                     _runtimePathSettings.InferencePackageDirectory,
                     ConfigurationManager.AppSettings["InferencePackagePath"],
                     @".\InferencePackage");
-                // 사용자가 선택한 출력 경로가 있으면 복원하고,
-                // 최초 실행에는 EXE 기준 TrainingBatches 폴더를 사용한다.
-                _manualExportBasePath = ResolveSavedOrConfiguredPath(
-                    _runtimePathSettings.ExportBaseDirectory,
-                    ConfigurationManager.AppSettings["ExportBasePath"],
-                    @".\TrainingBatches");
-                _exportBasePath = _automationSettings.Enabled
-                    ? AutomationPaths.Outbox(_automationSettings.ExchangeRoot)
-                    : _manualExportBasePath;
+                AutomationPaths.EnsureLayout(_automationSettings.ExchangeRoot);
+                _exportBasePath = AutomationPaths.Outbox(_automationSettings.ExchangeRoot);
                 Directory.CreateDirectory(_exportBasePath);
 
                 _config = LoadPipelinePackageOrThrow(_packagePath);
@@ -1432,7 +1424,6 @@ namespace CoilInspectionApp
             {
                 _runtimePathSettings.InputDirectory = _inputPath;
                 _runtimePathSettings.InferencePackageDirectory = _packagePath;
-            _runtimePathSettings.ExportBaseDirectory = _manualExportBasePath;
                 _runtimePathSettingsStore.Save(_runtimePathSettings);
             }
             catch (Exception ex)
@@ -1552,7 +1543,6 @@ namespace CoilInspectionApp
 
                 _runtimePathSettings.InputDirectory = _inputPath;
                 _runtimePathSettings.InferencePackageDirectory = candidatePath;
-                _runtimePathSettings.ExportBaseDirectory = _manualExportBasePath;
                 _runtimePathSettingsStore.Save(_runtimePathSettings);
 
                 InitializeOperationalServices();
@@ -1587,73 +1577,7 @@ namespace CoilInspectionApp
 
         private void buttonSelectBatch_Click(object sender, EventArgs e)
         {
-            if (_automationSettings.Enabled)
-            {
-                MessageBox.Show(
-                    "로컬 자동화가 켜져 있어 배치 출력은 ExchangeRoot\\batches\\outbox을 사용합니다.\n" +
-                    "수동 출력 경로를 사용하려면 하단 자동화 상태를 우클릭해 자동화를 끄세요.",
-                    "배치 출력 폴더",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
-            }
-            if (!CanChangeRuntimePath("배치 출력 폴더"))
-                return;
-
-            string selectedPath = SelectFolderPath("배치 출력 폴더 선택", _exportBasePath, allowNewFolder: true);
-            if (string.IsNullOrWhiteSpace(selectedPath) ||
-                string.Equals(selectedPath, _exportBasePath, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            try
-            {
-                Directory.CreateDirectory(selectedPath);
-                BatchExporter candidateExporter = null;
-                if (_servicesInitialized)
-                {
-                    candidateExporter = CreateBatchExporter(selectedPath, _packagePath, _config);
-                    candidateExporter.StartOrResumeBatch();
-
-                    if (candidateExporter.HasCurrentItems)
-                    {
-                        DialogResult resume = MessageBox.Show(
-                            "선택한 출력 폴더에 마감되지 않은 현재 배치가 있습니다.\n이 배치를 이어서 불러올까요?",
-                            "배치 출력 변경",
-                            MessageBoxButtons.YesNo,
-                            MessageBoxIcon.Question);
-                        if (resume != DialogResult.Yes)
-                            return;
-                    }
-                }
-
-                _manualExportBasePath = selectedPath;
-                _exportBasePath = selectedPath;
-                if (candidateExporter != null)
-                {
-                    _batchExporter = candidateExporter;
-                    RestoreSessionState();
-                }
-
-                if (_statisticsForm != null && !_statisticsForm.IsDisposed)
-                    _statisticsForm.Close();
-
-                PersistRuntimePathSettings();
-                UpdateStaticUi();
-                RefreshResultList(selectFirst: true);
-                StartAutomaticInferenceIfNeeded();
-            }
-            catch (Exception ex)
-            {
-                LogException(ex);
-                MessageBox.Show(
-                    $"배치 출력 폴더를 변경하지 못했습니다.\n{ex.Message}",
-                    "배치 출력 변경",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                UpdateStaticUi();
-            }
+            SelectAutomationExchangeRoot();
         }
 
         private void buttonRefreshInput_Click(object sender, EventArgs e)
@@ -1692,7 +1616,8 @@ namespace CoilInspectionApp
                 _statisticsForm = new StatisticsForm(
                     _batchExporter.ExportBaseDirectory,
                     _batchExporter.CurrentBatchDirectory,
-                    _config?.anoma?.score_thres);
+                    _config?.anoma?.score_thres,
+                    AutomationPaths.Archive(_automationSettings.ExchangeRoot));
                 _statisticsForm.FormClosed += (closedSender, closedArgs) => _statisticsForm = null;
                 _statisticsForm.Show(this);
                 return;

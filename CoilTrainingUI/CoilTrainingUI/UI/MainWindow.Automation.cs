@@ -44,7 +44,7 @@ public partial class MainWindow
         _automationCoordinator = null;
         if (!_automationSettings.Enabled)
         {
-            AutomationStatusText.Text = "로컬 자동화 OFF";
+            AutomationStatusText.Text = "배치 자동 가져오기 OFF";
             return;
         }
 
@@ -58,7 +58,7 @@ public partial class MainWindow
             new ActivationResultSynchronizer(requests, registry));
         _automationCoordinator.Updated += AutomationCoordinator_Updated;
         _automationCoordinator.Start();
-        AutomationStatusText.Text = "로컬 자동화 ON · 검색 중";
+        AutomationStatusText.Text = "배치 자동 가져오기 ON · 검색 중";
     }
 
     private void AutomationCoordinator_Updated(object? sender, TrainingAutomationUpdate update)
@@ -139,7 +139,7 @@ public partial class MainWindow
     {
         var dialog = new OpenFolderDialog
         {
-            Title = "추론 UI와 공유할 로컬 ExchangeRoot 선택",
+            Title = "추론 UI와 함께 사용할 공유 데이터 폴더 선택",
             InitialDirectory = Directory.Exists(_automationSettings.ExchangeRoot)
                 ? _automationSettings.ExchangeRoot
                 : AutomationPaths.DefaultExchangeRoot,
@@ -165,7 +165,7 @@ public partial class MainWindow
     private void UpdateAutomationMenuAndStatus()
     {
         AutomationEnabledMenuItem.IsChecked = _automationSettings.Enabled;
-        ExchangeRootMenuItem.Header = "ExchangeRoot: " + _automationSettings.ExchangeRoot;
+        ExchangeRootMenuItem.Header = "공유 데이터 폴더: " + _automationSettings.ExchangeRoot;
         AutomationStatusText.ToolTip =
             "기본 ExchangeRoot는 현재 Windows 사용자 계정의 %LOCALAPPDATA%입니다. " +
             "두 앱은 같은 계정으로 실행하거나, 양쪽에서 접근 가능한 동일한 별도 로컬 경로를 설정해야 합니다.";

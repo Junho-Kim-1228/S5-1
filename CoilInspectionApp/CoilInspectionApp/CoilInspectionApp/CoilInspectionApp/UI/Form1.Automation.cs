@@ -2,6 +2,7 @@ using CoilInspectionApp.Automation;
 using CoilInspectionApp.Interface;
 using Newtonsoft.Json;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -22,6 +23,8 @@ namespace CoilInspectionApp
         private StatusStrip _automationStatusStrip;
         private ToolStripStatusLabel _batchDeliveryStatusLabel;
         private ToolStripStatusLabel _modelActivationStatusLabel;
+        private ToolStripDropDownButton _automationSettingsButton;
+        private readonly List<ToolStripMenuItem> _automationToggleMenuItems = new List<ToolStripMenuItem>();
 
         private sealed class BatchReceipt
         {
@@ -51,46 +54,90 @@ namespace CoilInspectionApp
             _automationStatusStrip.Items.Add(_batchDeliveryStatusLabel);
             _automationStatusStrip.Items.Add(new ToolStripSeparator());
             _automationStatusStrip.Items.Add(_modelActivationStatusLabel);
+            _automationSettingsButton = new ToolStripDropDownButton
+            {
+                AutoSize = false,
+                Width = 96,
+                TextAlign = System.Drawing.ContentAlignment.MiddleCenter,
+                ToolTipText = "새 모델 자동 적용과 공유 폴더를 설정합니다."
+            };
+            AddAutomationMenuItems(_automationSettingsButton.DropDownItems);
+            _automationStatusStrip.Items.Add(_automationSettingsButton);
             Controls.Add(_automationStatusStrip);
             _automationStatusStrip.BringToFront();
 
             ContextMenuStrip menu = new ContextMenuStrip();
-            ToolStripMenuItem toggle = new ToolStripMenuItem("로컬 자동화 사용") { Checked = _automationSettings.Enabled, CheckOnClick = true };
-            toggle.CheckedChanged += delegate
+            AddAutomationMenuItems(menu.Items);
+            _automationStatusStrip.ContextMenuStrip = menu;
+            UpdateAutomationToggleUi();
+            string accountHint =
+                "기본 경로는 현재 Windows 사용자의 %LOCALAPPDATA%입니다. " +
+                "다른 계정으로 실행하면 양쪽에서 접근 가능한 동일한 별도 로컬 경로를 설정하세요.";
+            _batchDeliveryStatusLabel.ToolTipText = accountHint;
+            _modelActivationStatusLabel.ToolTipText = accountHint;
+        }
+
+        private void AddAutomationMenuItems(ToolStripItemCollection items)
+        {
+            ToolStripMenuItem toggle = new ToolStripMenuItem
             {
-                if (toggle.Checked == _automationSettings.Enabled) return;
-                if (!CanChangeRuntimePath("로컬 자동화 설정"))
-                {
-                    toggle.Checked = _automationSettings.Enabled;
-                    return;
-                }
-                _automationSettings.Enabled = toggle.Checked;
-                _automationSettingsStore.Save(_automationSettings);
-                ReconfigureAutomation();
+                CheckOnClick = true
             };
-            ToolStripMenuItem choose = new ToolStripMenuItem("ExchangeRoot 선택...");
+            _automationToggleMenuItems.Add(toggle);
+            toggle.CheckedChanged += delegate { ChangeAutomationEnabled(toggle.Checked); };
+            ToolStripMenuItem choose = new ToolStripMenuItem("공유 데이터 폴더 선택...");
             choose.Click += delegate { SelectAutomationExchangeRoot(); };
-            ToolStripMenuItem reset = new ToolStripMenuItem("기본 ExchangeRoot로 재설정");
+            ToolStripMenuItem reset = new ToolStripMenuItem("기본 공유 데이터 폴더로 재설정");
             reset.Click += delegate
             {
-                if (!CanChangeRuntimePath("ExchangeRoot")) return;
+                if (!CanChangeRuntimePath("공유 데이터 폴더")) return;
                 _automationSettings.ExchangeRoot = AutomationPaths.DefaultExchangeRoot;
                 _automationSettingsStore.Save(_automationSettings);
                 ReconfigureAutomation();
             };
             ToolStripMenuItem reconcile = new ToolStripMenuItem("지금 동기화");
             reconcile.Click += delegate { ScheduleAutomationReconcile(0); };
-            menu.Items.Add(toggle);
-            menu.Items.Add(choose);
-            menu.Items.Add(reset);
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(reconcile);
-            _automationStatusStrip.ContextMenuStrip = menu;
-            string accountHint =
-                "기본 경로는 현재 Windows 사용자의 %LOCALAPPDATA%입니다. " +
-                "다른 계정으로 실행하면 양쪽에서 접근 가능한 동일한 별도 로컬 경로를 설정하세요.";
-            _batchDeliveryStatusLabel.ToolTipText = accountHint;
-            _modelActivationStatusLabel.ToolTipText = accountHint;
+            items.Add(toggle);
+            items.Add(choose);
+            items.Add(reset);
+            items.Add(new ToolStripSeparator());
+            items.Add(reconcile);
+        }
+
+        private void ChangeAutomationEnabled(bool enabled)
+        {
+            if (enabled == _automationSettings.Enabled)
+            {
+                UpdateAutomationToggleUi();
+                return;
+            }
+            if (!CanChangeRuntimePath("새 모델 자동 적용 설정"))
+            {
+                UpdateAutomationToggleUi();
+                return;
+            }
+
+            _automationSettings.Enabled = enabled;
+            _automationSettingsStore.Save(_automationSettings);
+            UpdateAutomationToggleUi();
+            ReconfigureAutomation();
+        }
+
+        private void UpdateAutomationToggleUi()
+        {
+            foreach (ToolStripMenuItem toggle in _automationToggleMenuItems)
+            {
+                toggle.Checked = _automationSettings.Enabled;
+                toggle.Text = "새 모델 자동 적용: " + (_automationSettings.Enabled ? "ON" : "OFF");
+            }
+
+            if (_automationSettingsButton != null)
+            {
+                _automationSettingsButton.Text = "자동 적용 " + (_automationSettings.Enabled ? "ON" : "OFF");
+                _automationSettingsButton.ForeColor = _automationSettings.Enabled
+                    ? ThemeSuccess
+                    : ThemeTextMuted;
+            }
         }
 
         private void InitializeAutomationRuntime()
@@ -126,9 +173,7 @@ namespace CoilInspectionApp
 
         private void ApplyAutomationOutputRoot()
         {
-            string target = _automationSettings.Enabled
-                ? AutomationPaths.Outbox(_automationSettings.ExchangeRoot)
-                : _manualExportBasePath;
+            string target = AutomationPaths.Outbox(_automationSettings.ExchangeRoot);
             target = Path.GetFullPath(target);
             if (string.Equals(target, _exportBasePath, StringComparison.OrdinalIgnoreCase)) return;
 
@@ -239,11 +284,6 @@ namespace CoilInspectionApp
 
         private void UpdateLatestBatchReceipt()
         {
-            if (!_automationSettings.Enabled)
-            {
-                _batchDeliveryStatusLabel.Text = "배치 전달: 자동화 OFF";
-                return;
-            }
             string receipts = AutomationPaths.Receipts(_automationSettings.ExchangeRoot);
             if (!Directory.Exists(receipts))
             {
@@ -295,7 +335,7 @@ namespace CoilInspectionApp
         {
             if (!_automationSettings.Enabled)
             {
-                _batchDeliveryStatusLabel.Text = "배치 전달: 자동화 OFF";
+                _batchDeliveryStatusLabel.Text = "배치 출력: 공유 outbox";
                 _modelActivationStatusLabel.Text = "모델 자동 적용: OFF";
                 return;
             }
@@ -313,10 +353,10 @@ namespace CoilInspectionApp
 
         private void SelectAutomationExchangeRoot()
         {
-            if (!CanChangeRuntimePath("ExchangeRoot")) return;
+            if (!CanChangeRuntimePath("공유 데이터 폴더")) return;
             using (FolderBrowserDialog dialog = new FolderBrowserDialog
             {
-                Description = "두 앱이 함께 사용할 로컬 ExchangeRoot 선택",
+                Description = "추론 UI와 학습 UI가 함께 사용할 공유 데이터 폴더 선택",
                 SelectedPath = Directory.Exists(_automationSettings.ExchangeRoot)
                     ? _automationSettings.ExchangeRoot
                     : AutomationPaths.DefaultExchangeRoot,

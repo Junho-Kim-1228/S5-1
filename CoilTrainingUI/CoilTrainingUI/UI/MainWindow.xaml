@@ -122,13 +122,13 @@
 
             <MenuItem Header="Automation">
                 <MenuItem x:Name="AutomationEnabledMenuItem"
-                          Header="로컬 자동화 사용"
+                          Header="배치 자동 가져오기 및 모델 발행"
                           IsCheckable="True"
                           Click="AutomationEnabled_Click"/>
-                <MenuItem Header="ExchangeRoot 선택..." Click="SelectExchangeRoot_Click"/>
-                <MenuItem Header="기본 ExchangeRoot로 재설정" Click="ResetExchangeRoot_Click"/>
+                <MenuItem Header="공유 데이터 폴더 선택..." Click="SelectExchangeRoot_Click"/>
+                <MenuItem Header="기본 공유 데이터 폴더로 재설정" Click="ResetExchangeRoot_Click"/>
                 <Separator/>
-                <MenuItem x:Name="ExchangeRootMenuItem" Header="ExchangeRoot" IsEnabled="False"/>
+                <MenuItem x:Name="ExchangeRootMenuItem" Header="공유 데이터 폴더" IsEnabled="False"/>
                 <MenuItem Header="지금 동기화" Click="AutomationReconcileNow_Click"/>
             </MenuItem>
 

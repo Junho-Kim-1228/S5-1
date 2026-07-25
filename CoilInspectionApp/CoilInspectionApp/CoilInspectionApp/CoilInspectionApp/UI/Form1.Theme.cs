@@ -162,7 +162,8 @@ namespace CoilInspectionApp
             labelPipeline.Text = "파이프라인";
             labelInput.Text = "입력 폴더";
             labelPackage.Text = "모델 패키지";
-            labelBatch.Text = "배치 출력";
+            labelBatch.Text = "공유 배치";
+            buttonSelectBatch.Text = "경로";
 
             labelFile.Text = "파일";
             labelStage1.Text = "Anoma 판정";

@@ -31,6 +31,7 @@ public sealed class BatchImportReceipt
     [JsonPropertyName("batch_id")] public string BatchId { get; set; } = "";
     [JsonPropertyName("manifest_sha256")] public string ManifestSha256 { get; set; } = "";
     [JsonPropertyName("source_path")] public string SourcePath { get; set; } = "";
+    [JsonPropertyName("archive_path")] public string ArchivePath { get; set; } = "";
     [JsonPropertyName("library_path")] public string LibraryPath { get; set; } = "";
     [JsonPropertyName("status")] public string Status { get; set; } = "";
     [JsonPropertyName("message")] public string Message { get; set; } = "";
@@ -100,12 +101,48 @@ public sealed class BatchInboxReconciler
                 case "conflict": result.ConflictCount++; break;
                 default: result.FailedCount++; break;
             }
+            if (receipt.Status is "imported" or "duplicate")
+                ArchiveCompletedBatch(source, receipt);
             WriteReceipt(receipt);
         }
 
         AtomicJsonFile.Write(registryPath, registry);
         TryDeleteIfEmpty(stagingRoot);
         return result;
+    }
+
+    private void ArchiveCompletedBatch(string source, BatchImportReceipt receipt)
+    {
+        try
+        {
+            if (!Directory.Exists(source))
+                return;
+
+            string archiveRoot = AutomationPaths.Archive(_exchangeRoot);
+            Directory.CreateDirectory(archiveRoot);
+            string folderName = Path.GetFileName(source.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar));
+            string destination = Path.Combine(archiveRoot, folderName);
+            if (Directory.Exists(destination))
+            {
+                string identity = string.IsNullOrWhiteSpace(receipt.ManifestSha256)
+                    ? Guid.NewGuid().ToString("N")[..8]
+                    : receipt.ManifestSha256[..Math.Min(8, receipt.ManifestSha256.Length)];
+                destination = Path.Combine(archiveRoot, $"{folderName}-{identity}");
+                if (Directory.Exists(destination))
+                    destination += "-" + Guid.NewGuid().ToString("N")[..8];
+            }
+
+            Directory.Move(source, destination);
+            receipt.ArchivePath = destination;
+            receipt.Message += " outbox 원본을 archive로 이동했습니다.";
+        }
+        catch (Exception ex)
+        {
+            // 가져온 라이브러리 복사본은 유효하므로, 원본은 다음 동기화에서 다시 정리한다.
+            receipt.Message += " archive 이동 실패: " + ex.Message;
+        }
     }
 
     private BatchImportReceipt ProcessBatch(

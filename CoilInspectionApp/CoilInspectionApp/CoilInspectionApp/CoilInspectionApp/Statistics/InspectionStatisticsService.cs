@@ -11,12 +11,19 @@ namespace CoilInspectionApp.Statistics
         public const string CurrentScopeKey = "__current__";
         public const string AllCompletedScopeKey = "__all_completed__";
 
-        private readonly string _exportBaseDirectory;
+        private readonly List<string> _completedBatchRoots;
         private readonly string _currentBatchDirectory;
 
-        public InspectionStatisticsService(string exportBaseDirectory, string currentBatchDirectory)
+        public InspectionStatisticsService(
+            string exportBaseDirectory,
+            string currentBatchDirectory,
+            string archiveBaseDirectory = "")
         {
-            _exportBaseDirectory = exportBaseDirectory ?? "";
+            _completedBatchRoots = new[] { exportBaseDirectory, archiveBaseDirectory }
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             _currentBatchDirectory = currentBatchDirectory ?? "";
         }
 
@@ -121,11 +128,11 @@ namespace CoilInspectionApp.Statistics
 
         private List<string> GetCompletedBatchDirectories()
         {
-            if (!Directory.Exists(_exportBaseDirectory))
-                return new List<string>();
-
-            return Directory.GetDirectories(_exportBaseDirectory, "export_batch_*")
+            return _completedBatchRoots
+                .Where(Directory.Exists)
+                .SelectMany(root => Directory.GetDirectories(root, "export_batch_*"))
                 .Where(directory => File.Exists(Path.Combine(directory, "meta", "DONE.flag")))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(directory => directory, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }

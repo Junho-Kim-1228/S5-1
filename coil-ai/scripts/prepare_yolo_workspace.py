@@ -121,13 +121,10 @@ def image_to_state_json_path(image_path: Path) -> Path:
 
 
 def build_unique_output_stem(relative_source: Path) -> str:
-    raw_stem = "__".join(relative_source.with_suffix("").parts)
-    safe_stem = "".join(
-        character if character.isalnum() or character in {"-", "_", "."} else "_"
-        for character in raw_stem
-    ).strip("._") or "image"
-    path_hash = hashlib.sha1(relative_source.as_posix().encode("utf-8")).hexdigest()[:8]
-    return f"{safe_stem}__{path_hash}"
+    # Training runs are nested deeply on Windows. Keep generated names short;
+    # the manifest retains the original relative path for traceability.
+    path_hash = hashlib.sha1(relative_source.as_posix().encode("utf-8")).hexdigest()[:16]
+    return f"sample_{path_hash}"
 
 
 def find_image_files(raw_root: Path) -> List[Path]:

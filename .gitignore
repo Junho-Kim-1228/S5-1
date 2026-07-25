@@ -1,6 +1,7 @@
 #congig files
 config/appsettings.local.json
 CoilTrainingUI/config/appsettings.local.json
+.smoke/
 CoilTrainingUI/python_env/
 CoilTrainingUI/python_env_yolo/
 CoilTrainingUI/python_env_dinomaly/

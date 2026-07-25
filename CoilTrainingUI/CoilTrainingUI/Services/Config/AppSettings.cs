@@ -82,12 +82,15 @@ namespace CoilTrainingUI.Services
             string localPath = Path.Combine(settingsRoot, "config", "appsettings.local.json");
             if (File.Exists(localPath))
             {
-                bool localHasAutomation = false;
+                var localSections = new HashSet<string>(StringComparer.Ordinal);
                 try
                 {
                     using JsonDocument localDocument = JsonDocument.Parse(File.ReadAllText(localPath));
-                    localHasAutomation = localDocument.RootElement.ValueKind == JsonValueKind.Object &&
-                                         localDocument.RootElement.TryGetProperty("Automation", out _);
+                    if (localDocument.RootElement.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (JsonProperty property in localDocument.RootElement.EnumerateObject())
+                            localSections.Add(property.Name);
+                    }
                 }
                 catch
                 {
@@ -111,7 +114,22 @@ namespace CoilTrainingUI.Services
                     if (!string.IsNullOrWhiteSpace(local.AiProjectRoot))
                         baseSettings.AiProjectRoot = local.AiProjectRoot;
 
-                    if (localHasAutomation && local.Automation != null)
+                    if (localSections.Contains("Workspace") && local.Workspace != null)
+                        baseSettings.Workspace = local.Workspace;
+
+                    if (localSections.Contains("YoloTraining") && local.YoloTraining != null)
+                        baseSettings.YoloTraining = local.YoloTraining;
+
+                    if (localSections.Contains("AnomaTraining") && local.AnomaTraining != null)
+                        baseSettings.AnomaTraining = local.AnomaTraining;
+
+                    if (localSections.Contains("YoloInfer") && local.YoloInfer != null)
+                        baseSettings.YoloInfer = local.YoloInfer;
+
+                    if (localSections.Contains("AnomaInfer") && local.AnomaInfer != null)
+                        baseSettings.AnomaInfer = local.AnomaInfer;
+
+                    if (localSections.Contains("Automation") && local.Automation != null)
                         baseSettings.Automation = local.Automation;
                 }
             }

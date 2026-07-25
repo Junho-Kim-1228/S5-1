@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from yolo.config import build_yolo_train_config
 from yolo.exporter import export_yolo_to_onnx
-from yolo.trainer import _build_stable_detection_trainer
+from yolo.trainer import _build_stable_detection_trainer, _build_validation_kwargs
 
 
 class _FakeYoloModel:
@@ -23,6 +23,25 @@ class _FakeYoloModel:
 
 
 class Yolo26CompatibilityTests(unittest.TestCase):
+    def test_validation_reuses_current_training_device(self) -> None:
+        config = build_yolo_train_config(
+            model="yolo26n.pt",
+            epochs=1,
+            imgsz=320,
+            batch=1,
+            device="cpu",
+            seed=42,
+            workers=0,
+            conf_val=None,
+            lr0=None,
+        )
+
+        kwargs = _build_validation_kwargs(config, Path("data.yaml"), True)
+
+        self.assertEqual(kwargs["device"], "cpu")
+        self.assertEqual(kwargs["imgsz"], 320)
+        self.assertFalse(kwargs["end2end"])
+
     def test_finite_zero_fitness_does_not_roll_training_back(self) -> None:
         import torch
 

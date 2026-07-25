@@ -6,5 +6,60 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <CoilAiSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\coil-ai'))</CoilAiSourceRoot>
+    <CoilAiRuntimeRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\coil-ai-runtime'))</CoilAiRuntimeRoot>
+    <CoilMaskModelSource>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\CoilInspectionApp\InferencePackage\models\mask.onnx'))</CoilMaskModelSource>
   </PropertyGroup>
+
+  <Target Name="SyncCoilAiRuntime"
+          BeforeTargets="PrepareForBuild"
+          Condition="Exists('$(CoilAiSourceRoot)\scripts\train_anoma.py')">
+    <ItemGroup>
+      <_CoilAiAnomaSource Include="$(CoilAiSourceRoot)\anoma\**\*.py" />
+      <_CoilAiCommonSource Include="$(CoilAiSourceRoot)\common\**\*.py" />
+      <_CoilAiScriptSource Include="$(CoilAiSourceRoot)\scripts\**\*.py" />
+      <_CoilAiUltralyticsSource Include="$(CoilAiSourceRoot)\ultralytics\**\*.py" />
+      <_CoilAiYoloSource Include="$(CoilAiSourceRoot)\yolo\**\*.py" />
+      <_CoilAiRootSource Include="$(CoilAiSourceRoot)\requirements-train.txt"
+                         Condition="Exists('$(CoilAiSourceRoot)\requirements-train.txt')" />
+      <_CoilAiRootSource Include="$(CoilAiSourceRoot)\requirements-dinomaly.txt"
+                         Condition="Exists('$(CoilAiSourceRoot)\requirements-dinomaly.txt')" />
+      <_CoilAiRootSource Include="$(CoilAiSourceRoot)\sitecustomize.py"
+                         Condition="Exists('$(CoilAiSourceRoot)\sitecustomize.py')" />
+      <_CoilAiRootSource Include="$(CoilAiSourceRoot)\yolo26n.pt"
+                         Condition="Exists('$(CoilAiSourceRoot)\yolo26n.pt')" />
+      <_CoilAiWeightSource Include="$(CoilAiSourceRoot)\assets\weights\*.pt" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(CoilAiRuntimeRoot)\anoma;$(CoilAiRuntimeRoot)\common;$(CoilAiRuntimeRoot)\scripts;$(CoilAiRuntimeRoot)\ultralytics;$(CoilAiRuntimeRoot)\yolo;$(CoilAiRuntimeRoot)\assets\weights;$(CoilAiRuntimeRoot)\outputs\mask\coil_unetpp_effb4_scratch_v8" />
+
+    <Copy SourceFiles="@(_CoilAiAnomaSource)"
+          DestinationFiles="@(_CoilAiAnomaSource->'$(CoilAiRuntimeRoot)\anoma\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CoilAiCommonSource)"
+          DestinationFiles="@(_CoilAiCommonSource->'$(CoilAiRuntimeRoot)\common\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CoilAiScriptSource)"
+          DestinationFiles="@(_CoilAiScriptSource->'$(CoilAiRuntimeRoot)\scripts\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CoilAiUltralyticsSource)"
+          DestinationFiles="@(_CoilAiUltralyticsSource->'$(CoilAiRuntimeRoot)\ultralytics\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CoilAiYoloSource)"
+          DestinationFiles="@(_CoilAiYoloSource->'$(CoilAiRuntimeRoot)\yolo\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CoilAiRootSource)"
+          DestinationFiles="@(_CoilAiRootSource->'$(CoilAiRuntimeRoot)\%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_CoilAiWeightSource)"
+          DestinationFiles="@(_CoilAiWeightSource->'$(CoilAiRuntimeRoot)\assets\weights\%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(CoilMaskModelSource)"
+          DestinationFiles="$(CoilAiRuntimeRoot)\outputs\mask\coil_unetpp_effb4_scratch_v8\mask.onnx"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(CoilMaskModelSource)')" />
+
+    <Message Text="Synced coil-ai training runtime from $(CoilAiSourceRoot)"
+             Importance="high" />
+  </Target>
 </Project>

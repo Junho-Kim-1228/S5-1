@@ -28,9 +28,16 @@ namespace CoilInspectionApp.UI
         private readonly Timer _refreshTimer = new Timer();
         private InspectionStatistics _currentStatistics = new InspectionStatistics();
 
-        public StatisticsForm(string exportBaseDirectory, string currentBatchDirectory, float? anomaThreshold)
+        public StatisticsForm(
+            string exportBaseDirectory,
+            string currentBatchDirectory,
+            float? anomaThreshold,
+            string archiveBaseDirectory = "")
         {
-            _service = new InspectionStatisticsService(exportBaseDirectory, currentBatchDirectory);
+            _service = new InspectionStatisticsService(
+                exportBaseDirectory,
+                currentBatchDirectory,
+                archiveBaseDirectory);
             _anomaThreshold = anomaThreshold;
             InitializeUi();
             ReloadScopes(false);

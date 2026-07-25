@@ -766,10 +766,12 @@ internal sealed class CoreReviewTests
 
         Assert(first.ImportedCount == 1 && Directory.Exists(Path.Combine(library, "batch-once")),
             "completed batch was not imported");
-        Assert(second.ImportedCount == 0 && second.DuplicateCount == 1,
-            "duplicate watcher reconciliation imported a second copy");
-        Assert(Directory.Exists(source) && Directory.Exists(unfinished),
-            "outbox source was modified or deleted");
+        Assert(second.ImportedCount == 0 && second.DuplicateCount == 0,
+            "archived batch was processed again");
+        Assert(!Directory.Exists(source) &&
+               Directory.Exists(Path.Combine(AutomationPaths.Archive(exchange), "batch-once")) &&
+               Directory.Exists(unfinished),
+            "completed batch was not archived or unfinished batch was moved");
         Assert(!Directory.Exists(Path.Combine(library, "batch-unfinished")),
             "batch without DONE.flag was imported");
         Assert(Directory.GetDirectories(library)

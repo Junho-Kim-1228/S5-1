@@ -9,7 +9,6 @@ namespace CoilInspectionApp.Configuration
         public int SchemaVersion { get; set; } = 1;
         public string InputDirectory { get; set; } = "";
         public string InferencePackageDirectory { get; set; } = "";
-        public string ExportBaseDirectory { get; set; } = "";
         public string UpdatedAt { get; set; } = "";
     }
 

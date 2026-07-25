@@ -52,6 +52,7 @@ public static class AutomationPaths
             : Environment.ExpandEnvironmentVariables(configuredRoot.Trim()));
 
     public static string Outbox(string root) => Path.Combine(NormalizeExchangeRoot(root), "batches", "outbox");
+    public static string Archive(string root) => Path.Combine(NormalizeExchangeRoot(root), "batches", "archive");
     public static string Receipts(string root) => Path.Combine(NormalizeExchangeRoot(root), "batches", "receipts");
     public static string Releases(string root) => Path.Combine(NormalizeExchangeRoot(root), "models", "releases");
     public static string Control(string root) => Path.Combine(NormalizeExchangeRoot(root), "models", "control");
@@ -62,6 +63,7 @@ public static class AutomationPaths
     public static void EnsureLayout(string root)
     {
         Directory.CreateDirectory(Outbox(root));
+        Directory.CreateDirectory(Archive(root));
         Directory.CreateDirectory(Receipts(root));
         Directory.CreateDirectory(Releases(root));
         Directory.CreateDirectory(Control(root));
