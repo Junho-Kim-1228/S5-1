@@ -504,11 +504,20 @@ namespace CoilInspectionApp
             bool removedCurrentSelection = currentSelection != null
                 && string.Equals(currentSelection.SourceFilePath, filePath, StringComparison.OrdinalIgnoreCase);
 
-            int removed = _results.RemoveAll(item =>
-                string.Equals(item.SourceFilePath, filePath, StringComparison.OrdinalIgnoreCase));
-
-            if (removed == 0)
+            List<InspectionResultViewModel> removedItems = _results
+                .Where(item => string.Equals(
+                    item.SourceFilePath,
+                    filePath,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (removedItems.Count == 0)
                 return;
+
+            foreach (InspectionResultViewModel item in removedItems)
+            {
+                _results.Remove(item);
+                _batchExporter?.RemoveItem(item.ImageId);
+            }
 
             RefreshResultList(selectFirst: !removedCurrentSelection);
             if (_results.Count == 0 || removedCurrentSelection)
@@ -523,11 +532,17 @@ namespace CoilInspectionApp
                     .Where(IsSupportedImagePath),
                 StringComparer.OrdinalIgnoreCase);
 
-            _results.RemoveAll(item =>
+            List<InspectionResultViewModel> removedItems = _results.Where(item =>
                 !string.IsNullOrWhiteSpace(item.SourceFilePath)
                 && IsSupportedImagePath(item.SourceFilePath)
                 && IsUnderDirectory(item.SourceFilePath, _inputPath)
-                && !existingPaths.Contains(item.SourceFilePath));
+                && !existingPaths.Contains(item.SourceFilePath))
+                .ToList();
+            foreach (InspectionResultViewModel item in removedItems)
+            {
+                _results.Remove(item);
+                _batchExporter?.RemoveItem(item.ImageId);
+            }
 
             RegisterExistingInputFiles();
             RefreshResultList(selectFirst: true);

@@ -15,26 +15,44 @@ public sealed class ModelRegistryService
         public List<ModelRegistryEntry> Models { get; set; } = new();
     }
 
+    private sealed class ActiveModelPointer
+    {
+        public int SchemaVersion { get; set; } = 1;
+        public string ModelId { get; set; } = "";
+        public DateTime ActivatedAtUtc { get; set; }
+        public string Source { get; set; } = "";
+    }
+
     private readonly object _sync = new();
     private readonly string _registryDirectory;
     private readonly string _registryPath;
     private readonly string _referencePath;
+    private readonly string _activeModelPath;
 
     public ModelRegistryService(string registryDirectory)
     {
         _registryDirectory = Path.GetFullPath(registryDirectory);
         _registryPath = Path.Combine(_registryDirectory, "models.json");
         _referencePath = Path.Combine(_registryDirectory, "reference.json");
+        _activeModelPath = Path.Combine(_registryDirectory, "active_model.json");
     }
 
     public string RegistryPath => _registryPath;
     public string ReferencePointerPath => _referencePath;
+    public string ActiveModelPointerPath => _activeModelPath;
 
     public IReadOnlyList<ModelRegistryEntry> Load()
     {
         lock (_sync)
         {
-            return LoadDocument().Models
+            RegistryDocument document = LoadDocument();
+            string activeModelId = ReadActiveModelId();
+            foreach (ModelRegistryEntry model in document.Models)
+            {
+                model.IsActive = !string.IsNullOrWhiteSpace(activeModelId) &&
+                                 string.Equals(model.Id, activeModelId, StringComparison.OrdinalIgnoreCase);
+            }
+            return document.Models
                 .OrderByDescending(model => model.CreatedAtUtc)
                 .ToList();
         }
@@ -75,8 +93,33 @@ public sealed class ModelRegistryService
         WriteReferencePointer(selected);
     }
 
+    public void SetActive(string modelId, string source = "activation")
+    {
+        ModelRegistryEntry selected = Find(modelId)
+            ?? throw new InvalidOperationException($"Model not found: {modelId}");
+        if (!selected.HasInferencePackage)
+            throw new DirectoryNotFoundException($"Model package not found: {selected.InferencePackageDirectory}");
+
+        Directory.CreateDirectory(_registryDirectory);
+        string temporaryPath = _activeModelPath + ".tmp";
+        File.WriteAllText(
+            temporaryPath,
+            JsonSerializer.Serialize(
+                new ActiveModelPointer
+                {
+                    ModelId = selected.Id,
+                    ActivatedAtUtc = DateTime.UtcNow,
+                    Source = source ?? ""
+                },
+                new JsonSerializerOptions { WriteIndented = true }));
+        File.Move(temporaryPath, _activeModelPath, overwrite: true);
+    }
+
     public void Archive(string modelId)
     {
+        if (string.Equals(ReadActiveModelId(), modelId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("현재 적용 중인 모델은 보관할 수 없습니다. 다른 모델을 먼저 적용하세요.");
+
         bool archivedReference = Update(document =>
         {
             ModelRegistryEntry selected = document.Models.FirstOrDefault(model =>
@@ -191,6 +234,22 @@ public sealed class ModelRegistryService
         catch (JsonException ex)
         {
             throw new InvalidDataException($"Model registry is invalid: {_registryPath}", ex);
+        }
+    }
+
+    private string ReadActiveModelId()
+    {
+        if (!File.Exists(_activeModelPath))
+            return "";
+        try
+        {
+            ActiveModelPointer? pointer = JsonSerializer.Deserialize<ActiveModelPointer>(
+                File.ReadAllText(_activeModelPath));
+            return pointer?.SchemaVersion == 1 ? pointer.ModelId ?? "" : "";
+        }
+        catch (JsonException)
+        {
+            return "";
         }
     }
 

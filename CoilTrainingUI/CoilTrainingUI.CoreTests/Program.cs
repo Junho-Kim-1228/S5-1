@@ -59,9 +59,13 @@ internal sealed class CoreReviewTests
             Run("final training commands are explicit", FinalTrainingCommandsAreExplicit);
             Run("fine-tune command uses warm-start policy", FineTuneCommandUsesWarmStartPolicy);
             Run("training ETA tracks Anoma steps and YOLO epochs", TrainingEtaTracksAnomaAndYolo);
+            Run("training settings reject invalid values", TrainingSettingsRejectInvalidValues);
+            Run("training settings preserve unrelated local overrides", () => TrainingSettingsPreserveLocalOverrides(root));
             Run("Python runner serializes stdout and stderr logs", () => PythonRunnerSerializesLogs(root));
             Run("Python environment validation follows selected pipeline", () => PythonEnvironmentValidationFollowsPipeline(root));
             Run("model registry tracks lifecycle and lineage", () => ModelRegistryTracksLifecycle(root));
+            Run("model list marks missing package files", () => ModelListMarksMissingPackageFiles(root));
+            Run("existing operational package import is immutable and active", () => ExistingOperationalPackageImportIsImmutableAndActive(root));
             Run("inference package deployment is validated and backed up", () => InferencePackageDeploymentIsSafe(root));
             Run("inference package rejects a missing mask model", () => MissingMaskModelIsRejected(root));
             Run("image cache reuses and invalidates frozen bitmaps", () => ImageCacheIsBoundedAndFresh(root));
@@ -77,6 +81,8 @@ internal sealed class CoreReviewTests
             Run("automation imports completed batches exactly once", () => AutomationImportsCompletedBatchExactlyOnce(root));
             Run("automation rejects batch id conflicts", () => AutomationRejectsBatchIdConflict(root));
             Run("automation cleans failed batch staging", () => AutomationCleansFailedBatchStaging(root));
+            Run("automation quarantines and rebuilds a corrupt import registry", () => AutomationRebuildsCorruptImportRegistry(root));
+            Run("batch deletion moves archived statistics source to trash", () => BatchDeletionMovesArchivedStatisticsSourceToTrash(root));
             Run("full model release is immutable and deterministic", () => FullModelReleaseIsImmutable(root));
             Run("activation requests are single-pending and cancellable", () => ActivationRequestsAreSinglePending(root));
             Run("activation result alone advances model reference", () => ActivationResultAdvancesReference(root));
@@ -147,6 +153,108 @@ internal sealed class CoreReviewTests
             "YOLO progress did not continue after validation output");
         Assert(TrainingEtaEstimator.FormatDuration(TimeSpan.FromSeconds(3661)) == "01:01:01",
             "training duration formatting is incorrect");
+    }
+
+    private static void TrainingSettingsRejectInvalidValues()
+    {
+        var yolo = new AppSettings.YoloTrainingSection { Epochs = 0 };
+        var anoma = new AppSettings.AnomaTrainingSection
+        {
+            ImageSize = 225,
+            DecoderDepth = 7,
+            MaxSteps = 0
+        };
+
+        IReadOnlyList<string> errors = TrainingSettingsValidator.Validate(yolo, anoma);
+        Assert(errors.Any(error => error.Contains("YOLO epoch", StringComparison.Ordinal)),
+            "invalid YOLO epoch was accepted");
+        Assert(errors.Any(error => error.Contains("14의 배수", StringComparison.Ordinal)),
+            "invalid Dinomaly image size was accepted");
+        Assert(errors.Any(error => error.Contains("decoder depth", StringComparison.Ordinal)),
+            "invalid Dinomaly decoder depth was accepted");
+        Assert(errors.Any(error => error.Contains("max steps", StringComparison.Ordinal)),
+            "invalid Dinomaly max steps was accepted");
+    }
+
+    private static void TrainingSettingsPreserveLocalOverrides(string root)
+    {
+        string settingsRoot = Path.Combine(root, "training-settings");
+        string configRoot = Path.Combine(settingsRoot, "config");
+        Directory.CreateDirectory(configRoot);
+        string localPath = Path.Combine(configRoot, "appsettings.local.json");
+        File.WriteAllText(localPath, """
+        {
+          "PythonExe": "keep-this-python",
+          "Automation": {
+            "Enabled": true,
+            "ExchangeRoot": "keep-this-root"
+          }
+        }
+        """);
+
+        var yolo = new AppSettings.YoloTrainingSection { Epochs = 1, Batch = 2 };
+        var anoma = new AppSettings.AnomaTrainingSection
+        {
+            ImageSize = 224,
+            Batch = 1,
+            DecoderDepth = 8,
+            MaxSteps = 5
+        };
+        new TrainingSettingsStore(settingsRoot).SaveTrainingSections(yolo, anoma);
+
+        using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(localPath));
+        JsonElement document = saved.RootElement;
+        Assert(document.GetProperty("PythonExe").GetString() == "keep-this-python",
+            "training settings overwrote the Python override");
+        Assert(document.GetProperty("Automation").GetProperty("ExchangeRoot").GetString() == "keep-this-root",
+            "training settings overwrote the automation override");
+        Assert(document.GetProperty("YoloTraining").GetProperty("Epochs").GetInt32() == 1,
+            "YOLO settings were not saved");
+        Assert(document.GetProperty("AnomaTraining").GetProperty("MaxSteps").GetInt32() == 5,
+            "Anoma settings were not saved");
+    }
+
+    private static void ModelListMarksMissingPackageFiles(string root)
+    {
+        string package = Path.Combine(root, "model-list-package");
+        var entry = new ModelRegistryEntry
+        {
+            Status = ModelLifecycleStatus.Candidate,
+            InferencePackageDirectory = package
+        };
+
+        Assert(!entry.HasInferencePackage && entry.StatusText == "파일 없음",
+            "missing model package was not shown as unavailable");
+        Directory.CreateDirectory(package);
+        Assert(entry.HasInferencePackage && entry.StatusText == "후보",
+            "available candidate package was not shown as a candidate");
+    }
+
+    private static void ExistingOperationalPackageImportIsImmutableAndActive(string root)
+    {
+        string testRoot = Path.Combine(root, "existing-package-import");
+        string source = CreateFullInferencePackage(Path.Combine(testRoot, "source", "InferencePackage"));
+        string managed = Path.Combine(testRoot, "managed");
+        var registry = new ModelRegistryService(Path.Combine(testRoot, "registry"));
+        var importer = new ExistingInferencePackageImportService(managed, registry);
+
+        ExistingPackageImportResult first = importer.ImportCurrentOperationalPackage(source);
+        ExistingPackageImportResult second = importer.ImportCurrentOperationalPackage(source);
+        ModelRegistryEntry imported = registry.Find(first.Model.Id)
+                                      ?? throw new InvalidOperationException("imported model was not registered");
+
+        Assert(!first.AlreadyImported && second.AlreadyImported,
+            "identical operational package import was not idempotent");
+        Assert(imported.IsActive && imported.StatusText == "현재 적용",
+            "imported operational package was not marked as active");
+        Assert(imported.Status == ModelLifecycleStatus.Reference,
+            "imported operational package was not made the comparison reference");
+        Assert(!string.Equals(source, imported.InferencePackageDirectory, StringComparison.OrdinalIgnoreCase) &&
+               File.Exists(Path.Combine(imported.InferencePackageDirectory, "models", "anoma.onnx")),
+            "operational package was referenced in place instead of copied");
+        Assert(Directory.GetDirectories(managed)
+                .Count(path => !Path.GetFileName(path).StartsWith(".importing-", StringComparison.OrdinalIgnoreCase)) == 1,
+            "duplicate operational package import created another managed copy");
     }
 
     private static void PythonRunnerSerializesLogs(string root)
@@ -820,6 +928,55 @@ internal sealed class CoreReviewTests
             "staging batch leaked into the library scan");
     }
 
+    private static void BatchDeletionMovesArchivedStatisticsSourceToTrash(string root)
+    {
+        string testRoot = Path.Combine(root, "archive_batch_trash");
+        string archive = Path.Combine(testRoot, "archive");
+        string batch = CreateAutomationBatch(
+            archive,
+            "export_batch_20260726_010203",
+            "image-trash",
+            manifestBatchId: "renamed-batch-id");
+
+        var service = new ArchivedBatchTrashService(archive);
+        ArchivedBatchTrashResult result = service.MoveMatchingBatchToTrash(
+            "export_batch_20260726_010203",
+            "renamed-batch-id");
+
+        Assert(result.Moved && !Directory.Exists(batch) && Directory.Exists(result.TrashPath),
+            "archived statistics source was not moved to trash");
+        Assert(string.Equals(
+                Path.GetDirectoryName(result.TrashPath),
+                Path.Combine(archive, "_trash"),
+                StringComparison.OrdinalIgnoreCase),
+            "archived statistics source escaped the archive trash root");
+        Assert(!service.MoveMatchingBatchToTrash(
+                "export_batch_20260726_010203",
+                "renamed-batch-id").Moved,
+            "already trashed statistics source was moved twice");
+    }
+
+    private static void AutomationRebuildsCorruptImportRegistry(string root)
+    {
+        string testRoot = Path.Combine(root, "automation_corrupt_registry");
+        string exchange = Path.Combine(testRoot, "exchange");
+        string library = Path.Combine(testRoot, "library");
+        string automation = Path.Combine(library, ".automation");
+        string registryPath = Path.Combine(automation, "import_registry.json");
+        Directory.CreateDirectory(automation);
+        File.WriteAllBytes(registryPath, new byte[] { 0, 0, 0, 0 });
+
+        BatchReconcileResult result = new BatchInboxReconciler(exchange, library).Reconcile();
+        BatchImportRegistryDocument? rebuilt = JsonSerializer.Deserialize<BatchImportRegistryDocument>(
+            File.ReadAllText(registryPath));
+        string[] quarantined = Directory.GetFiles(automation, "import_registry.json.corrupt-*");
+
+        Assert(result.FailedCount == 0 && rebuilt != null,
+            "corrupt import registry was not rebuilt");
+        Assert(quarantined.Length == 1 && new FileInfo(quarantined[0]).Length == 4,
+            "corrupt import registry was not quarantined intact");
+    }
+
     private static void FullModelReleaseIsImmutable(string root)
     {
         string testRoot = Path.Combine(root, "automation_release");
@@ -920,8 +1077,11 @@ internal sealed class CoreReviewTests
             AppliedAtUtc = DateTime.UtcNow
         });
         new ActivationResultSynchronizer(requests, registry).Reconcile();
-        Assert(registry.Find(entry.Id)?.Status == ModelLifecycleStatus.Reference,
+        ModelRegistryEntry? applied = registry.Find(entry.Id);
+        Assert(applied?.Status == ModelLifecycleStatus.Reference,
             "matching applied result did not advance the model reference");
+        Assert(applied?.IsActive == true,
+            "matching applied result did not mark the model as currently active");
     }
 
     private static void ReleasePathTraversalIsRejected(string root)

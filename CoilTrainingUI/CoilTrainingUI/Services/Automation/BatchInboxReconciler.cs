@@ -323,7 +323,20 @@ public sealed class BatchInboxReconciler
         }
         catch (JsonException ex)
         {
-            throw new InvalidDataException("자동 배치 가져오기 레지스트리가 손상되었습니다.", ex);
+            string backupPath = path +
+                                $".corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}";
+            try
+            {
+                File.Move(path, backupPath, overwrite: false);
+            }
+            catch (Exception backupException) when (backupException is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidDataException(
+                    "자동 배치 가져오기 레지스트리가 손상되었고 백업 격리에도 실패했습니다.",
+                    new AggregateException(ex, backupException));
+            }
+
+            return new BatchImportRegistryDocument();
         }
     }
 

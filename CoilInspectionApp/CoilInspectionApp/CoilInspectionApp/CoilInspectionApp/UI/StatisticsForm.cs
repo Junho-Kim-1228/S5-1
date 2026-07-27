@@ -118,14 +118,36 @@ namespace CoilInspectionApp.UI
             };
             exportButton.FlatAppearance.BorderSize = 0;
             exportButton.Click += ExportCsv;
+
+            var manageButton = new Button
+            {
+                Text = "배치 관리",
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(982, 17),
+                Size = new Size(98, 31),
+                BackColor = Color.FromArgb(90, 105, 120),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                UseVisualStyleBackColor = false,
+            };
+            manageButton.FlatAppearance.BorderSize = 0;
+            manageButton.Click += (sender, args) =>
+            {
+                using (var dialog = new StatisticsBatchManagerForm(_service))
+                    dialog.ShowDialog(this);
+                ReloadScopes(true);
+            };
             header.Controls.Add(title);
             header.Controls.Add(_scopeCombo);
             header.Controls.Add(refreshButton);
+            header.Controls.Add(manageButton);
             header.Controls.Add(exportButton);
             header.Resize += (sender, args) =>
             {
                 exportButton.Left = header.ClientSize.Width - exportButton.Width - 16;
-                refreshButton.Left = exportButton.Left - refreshButton.Width - 8;
+                manageButton.Left = exportButton.Left - manageButton.Width - 8;
+                refreshButton.Left = manageButton.Left - refreshButton.Width - 8;
                 _scopeCombo.Left = refreshButton.Left - _scopeCombo.Width - 10;
             };
 

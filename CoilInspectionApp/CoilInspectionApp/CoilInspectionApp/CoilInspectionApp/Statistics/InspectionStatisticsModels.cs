@@ -14,6 +14,16 @@ namespace CoilInspectionApp.Statistics
         }
     }
 
+    public sealed class StatisticsBatchItem
+    {
+        public string BatchName { get; set; }
+        public string BatchDirectory { get; set; }
+        public string LocationText { get; set; }
+        public int ResultCount { get; set; }
+        public string UpdatedAtText { get; set; }
+        public bool CanMoveToTrash { get; set; }
+    }
+
     public sealed class InspectionStatistics
     {
         public int TotalCount { get; set; }

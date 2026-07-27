@@ -1,0 +1,134 @@
+<Window x:Class="CoilTrainingUI.TrainingSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="학습 설정"
+        Width="930"
+        Height="760"
+        MinWidth="820"
+        MinHeight="650"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="학습 설정" Style="{StaticResource PageTitleStyle}"/>
+                <TextBlock Margin="0,5,0,0"
+                           Style="{StaticResource MutedTextStyle}"
+                           Text="저장한 값은 다음 학습부터 적용되며 appsettings.local.json에만 기록됩니다."/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="시연용 빠른 설정" Click="ApplyDemoPreset_Click" Margin="0,0,8,0"/>
+                <Button Content="운영 기본값" Click="ApplyProductionPreset_Click"/>
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <GroupBox Grid.Column="0" Header="YOLO 학습">
+                    <Grid Margin="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="기본 모델" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="YoloModelTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="1" Text="Epoch" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="YoloEpochsTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="2" Text="파인튜닝 Epoch" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="YoloFineTuneEpochsTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="3" Text="파인튜닝 학습률" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="3" Grid.Column="1" x:Name="YoloFineTuneLearningRateTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="4" Text="이미지 크기" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="4" Grid.Column="1" x:Name="YoloImageSizeTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="5" Text="Batch" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="5" Grid.Column="1" x:Name="YoloBatchTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="6" Text="Device" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="6" Grid.Column="1" x:Name="YoloDeviceComboBox" IsEditable="True" Margin="0,4">
+                            <ComboBoxItem Content="auto"/><ComboBoxItem Content="cpu"/><ComboBoxItem Content="0"/>
+                        </ComboBox>
+                        <TextBlock Grid.Row="7" Text="Seed" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="7" Grid.Column="1" x:Name="YoloSeedTextBox" Margin="0,4"/>
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Grid.Column="2" Header="Anoma · Dinomaly 학습">
+                    <Grid Margin="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="155"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="이미지 크기" VerticalAlignment="Center" ToolTip="14의 배수"/>
+                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="AnomaImageSizeTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="1" Text="Batch" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="AnomaBatchTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="2" Text="Device" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="2" Grid.Column="1" x:Name="AnomaDeviceComboBox" IsEditable="True" Margin="0,4">
+                            <ComboBoxItem Content="auto"/><ComboBoxItem Content="cpu"/><ComboBoxItem Content="0"/>
+                        </ComboBox>
+                        <TextBlock Grid.Row="3" Text="Seed" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="3" Grid.Column="1" x:Name="AnomaSeedTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="4" Text="Encoder" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="4" Grid.Column="1" x:Name="AnomaEncoderComboBox" IsEditable="True" Margin="0,4">
+                            <ComboBoxItem Content="vit_large_patch14_reg4_dinov2"/>
+                            <ComboBoxItem Content="vit_base_patch14_reg4_dinov2"/>
+                        </ComboBox>
+                        <TextBlock Grid.Row="5" Text="Dropout" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="5" Grid.Column="1" x:Name="AnomaDropoutTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="6" Text="Decoder depth" VerticalAlignment="Center" ToolTip="8 이상"/>
+                        <TextBox Grid.Row="6" Grid.Column="1" x:Name="AnomaDecoderDepthTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="7" Text="Max steps" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="7" Grid.Column="1" x:Name="AnomaMaxStepsTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="8" Text="학습률" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="8" Grid.Column="1" x:Name="AnomaLearningRateTextBox" Margin="0,4"/>
+                        <TextBlock Grid.Row="9" Text="목표 Recall" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="9" Grid.Column="1" x:Name="AnomaTargetRecallTextBox" Margin="0,4"/>
+                    </Grid>
+                </GroupBox>
+            </Grid>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="PresetStatusTextBlock"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       Text="현재 유효 설정을 표시하고 있습니다."/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="취소" Width="90" IsCancel="True" Margin="0,0,8,0"/>
+                <Button Content="저장" Width="100" IsDefault="True" Style="{StaticResource PrimaryButtonStyle}" Click="Save_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

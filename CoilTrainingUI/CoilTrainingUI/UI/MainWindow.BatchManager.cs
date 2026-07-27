@@ -1,4 +1,5 @@
 using CoilTrainingUI.Models;
+using CoilTrainingUI.Services.Automation;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -13,7 +14,11 @@ namespace CoilTrainingUI
             string inboxRoot = GetTrainingInboxRoot();
             string? preferredImagePath = (ImageListBox.SelectedItem as ImageItem)?.ProcessedPath;
 
-            var window = new BatchManagerWindow(inboxRoot, projectRoot, _batchMergeService)
+            var window = new BatchManagerWindow(
+                inboxRoot,
+                projectRoot,
+                _batchMergeService,
+                AutomationPaths.Archive(_automationSettings.ExchangeRoot))
             {
                 Owner = this
             };

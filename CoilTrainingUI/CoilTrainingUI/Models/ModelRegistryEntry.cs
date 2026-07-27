@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Serialization;
 
 namespace CoilTrainingUI.Models;
 
@@ -38,14 +39,23 @@ public sealed class ModelRegistryEntry
     public double? AnomaPrecision { get; set; }
     public double? AnomaRecall { get; set; }
 
+    [JsonIgnore]
+    public bool IsActive { get; set; }
+
     public string CreatedAtText => CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-    public string StatusText => Status switch
-    {
-        ModelLifecycleStatus.Reference => "대표",
-        ModelLifecycleStatus.LegacyProduction => "대표",
-        ModelLifecycleStatus.Archived => "보관",
-        _ => "후보"
-    };
+    public bool HasInferencePackage =>
+        !string.IsNullOrWhiteSpace(InferencePackageDirectory) && Directory.Exists(InferencePackageDirectory);
+    public string StatusText => !HasInferencePackage
+        ? "파일 없음"
+        : IsActive
+            ? "현재 적용"
+        : Status switch
+        {
+            ModelLifecycleStatus.Reference => "비교 기준",
+            ModelLifecycleStatus.LegacyProduction => "비교 기준",
+            ModelLifecycleStatus.Archived => "보관",
+            _ => "후보"
+        };
     public string ModelsText => string.Join(" + ", new[]
     {
         string.IsNullOrWhiteSpace(AnomaModel) ? null : AnomaModel,

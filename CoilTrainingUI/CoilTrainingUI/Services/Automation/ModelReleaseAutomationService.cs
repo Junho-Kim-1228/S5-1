@@ -307,6 +307,7 @@ public sealed class ActivationResultSynchronizer
                 ?? throw new InvalidOperationException($"적용 결과의 모델을 레지스트리에서 찾을 수 없습니다: {result.ModelId}");
             if (!string.Equals(model.Status, ModelLifecycleStatus.Reference, StringComparison.OrdinalIgnoreCase))
                 _registry.SetReference(result.ModelId);
+            _registry.SetActive(result.ModelId, "automation");
         }
         return result;
     }

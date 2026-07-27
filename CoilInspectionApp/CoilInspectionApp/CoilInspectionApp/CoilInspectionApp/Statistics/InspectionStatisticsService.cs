@@ -13,18 +13,71 @@ namespace CoilInspectionApp.Statistics
 
         private readonly List<string> _completedBatchRoots;
         private readonly string _currentBatchDirectory;
+        private readonly string _exportBaseDirectory;
+        private readonly string _archiveBaseDirectory;
+        private readonly string _trashDirectory;
 
         public InspectionStatisticsService(
             string exportBaseDirectory,
             string currentBatchDirectory,
             string archiveBaseDirectory = "")
         {
-            _completedBatchRoots = new[] { exportBaseDirectory, archiveBaseDirectory }
+            _exportBaseDirectory = string.IsNullOrWhiteSpace(exportBaseDirectory)
+                ? ""
+                : Path.GetFullPath(exportBaseDirectory);
+            _archiveBaseDirectory = string.IsNullOrWhiteSpace(archiveBaseDirectory)
+                ? ""
+                : Path.GetFullPath(archiveBaseDirectory);
+            _trashDirectory = string.IsNullOrWhiteSpace(_archiveBaseDirectory)
+                ? ""
+                : Path.Combine(_archiveBaseDirectory, "_trash");
+            _completedBatchRoots = new[] { _exportBaseDirectory, _archiveBaseDirectory }
                 .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Select(Path.GetFullPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             _currentBatchDirectory = currentBatchDirectory ?? "";
+        }
+
+        public List<StatisticsBatchItem> GetCompletedBatchItems()
+        {
+            return GetCompletedBatchDirectories()
+                .Select(directory => CreateBatchItem(
+                    directory,
+                    IsDirectChild(directory, _archiveBaseDirectory) ? "보관 완료" : "학습 UI 전달 대기",
+                    IsDirectChild(directory, _archiveBaseDirectory)))
+                .ToList();
+        }
+
+        public List<StatisticsBatchItem> GetTrashedBatchItems()
+        {
+            if (string.IsNullOrWhiteSpace(_trashDirectory) || !Directory.Exists(_trashDirectory))
+                return new List<StatisticsBatchItem>();
+
+            return Directory.GetDirectories(_trashDirectory, "export_batch_*")
+                .Where(IsCompletedBatchDirectory)
+                .OrderByDescending(directory => directory, StringComparer.OrdinalIgnoreCase)
+                .Select(directory => CreateBatchItem(directory, "통계 제외", false))
+                .ToList();
+        }
+
+        public string MoveArchiveBatchToTrash(string batchDirectory)
+        {
+            string source = ValidateDirectChildBatch(batchDirectory, _archiveBaseDirectory, "보관 배치");
+            Directory.CreateDirectory(_trashDirectory);
+            string destination = UniqueDirectory(Path.Combine(_trashDirectory, Path.GetFileName(source)));
+            Directory.Move(source, destination);
+            return destination;
+        }
+
+        public string RestoreBatchFromTrash(string batchDirectory)
+        {
+            string source = ValidateDirectChildBatch(batchDirectory, _trashDirectory, "휴지통 배치");
+            if (string.IsNullOrWhiteSpace(_archiveBaseDirectory))
+                throw new InvalidOperationException("archive 폴더가 설정되지 않았습니다.");
+            Directory.CreateDirectory(_archiveBaseDirectory);
+            string destination = UniqueDirectory(Path.Combine(_archiveBaseDirectory, Path.GetFileName(source)));
+            Directory.Move(source, destination);
+            return destination;
         }
 
         public List<StatisticsScopeOption> GetScopeOptions()
@@ -135,6 +188,73 @@ namespace CoilInspectionApp.Statistics
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(directory => directory, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static StatisticsBatchItem CreateBatchItem(
+            string directory,
+            string locationText,
+            bool canMoveToTrash)
+        {
+            string inferenceDirectory = Path.Combine(directory, "inference");
+            int resultCount = Directory.Exists(inferenceDirectory)
+                ? Directory.GetFiles(inferenceDirectory, "*.infer.json").Length
+                : 0;
+            return new StatisticsBatchItem
+            {
+                BatchName = Path.GetFileName(directory),
+                BatchDirectory = directory,
+                LocationText = locationText,
+                ResultCount = resultCount,
+                UpdatedAtText = Directory.GetLastWriteTime(directory).ToString("yyyy-MM-dd HH:mm:ss"),
+                CanMoveToTrash = canMoveToTrash,
+            };
+        }
+
+        private static string ValidateDirectChildBatch(string batchDirectory, string expectedRoot, string label)
+        {
+            if (string.IsNullOrWhiteSpace(batchDirectory) || string.IsNullOrWhiteSpace(expectedRoot))
+                throw new InvalidOperationException($"{label} 경로가 올바르지 않습니다.");
+
+            string source = Path.GetFullPath(batchDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string root = Path.GetFullPath(expectedRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string parent = Path.GetDirectoryName(source) ?? "";
+            if (!string.Equals(parent, root, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"{label} 폴더 밖의 경로는 이동할 수 없습니다.");
+            if (!IsCompletedBatchDirectory(source))
+                throw new InvalidDataException("완료된 추론 배치가 아닙니다.");
+            return source;
+        }
+
+        private static bool IsCompletedBatchDirectory(string directory)
+        {
+            return Directory.Exists(directory)
+                   && Path.GetFileName(directory).StartsWith("export_batch_", StringComparison.OrdinalIgnoreCase)
+                   && File.Exists(Path.Combine(directory, "meta", "DONE.flag"));
+        }
+
+        private static bool IsDirectChild(string directory, string root)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(root))
+                return false;
+            string parent = Path.GetDirectoryName(Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? "";
+            string normalizedRoot = Path.GetFullPath(root)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(parent, normalizedRoot, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string UniqueDirectory(string requestedPath)
+        {
+            if (!Directory.Exists(requestedPath))
+                return requestedPath;
+            string suffix = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string candidate = requestedPath + "-" + suffix;
+            int index = 2;
+            while (Directory.Exists(candidate))
+                candidate = requestedPath + "-" + suffix + "-" + index++;
+            return candidate;
         }
 
         private static void AddInference(

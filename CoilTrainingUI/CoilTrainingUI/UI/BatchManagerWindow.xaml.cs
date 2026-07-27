@@ -1,5 +1,6 @@
 using CoilTrainingUI.Models;
 using CoilTrainingUI.Services;
+using CoilTrainingUI.Services.Automation;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -30,6 +31,7 @@ namespace CoilTrainingUI
         private readonly BatchLibraryService _batchLibraryService = new();
         private readonly BatchMergeService _batchMergeService;
         private readonly InferenceBatchImportService _batchImportService = new();
+        private readonly ArchivedBatchTrashService _archivedBatchTrashService;
         private readonly ObservableCollection<BatchLibraryItem> _batches = new();
         private bool _isRefreshing;
         private bool _isUpdatingSelection;
@@ -40,13 +42,18 @@ namespace CoilTrainingUI
         public string? PreferredBatchRoot { get; private set; }
         public event EventHandler<BatchLibraryChangedEventArgs>? LibraryChanged;
 
-        public BatchManagerWindow(string inboxRoot, string projectRoot, BatchMergeService batchMergeService)
+        public BatchManagerWindow(
+            string inboxRoot,
+            string projectRoot,
+            BatchMergeService batchMergeService,
+            string archiveRoot)
         {
             InitializeComponent();
 
             _inboxRoot = inboxRoot;
             _projectRoot = projectRoot;
             _batchMergeService = batchMergeService;
+            _archivedBatchTrashService = new ArchivedBatchTrashService(archiveRoot);
             BatchGrid.ItemsSource = _batches;
 
             RefreshBatches();
@@ -460,7 +467,8 @@ namespace CoilTrainingUI
 
             int mergedCount = selected.Count(batch => string.Equals(batch.BatchKind, "merged", StringComparison.OrdinalIgnoreCase));
             var confirm = MessageBox.Show(
-                $"선택한 배치 {selected.Count}개를 삭제할까요?\n\n- 병합 배치: {mergedCount}개\n- 일반 배치: {selected.Count - mergedCount}개\n\n삭제된 배치는 복구되지 않습니다.",
+                $"선택한 배치 {selected.Count}개를 삭제할까요?\n\n- 병합 배치: {mergedCount}개\n- 일반 배치: {selected.Count - mergedCount}개\n\n" +
+                "학습 라이브러리의 배치는 삭제됩니다. 일반 배치의 통계 원본은 archive\\_trash로 이동되어 통계에서 제외되며 복원할 수 있습니다.",
                 "Batch Delete",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -471,6 +479,8 @@ namespace CoilTrainingUI
             var deletedKeys = new List<string>();
             var deletedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var failedMessages = new List<string>();
+            var archiveWarnings = new List<string>();
+            int archivedTrashCount = 0;
 
             foreach (var batch in selected)
             {
@@ -479,16 +489,25 @@ namespace CoilTrainingUI
                     if (!IsPathUnderRoot(batch.BatchRoot, _inboxRoot))
                         throw new InvalidOperationException("training_inbox 외부 경로는 삭제할 수 없습니다.");
 
-                    if (!Directory.Exists(batch.BatchRoot))
-                    {
-                        deletedKeys.Add(batch.BatchKey);
-                        deletedRoots.Add(batch.BatchRoot);
-                        continue;
-                    }
-
-                    Directory.Delete(batch.BatchRoot, recursive: true);
+                    if (Directory.Exists(batch.BatchRoot))
+                        Directory.Delete(batch.BatchRoot, recursive: true);
                     deletedKeys.Add(batch.BatchKey);
                     deletedRoots.Add(batch.BatchRoot);
+
+                    if (!string.Equals(batch.BatchKind, "merged", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            ArchivedBatchTrashResult archiveResult = _archivedBatchTrashService
+                                .MoveMatchingBatchToTrash(batch.BatchKey, batch.BatchId);
+                            if (archiveResult.Moved)
+                                archivedTrashCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            archiveWarnings.Add($"- {batch.BatchId}: 통계 원본 이동 실패 ({ex.Message})");
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -506,10 +525,10 @@ namespace CoilTrainingUI
                 NotifyLibraryChanged(PreferredBatchRoot);
             }
 
-            if (failedMessages.Count == 0)
+            if (failedMessages.Count == 0 && archiveWarnings.Count == 0)
             {
                 MessageBox.Show(
-                    $"배치 삭제 완료\n- 삭제: {deletedKeys.Count}개",
+                    $"배치 삭제 완료\n- 학습 라이브러리 삭제: {deletedKeys.Count}개\n- 통계에서 제외: {archivedTrashCount}개",
                     "Batch Delete",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
@@ -517,7 +536,9 @@ namespace CoilTrainingUI
             }
 
             MessageBox.Show(
-                $"배치 삭제 일부 완료\n- 삭제: {deletedKeys.Count}개\n- 실패: {failedMessages.Count}개\n\n{string.Join(Environment.NewLine, failedMessages.Take(10))}",
+                $"배치 삭제 일부 완료\n- 학습 라이브러리 삭제: {deletedKeys.Count}개\n- 통계에서 제외: {archivedTrashCount}개\n" +
+                $"- 삭제 실패: {failedMessages.Count}개\n- 통계 연동 경고: {archiveWarnings.Count}개\n\n" +
+                string.Join(Environment.NewLine, failedMessages.Concat(archiveWarnings).Take(10)),
                 "Batch Delete",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);

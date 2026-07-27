@@ -108,6 +108,11 @@
 
                 <Separator/>
 
+                <MenuItem Header="학습 설정..."
+                          Click="TrainingSettings_Click"/>
+
+                <Separator/>
+
                 <MenuItem Header="현재 파이프라인 학습 실행" 
                           Click="TrainAll_Click"/>
 
